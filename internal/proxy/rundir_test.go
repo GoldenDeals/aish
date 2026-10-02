@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/tools"
 )
 
@@ -27,7 +28,7 @@ func TestMakeRunDir(t *testing.T) {
 	reg.Add(run("weather")) // an ordinary one
 	reg.Add(run("expand"))
 
-	got, err := makeRunDir(reg, []string{"status", "model", "expand"}, "/opt/aish", "n")
+	got, err := makeRunDir(reg, []string{"status", "model", "expand"}, "/opt/aish", "n", config.Route{})
 	if err != nil {
 		t.Fatal(err)
 	}

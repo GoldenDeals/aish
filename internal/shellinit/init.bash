@@ -26,6 +26,18 @@ __aish_loaded=1
 __aish_nonce=
 [[ -n ${AISH_RUN-} ]] && IFS= read -r __aish_nonce <"$AISH_RUN/nonce"
 
+# The config's [route], key=value lines from the proxy. Without the file,
+# the rule from before it: a capital letter, nothing else.
+__aish_route_capital=true __aish_route_not_found=false __aish_route_suffix= __aish_route_min_words=2
+if [[ -n ${AISH_RUN-} && -f $AISH_RUN/route ]]; then
+	while IFS= read -r __aish_l; do
+		case ${__aish_l%%=*} in
+		capital | not_found | suffix | min_words) printf -v "__aish_route_${__aish_l%%=*}" %s "${__aish_l#*=}" ;;
+		esac
+	done <"$AISH_RUN/route"
+	unset __aish_l
+fi
+
 [[ -n ${AISH_TOOLS_PATH-} ]] && PATH="$AISH_TOOLS_PATH:$PATH"
 type -P aish >/dev/null 2>&1 || aish() { "$AISH_BIN" "$@"; }
 
@@ -44,6 +56,7 @@ __aish_route() {
 	__aish_fresh=0
 	__aish_buf=$line
 	__aish_ps0=
+	__aish_hint=
 
 	local trimmed=${line#"${line%%[![:space:]]*}"}
 	[[ -z $trimmed ]] && return
@@ -71,18 +84,28 @@ __aish_route() {
 		;;
 	esac
 
-	# A request to the assistant starts with a capital letter. Anything else,
-	# typos included, is bash's — except a skill: typed as a command or as
-	# /name, it goes to the assistant as `/name args` (agent/skillmention.go).
-	local w=${trimmed%%[[:space:]]*}
-	if [[ ${trimmed:0:1} == [[:upper:]] ]] && ! __aish_is_command "$trimmed"; then
+	# A skill typed as a command or as /name goes to the assistant as
+	# `/name args` (agent/skillmention.go); any other command is bash's.
+	# A line that is no command is a request by [route]: it starts with a
+	# capital letter, ends with the suffix, or is words, not shell, that
+	# bash would only answer with "command not found".
+	local w=${trimmed%%[[:space:]]*} end=${trimmed%"${trimmed##*[![:space:]]}"}
+	if [[ $w == /* ]] && __aish_is_skill "${w#/}"; then
 		__aish_to_llm "$trimmed"
-	elif [[ $w == /* ]] && __aish_is_skill "${w#/}"; then
-		__aish_to_llm "$trimmed"
-	elif ! __aish_is_command "$trimmed" && __aish_is_skill "$w"; then
+	elif __aish_is_command "$trimmed"; then
+		__aish_mark
+	elif __aish_is_skill "$w"; then
 		__aish_to_llm "/$trimmed"
+	elif [[ $__aish_route_capital == true && ${trimmed:0:1} == [[:upper:]] ]] ||
+		[[ -n $__aish_route_suffix && $end == *"$__aish_route_suffix" ]]; then
+		__aish_to_llm "$trimmed"
+	elif [[ $__aish_route_not_found == true ]] && __aish_is_prose "$trimmed"; then
+		__aish_to_llm "$trimmed"
 	else
 		__aish_mark
+		if [[ -z ${__aish_hinted-} ]] && __aish_is_prose "$trimmed"; then
+			__aish_hint=1 __aish_hinted=1 # for command_not_found_handle, once
+		fi
 	fi
 }
 
@@ -115,6 +138,39 @@ __aish_is_skill() {
 	done
 	[[ -f /.claude/skills/$n/SKILL.md ]]
 }
+
+# __aish_is_prose: is $1 words rather than shell — min_words of them or
+# more, and none of | & ; < > ( ) $ ` \ =? Quotes are prose: "doesn't".
+__aish_is_prose() {
+	[[ $1 == *[\|\&\;\<\>\(\)\$\`\\=]* ]] && return 1
+	local n=$((__aish_route_min_words - 1))
+	((n > 0)) || return 0
+	local re="^[^[:space:]]+([[:space:]]+[^[:space:]]+){$n}"
+	[[ $1 =~ $re ]]
+}
+
+# With not_found off such a line is bash's, and the first one gets a hint
+# after "command not found". The handler from ~/.bashrc (pkgfile,
+# command-not-found) still answers. This runs in a child: it can print,
+# not change the shell.
+if [[ $__aish_route_not_found != true ]]; then
+	if declare -F command_not_found_handle >/dev/null; then
+		__aish_f=$(declare -f command_not_found_handle)
+		eval "__aish_cnf_prev${__aish_f#command_not_found_handle}"
+		unset __aish_f
+	fi
+	command_not_found_handle() {
+		local __aish_rc=127 __aish_sh=${0##*/}
+		if declare -F __aish_cnf_prev >/dev/null; then
+			__aish_cnf_prev "$@"
+			__aish_rc=$?
+		else
+			printf '%s: %s: command not found\n' "${__aish_sh#-}" "$1" >&2
+		fi
+		[[ ${__aish_hint-} == 1 ]] && printf 'aish: looks like a question; prefix with ? to ask\n' >&2
+		return $__aish_rc
+	}
+fi
 
 __aish_to_llm() {
 	local q=$1

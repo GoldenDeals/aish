@@ -71,6 +71,8 @@ type Config struct {
 	// Shell is the bash to run. Empty: $SHELL if it is a bash, else the
 	// first bash in PATH.
 	Shell string `toml:"shell"`
+	// Route decides which lines typed at the prompt are requests.
+	Route Route `toml:"route"`
 
 	// SystemPrompt is appended to the built-in system prompt.
 	SystemPrompt string `toml:"system_prompt"`
@@ -130,6 +132,7 @@ func Default() Config {
 		ToolsDir:       filepath.Join(Dir(), "tools"),
 		SessionsDir:    filepath.Join(dataDir(), "sessions"),
 		MCPConfig:      filepath.Join(Dir(), "mcp.yaml"),
+		Route:          Route{Capital: true, NotFound: true, Suffix: "?", MinWords: 2},
 	}
 }
 
@@ -207,6 +210,7 @@ func (c Config) check() error {
 		{"max_steps", int64(c.MaxSteps)},
 		{"max_output_bytes", int64(c.MaxOutputBytes)},
 		{"context_window", int64(c.ContextWindow)},
+		{"route.min_words", int64(c.Route.MinWords)},
 	} {
 		if f.n < 0 {
 			return fmt.Errorf("%s = %d: must not be negative", f.key, f.n)
@@ -216,6 +220,10 @@ func (c Config) check() error {
 	case "", "allow", "ask", "deny":
 	default:
 		return fmt.Errorf("policy.write_outside_home = %q: want \"allow\", \"ask\" or \"deny\"", c.Policy.WriteOutsideHome)
+	}
+	// The shell reads it as a line of $AISH_RUN/route.
+	if strings.ContainsAny(c.Route.Suffix, "\r\n") {
+		return fmt.Errorf("route.suffix %q: must be one line", c.Route.Suffix)
 	}
 	for _, l := range []struct {
 		key      string

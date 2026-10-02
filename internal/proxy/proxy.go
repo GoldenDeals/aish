@@ -161,7 +161,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	}
 	defer func() { p.session().Unlock() }()
 	nonce := rand.Text()
-	run, err := makeRunDir(reg, p.Commands, self, nonce)
+	run, err := makeRunDir(reg, p.Commands, self, nonce, cfg.Route)
 	if err != nil {
 		return 1, err
 	}
@@ -264,7 +264,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 // wrapper: bin comes first in PATH and would hide it for the whole shell.
 // The subcommands go first, so a tool with such a name is left to `aish
 // tool`.
-func makeRunDir(reg *tools.Registry, cmds []string, self, nonce string) (string, error) {
+func makeRunDir(reg *tools.Registry, cmds []string, self, nonce string, route config.Route) (string, error) {
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
 		base = os.TempDir()
@@ -309,6 +309,9 @@ func makeRunDir(reg *tools.Registry, cmds []string, self, nonce string) (string,
 	// The shell and the agent read the nonce from here: in the environment
 	// every command would inherit it.
 	if err := os.WriteFile(filepath.Join(run, "nonce"), []byte(nonce+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(run, "route"), routeFile(route), 0o600); err != nil {
 		return "", err
 	}
 	return run, os.WriteFile(filepath.Join(run, "rc"), []byte(shellinit.RCFile()), 0o600)
@@ -500,6 +503,9 @@ func (p *Proxy) marker(m Marker) {
 	case "ask-start":
 		p.asking = true
 		p.folds = nil
+		// A command that asks (an alias of __aish_ask) is the request's:
+		// in the journal it would hold the whole reply as its output.
+		p.user = nil
 	case "cmd-end":
 		defer p.drawStatus() // once the command is in the journal
 		p.at = nil
