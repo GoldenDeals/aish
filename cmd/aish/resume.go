@@ -23,14 +23,14 @@ func resumeCmd(cfg config.Config, args []string) int {
 		return fail(errors.New("usage: aish resume [ID|NAME]"))
 	}
 	var client *rpc.Client
-	cur := ""
+	cur, curSaved := "", false
 	if c, err := rpc.FromEnv(); err == nil {
 		client = c
 		var info rpc.Info
 		if err := client.Call(rpc.MethodInfo, nil, &info); err != nil {
 			return fail(err)
 		}
-		cur = info.SessionID
+		cur, curSaved = info.SessionID, info.Saved
 	}
 	dir := cfg.SessionsDir
 	list, err := session.List(dir)
@@ -67,6 +67,9 @@ func resumeCmd(cfg config.Config, args []string) int {
 		var info rpc.Info
 		if err := client.Call(rpc.MethodResume, rpc.ResumeParams{ID: pick.ID}, &info); err != nil {
 			return fail(err)
+		}
+		if !curSaved {
+			fmt.Fprintln(os.Stderr, "\x1b[2mthe session you left was not saved\x1b[0m")
 		}
 		if sess, err := session.Load(dir, pick.ID); err == nil {
 			printResumed(pick, sess)

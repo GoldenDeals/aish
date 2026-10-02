@@ -7,7 +7,9 @@
 //	aish policy [TOOL ARGS...]   check the policies, or ask them about one call
 //	aish init bash               print the bash integration script
 //	aish tool [NAME ARGS...]     list tools or run one
-//	aish session show|clear      print or reset the current session
+//	aish session show            print the current session
+//	aish clear [save [NAME]]     start a new session; the current one is dropped unless saved
+//	aish new [NAME]              start a new session that is saved
 //	aish compact [FOCUS]         replace the session with a summary
 //	aish status                  the context, the model and the settings
 //	aish model [NAME] [EFFORT]   list the models, switch this shell's model or effort
@@ -42,7 +44,10 @@ const usage = `usage:
   aish policy [TOOL ARGS...] check the policies, or ask them about one call
   aish init bash             print the bash integration script
   aish tool [NAME ARGS...]   list tools, or run one
-  aish session show|clear    print or reset the current session
+  aish session show          print the current session
+  aish clear [save [NAME]]   start a new session; the current one is dropped unless
+                             saved, as NAME if given
+  aish new [NAME]            start a new session that is saved, as NAME if given
   aish compact [FOCUS]       replace the session with its summary (FOCUS: what to keep)
   aish status                show the context size, the model and the settings
   aish model [NAME] [EFFORT] list the models, or switch the model and/or the
@@ -88,6 +93,10 @@ func run(args []string) int {
 		return modelCmd(cfg, args[1:])
 	case "resume":
 		return resumeCmd(cfg, args[1:])
+	case "clear":
+		return clearCmd(args[1:])
+	case "new":
+		return newCmd(args[1:])
 	case "mcp":
 		return mcpCmd(cfg, args[1:])
 	case "skills":
@@ -244,15 +253,9 @@ func sessionCmd(args []string) int {
 		return fail(err)
 	}
 	if len(args) != 1 {
-		return fail(errors.New("usage: aish session show|clear"))
+		return fail(errors.New("usage: aish session show"))
 	}
 	switch args[0] {
-	case "clear":
-		var info rpc.Info
-		if err := client.Call(rpc.MethodClear, nil, &info); err != nil {
-			return fail(err)
-		}
-		fmt.Println("new session", info.SessionID)
 	case "show":
 		es, err := client.History()
 		if err != nil {
@@ -262,7 +265,7 @@ func sessionCmd(args []string) int {
 			printEntry(e)
 		}
 	default:
-		return fail(errors.New("usage: aish session show|clear"))
+		return fail(errors.New("usage: aish session show"))
 	}
 	return 0
 }
@@ -313,6 +316,8 @@ func printEntry(e session.Entry) {
 		fmt.Printf("\x1b[2m%s instructions %s, %d bytes\x1b[0m\n", e.Time.Format("15:04:05"), e.Path, len(e.Text))
 	case session.KindSummary:
 		fmt.Printf("\x1b[2m%s summary of what came before\x1b[0m\n%s\n", e.Time.Format("15:04:05"), e.Text)
+	case session.KindClear:
+		fmt.Printf("\x1b[2m%s screen cleared\x1b[0m\n", e.Time.Format("15:04:05"))
 	case session.KindToolResult:
 		status := "ok"
 		if e.IsError {

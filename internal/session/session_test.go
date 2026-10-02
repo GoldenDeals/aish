@@ -15,6 +15,9 @@ func TestClearStartsNewFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
 	ids := map[string]bool{}
 	for range 3 {
 		if err := s.Append(Entry{Kind: KindShell, Cmd: "ls"}); err != nil {
@@ -22,18 +25,28 @@ func TestClearStartsNewFile(t *testing.T) {
 		}
 		ids[s.ID] = true
 		s.Clear() // within the same second
+		if err := s.Save(); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if len(ids) != 3 {
-		t.Fatalf("journals %v, want 3 different", ids)
+	if len(ids) != 3 || ids[s.ID] {
+		t.Fatalf("journals %v and %s, want 4 different", ids, s.ID)
 	}
 	files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
+	if len(files) != 4 {
+		t.Fatalf("files %v, want 4", files)
+	}
 	for _, f := range files {
 		o, err := Open(f)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if n := len(o.Entries()); n != 1 {
-			t.Errorf("%s has %d entries, want 1", f, n)
+		want := 1
+		if o.ID == s.ID {
+			want = 0 // saved right after the last clear
+		}
+		if n := len(o.Entries()); n != want {
+			t.Errorf("%s has %d entries, want %d", f, n, want)
 		}
 	}
 }
@@ -77,7 +90,7 @@ func TestTokens(t *testing.T) {
 func TestLockListFind(t *testing.T) {
 	dir := t.TempDir()
 	a, _ := New(dir)
-	if err := a.Lock(); err != nil {
+	if err := a.Save(); err != nil {
 		t.Fatal(err)
 	}
 	a.Append(Entry{Kind: KindUser, Text: "first"}, Entry{Kind: KindUser, Text: "deploy it"})
@@ -91,7 +104,7 @@ func TestLockListFind(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	b := &Session{ID: "20200101-000000-1", path: filepath.Join(dir, "20200101-000000-1.jsonl")}
+	b := &Session{ID: "20200101-000000-1", path: filepath.Join(dir, "20200101-000000-1.jsonl"), saved: true}
 	b.Append(Entry{Kind: KindShell, Cmd: "ls"})
 	old := time.Now().Add(-time.Hour)
 	os.Chtimes(b.path, old, old)
@@ -119,11 +132,14 @@ func TestLockListFind(t *testing.T) {
 		t.Error("found nothing")
 	}
 
-	// The lock follows the journal that Clear starts.
+	// Clear lets the saved journal go; the new one is locked once saved.
 	first := a.ID
 	a.Clear()
-	if isOpen(dir, first) || !isOpen(dir, a.ID) {
-		t.Error("the lock stayed with the old journal")
+	if isOpen(dir, first) || isOpen(dir, a.ID) {
+		t.Error("a journal stayed locked after clear")
+	}
+	if err := a.Save(); err != nil || !isOpen(dir, a.ID) {
+		t.Errorf("saved, yet not locked: %v", err)
 	}
 	a.Unlock()
 	if isOpen(dir, a.ID) {

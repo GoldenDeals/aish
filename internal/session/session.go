@@ -30,6 +30,9 @@ const (
 	// KindSummary replaces everything before it: `aish compact` asked the
 	// model to sum the session up, and only the summary is sent from then on.
 	KindSummary = "summary"
+	// KindClear marks where the user erased the screen: the model is sent
+	// only what follows.
+	KindClear = "clear"
 )
 
 // NotRecorded is the Output of a shell command that journal_ignore matched:
@@ -81,14 +84,17 @@ type Entry struct {
 	IsError bool `json:"is_error,omitempty"`
 }
 
-// Session is safe for concurrent use. Every appended entry is persisted to a
-// JSONL file immediately.
+// Session is safe for concurrent use. Once saved, every appended entry is
+// persisted to a JSONL file immediately; until then the journal is only in
+// memory.
 type Session struct {
 	mu      sync.Mutex
 	ID      string
 	path    string
 	entries []Entry
 	lock    *os.File
+	// saved: the journal is on disk, Append writes through.
+	saved bool
 	// bad counts the journal lines Open could not parse, so that lost
 	// entries do not go unnoticed.
 	bad int
@@ -120,7 +126,7 @@ func Open(path string) (*Session, error) {
 		return nil, err
 	}
 	defer f.Close()
-	s := &Session{ID: trimExt(filepath.Base(path)), path: path}
+	s := &Session{ID: trimExt(filepath.Base(path)), path: path, saved: true}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 64<<20)
 	for sc.Scan() {
@@ -143,16 +149,23 @@ func (s *Session) BadLines() int { return s.bad }
 func (s *Session) Append(es ...Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
+	var f *os.File
+	if s.saved {
+		var err error
+		f, err = os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
 	}
-	defer f.Close()
 	for _, e := range es {
 		if e.Time.IsZero() {
 			e.Time = time.Now()
 		}
 		s.entries = append(s.entries, e)
+		if f == nil {
+			continue
+		}
 		b, _ := json.Marshal(e)
 		if _, err := f.Write(append(b, '\n')); err != nil {
 			return err
@@ -161,13 +174,48 @@ func (s *Session) Append(es ...Entry) error {
 	return nil
 }
 
+// Save puts the journal on disk, from where it can be resumed: the
+// entries so far at once, later ones as they are appended. The session
+// is locked from here, like one that was opened.
+func (s *Session) Save() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.saved {
+		return nil
+	}
+	// Locked first: a journal on disk is there for another aish to open.
+	l, err := lock(filepath.Dir(s.path), s.ID)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	for _, e := range s.entries {
+		b, _ := json.Marshal(e)
+		buf.Write(append(b, '\n'))
+	}
+	if err := os.WriteFile(s.path, buf.Bytes(), 0o600); err != nil {
+		unlock(l)
+		return err
+	}
+	s.lock, s.saved = l, true
+	return nil
+}
+
+// Saved reports whether the journal is on disk.
+func (s *Session) Saved() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saved
+}
+
 func (s *Session) Entries() []Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]Entry(nil), s.entries...)
 }
 
-// Clear starts a fresh journal file, keeping the session object.
+// Clear starts over with an unsaved journal under a new id, keeping the
+// session object. The files of a saved one stay where they are, unlocked.
 func (s *Session) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -175,12 +223,9 @@ func (s *Session) Clear() {
 	dir := filepath.Dir(s.path)
 	s.ID = freshID(dir, s.ID)
 	s.path = filepath.Join(dir, s.ID+".jsonl")
-	if s.lock != nil {
-		if f, err := lock(dir, s.ID); err == nil {
-			unlock(s.lock)
-			s.lock = f
-		}
-	}
+	s.saved = false
+	unlock(s.lock)
+	s.lock = nil
 }
 
 // freshID names a journal that is neither cur nor on disk: two clears within
@@ -214,11 +259,14 @@ func (s *Session) LastCwd() string {
 }
 
 // Current is the part of the journal the model is sent: from the last
-// summary on.
+// summary on, or what follows the last clear, whichever is later.
 func Current(es []Entry) []Entry {
 	for i := len(es) - 1; i >= 0; i-- {
-		if es[i].Kind == KindSummary {
+		switch es[i].Kind {
+		case KindSummary:
 			return es[i:]
+		case KindClear:
+			return es[i+1:]
 		}
 	}
 	return es

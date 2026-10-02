@@ -56,7 +56,7 @@ func (p *Proxy) setModel(model string, window int) {
 // info is what `aish` commands ask the proxy about the shell. Called under
 // p.mu.
 func (p *Proxy) info() rpc.Info {
-	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Model: p.model, Effort: p.effort, Window: p.window}
+	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Saved: p.sess.Saved(), Model: p.model, Effort: p.effort, Window: p.window}
 }
 
 // saveState records how the shell differs from the one that started, from
@@ -85,8 +85,8 @@ func (p *Proxy) saveState(cwd string) {
 		return
 	}
 	p.cur = &cur
-	if p.sess.Len() == 0 {
-		return // a session is its journal: no state without one
+	if !p.sess.Saved() {
+		return // an unsaved session leaves nothing on disk, its state neither
 	}
 	saved := session.Saved{Shell: bashstate.Diff(*p.base, cur), Model: p.model, Effort: p.effort}
 	data, _ := json.Marshal(saved)

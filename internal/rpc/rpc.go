@@ -58,6 +58,8 @@ type Info struct {
 	// Dir holds the session's files: the proxy's sessions_dir, which the
 	// config a later command reads need not match.
 	Dir string `json:"dir"`
+	// Saved is whether the session is on disk.
+	Saved bool `json:"saved"`
 	// Model and Effort are what this shell uses, which `aish model` may
 	// have changed; Window is the model's context size, 0 if unknown.
 	Model  string `json:"model"`
@@ -95,6 +97,17 @@ type Status struct {
 
 type ResumeParams struct {
 	ID string `json:"id"`
+}
+
+// ClearParams start this shell's session over. Save puts the current
+// session on disk, if it is not there yet, named Name if given; otherwise
+// an unsaved one is simply dropped. SaveNew makes the next session a saved
+// one from its first entry, named NewName if given.
+type ClearParams struct {
+	Save    bool   `json:"save,omitempty"`
+	Name    string `json:"name,omitempty"`
+	SaveNew bool   `json:"save_new,omitempty"`
+	NewName string `json:"new_name,omitempty"`
 }
 
 // AgentParams carry a request to the agent. Cwd and Env are the shell's,

@@ -55,7 +55,11 @@ func statusCmd(cfg config.Config) int {
 	if dir == "" { // a proxy started by an older aish
 		dir = cfg.SessionsDir
 	}
-	row("journal", filepath.Join(dir, info.SessionID+".jsonl"))
+	journal := filepath.Join(dir, info.SessionID+".jsonl")
+	if !info.Saved {
+		journal = "not saved (aish clear save, aish new)"
+	}
+	row("journal", journal)
 
 	head("model")
 	row("provider", cfg.Provider)

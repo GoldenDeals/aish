@@ -67,12 +67,13 @@ func (s *Session) Dir() string {
 	return filepath.Dir(s.path)
 }
 
-// Lock marks the session open, so that no other aish opens it too. A new
-// journal started by Clear takes the lock over.
+// Lock marks the session open, so that no other aish opens it too. An
+// unsaved one is not on disk for another to open: Save locks it when it
+// puts it there.
 func (s *Session) Lock() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.lock != nil {
+	if s.lock != nil || !s.saved {
 		return nil
 	}
 	f, err := lock(filepath.Dir(s.path), s.ID)
@@ -230,6 +231,20 @@ func Rename(dir, id, name string) error {
 		}
 		return nil
 	}
+	if err := CheckName(dir, id, name); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(name+"\n"), 0o600)
+}
+
+// CheckName tells whether Rename would give session id the name: one line
+// of at most 60 characters that no other session in dir has. An empty name
+// is no name and always fits.
+func CheckName(dir, id, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
 	if strings.ContainsAny(name, "\n\r\t") || utf8.RuneCountInString(name) > 60 {
 		return fmt.Errorf("a name is one line of at most 60 characters")
 	}
@@ -242,7 +257,7 @@ func Rename(dir, id, name string) error {
 			return fmt.Errorf("session %s is already called %q", i.ID, name)
 		}
 	}
-	return os.WriteFile(path, []byte(name+"\n"), 0o600)
+	return nil
 }
 
 // Load opens the session id in dir.

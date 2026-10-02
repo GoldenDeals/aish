@@ -477,10 +477,13 @@ func (p *Proxy) output(b []byte) {
 	p.emit(show)
 }
 
-// cleared starts the session over when the user erases the screen: the
-// assistant sees only what is on it.
+// cleared marks in the journal where the user erased the screen: the
+// session goes on, and the assistant sees only what is on the screen from
+// here. Two clears in a row, or one with nothing before it, cut nothing more.
 func (p *Proxy) cleared() {
-	p.sess.Clear()
+	if es := p.sess.Entries(); len(es) > 0 && es[len(es)-1].Kind != session.KindClear {
+		_ = p.sess.Append(session.Entry{Kind: session.KindClear})
+	}
 	p.folds = nil
 	if p.user != nil {
 		p.user.buf = capture.NewBuffer(headCap, tailCap)
@@ -641,10 +644,13 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 		defer p.mu.Unlock()
 		return append([]Fold{}, p.folds...), nil
 	case rpc.MethodClear:
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		p.sess.Clear()
-		return p.info(), nil
+		var cp rpc.ClearParams
+		if len(params) > 0 { // none at all: plain `aish clear`
+			if err := json.Unmarshal(params, &cp); err != nil {
+				return nil, err
+			}
+		}
+		return p.clear(cp)
 	case rpc.MethodResume:
 		var rp rpc.ResumeParams
 		if err := json.Unmarshal(params, &rp); err != nil {
