@@ -55,11 +55,14 @@ func Analyze(argv []string, cwd, home string) Command {
 
 // pathOf tells whether an operand names a path and makes it absolute. Bare
 // words (install, main) are not paths; words with other expansions than
-// $HOME cannot be resolved and are not paths either.
+// $HOME and $PWD cannot be resolved and are not paths either.
 func pathOf(op, cwd, home string) (string, bool) {
-	for _, pfx := range []string{"~", "$HOME", "${HOME}"} {
-		if rest, ok := strings.CutPrefix(op, pfx); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
-			return home + rest, true
+	for _, pfx := range []struct{ word, dir string }{
+		{"~", home}, {"$HOME", home}, {"${HOME}", home},
+		{"$PWD", cwd}, {"${PWD}", cwd},
+	} {
+		if rest, ok := strings.CutPrefix(op, pfx.word); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+			return pfx.dir + rest, true
 		}
 	}
 	switch {

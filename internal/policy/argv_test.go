@@ -26,6 +26,9 @@ func TestAnalyze(t *testing.T) {
 		{[]string{"apt", "install", "ripgrep"}, nil, []string{"install", "ripgrep"}, nil},
 		{[]string{"rm", "--", "-rf", "-"}, nil, []string{"-rf", "-"}, nil},
 		{[]string{"cd", "-"}, nil, []string{"-"}, nil},
+		{[]string{"cd", "$PWD"}, nil, []string{"$PWD"}, []string{cwd}},
+		{[]string{"ls", "${PWD}/x"}, nil, []string{"${PWD}/x"}, []string{cwd + "/x"}},
+		{[]string{"cat", "$PWDX"}, nil, []string{"$PWDX"}, nil},
 		{[]string{"cat", "$DIR/x"}, nil, []string{"$DIR/x"}, nil},
 	} {
 		got := Analyze(c.argv, cwd, home)

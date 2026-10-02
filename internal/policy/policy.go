@@ -84,9 +84,12 @@ func Load(ctx context.Context, dir string, rules Rules) (*Engine, error) {
 	return e, nil
 }
 
-// NewInput fills the derived fields of the input for a tool call.
+// NewInput fills the derived fields of the input for a tool call. Cwd is
+// resolved as the paths are, so that `context.paths == [context.cwd]` holds
+// for `cd .` in a directory reached through a symlink.
 func NewInput(tool string, args map[string]any, cwd string) Input {
 	home, _ := os.UserHomeDir()
+	cwd = resolve(cwd)
 	in := Input{Tool: tool, Args: args, Cwd: cwd, Home: resolve(home)}
 	if p, ok := args["path"].(string); ok && p != "" {
 		p = homePath(p, home)
