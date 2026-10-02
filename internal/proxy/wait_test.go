@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -30,9 +29,7 @@ func TestWaitInterrupted(t *testing.T) {
 	}
 	res := make(chan result, 1)
 	go func() {
-		b, _ := json.Marshal(rpc.WaitParams{ID: "c1", TimeoutMS: 60_000})
-		v, err := p.handle(context.Background(), rpc.MethodWaitOutput, b)
-		out, _ := v.(rpc.Output)
+		out, err := p.wait(context.Background(), "c1", time.Minute)
 		res <- result{out, err}
 	}()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {

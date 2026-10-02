@@ -56,14 +56,14 @@ func environment(dir string) string {
 	return b.String()
 }
 
-// requestCwd is the directory the last user request was made in.
-func requestCwd(entries []session.Entry) string {
+// requestCwd is the directory the last user request was made in, or cwd
+// when there was none.
+func requestCwd(entries []session.Entry, cwd string) string {
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Kind == session.KindUser && entries[i].Cwd != "" {
 			return entries[i].Cwd
 		}
 	}
-	cwd, _ := os.Getwd()
 	return cwd
 }
 

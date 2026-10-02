@@ -3,11 +3,8 @@ package agent
 import (
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"time"
-
-	"golang.org/x/term"
 )
 
 const (
@@ -34,9 +31,10 @@ type spinner struct {
 	done  chan struct{}
 }
 
-func startSpinner(w io.Writer) *spinner {
+// startSpinner spins on w while on; off, it only passes text through.
+func startSpinner(w io.Writer, on bool) *spinner {
 	s := &spinner{w: w, bol: true, start: time.Now(), stop: make(chan struct{}), done: make(chan struct{})}
-	if f, ok := w.(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
+	if !on {
 		close(s.done)
 		return s
 	}

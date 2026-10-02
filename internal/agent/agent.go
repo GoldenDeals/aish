@@ -1,8 +1,10 @@
-// Package agent runs one user request: it talks to the LLM, executes tools
-// after checking the policy, and hands bash commands back to the live shell
-// (see init.bash): `aish agent start` and `aish agent resume` each run until
-// the next bash command or the final answer. The shell runs that command and
-// resumes the agent with its exit status.
+// Package agent works on the user's requests: it talks to the LLM, executes
+// tools after checking the policy, and hands bash commands to the live
+// shell (see init.bash). One Agent lives in the proxy for the whole shell;
+// the thin `aish agent start` and `aish agent resume` commands inside the
+// shell tell it over RPC to begin a request or to go on after a command,
+// and each call works until the next bash command or the final answer. The
+// shell runs that command and resumes the agent with its exit status.
 package agent
 
 import (
@@ -11,12 +13,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mattn/go-runewidth"
-	"golang.org/x/term"
 
 	"github.com/inebotov/aish/internal/capture"
 	"github.com/inebotov/aish/internal/config"
@@ -35,39 +35,91 @@ const (
 	reset = "\x1b[0m"
 )
 
+// Journal is the session's journal as the proxy keeps it. ID and Len tell
+// the agent whether what it read is still the journal: `clear` and `aish
+// resume` replace it.
+type Journal interface {
+	ID() string
+	Len() int
+	Entries() []session.Entry
+	Append(...session.Entry) error
+}
+
+// Shell runs bash commands for the agent: the user's live shell, reached
+// through the proxy.
+type Shell interface {
+	// HandOff leaves cmd for the shell to run as tool call id.
+	HandOff(id, cmd string) error
+	// Wait returns what the shell ran for call id, waiting up to timeout
+	// for it to finish.
+	Wait(ctx context.Context, id string, timeout time.Duration) (rpc.Output, error)
+}
+
+// UI is the terminal the agent shows its work on.
+type UI interface {
+	io.Writer
+	// Size is the terminal's; cols 0 means there is none: plain text, no
+	// spinner.
+	Size() (cols, rows int)
+	// Ask prints q and returns the line the user answers with. An error
+	// means nobody can answer.
+	Ask(ctx context.Context, q string) (string, error)
+	// Fold keeps text, a tool's result, behind "ctrl+o to expand".
+	Fold(title, text string)
+	// Live is where an external tool's output goes as it runs: shown
+	// folded, like a command's.
+	Live(title string) Live
+	// CommandAt says the bash command was printed without a newline and
+	// ends at column col, so the status can go to its right; long when it
+	// took several lines.
+	CommandAt(col int, long bool)
+}
+
+// Live is a tool's output being shown; Finish ends it with the tool's exit
+// status, -1 when unknown.
+type Live interface {
+	io.Writer
+	Finish(exit int)
+}
+
+// Agent keeps what one request needs between the calls that drive it: the
+// journal as read, the tools the model was given, the shell's situation.
+// Cfg, Provider, Tools and Policy are set by whoever hosts the agent, before
+// each call.
 type Agent struct {
 	Cfg      config.Config
 	Provider llm.Provider
 	Tools    *tools.Registry
 	Policy   *policy.Engine
-	Client   *rpc.Client
-	RunDir   string // $AISH_RUN, where next.id/next.cmd are written
-	Out      io.Writer
+	Journal  Journal
+	Shell    Shell
+	UI       UI
 
 	entries []session.Entry
-	env     string // see environment; built once per process
-	nonce   string // see mark
+	sess    string // Journal.ID() the entries were read from
+	seen    int    // Journal.Len() after the agent last read or wrote it
+	env     string // see environment; built once per request
+	exec    tools.Exec
 }
 
-// Start records a new request and works on it.
-func (a *Agent) Start(ctx context.Context, text string) error {
-	if err := a.load(); err != nil {
+// Start records a new request made in ex and works on it.
+func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
+	a.exec, a.env = ex, ""
+	a.load(true)
+	if err := a.closePending(ctx); err != nil {
 		return err
 	}
-	if err := a.closePending(); err != nil {
-		return err
-	}
-	cwd, _ := os.Getwd()
+	cwd := ex.Dir
 	inst := instructions(a.entries, cwd)
 	for _, e := range inst {
-		fmt.Fprintf(a.Out, "%s  (%s)%s\n", dim, tildePath(e.Path), reset)
+		fmt.Fprintf(a.UI, "%s  (%s)%s\n", dim, tildePath(e.Path), reset)
 	}
 	if err := a.append(inst...); err != nil {
 		return err
 	}
 	files := mentions(text, cwd)
 	for _, e := range files {
-		fmt.Fprintf(a.Out, "%s  %s%s\n", dim, mentionNote(e, cwd), reset)
+		fmt.Fprintf(a.UI, "%s  %s%s\n", dim, mentionNote(e, cwd), reset)
 	}
 	if err := a.append(files...); err != nil {
 		return err
@@ -79,11 +131,10 @@ func (a *Agent) Start(ctx context.Context, text string) error {
 }
 
 // Resume records the result of the bash command with the given call id and
-// continues.
-func (a *Agent) Resume(ctx context.Context, id string, rc int) error {
-	if err := a.load(); err != nil {
-		return err
-	}
+// continues; ex is the shell after the command.
+func (a *Agent) Resume(ctx context.Context, id string, rc int, ex tools.Exec) error {
+	a.exec = ex
+	a.load(false)
 	var call *session.ToolCall
 	for _, c := range pending(a.entries) {
 		if c.ID == id {
@@ -94,7 +145,7 @@ func (a *Agent) Resume(ctx context.Context, id string, rc int) error {
 	if call == nil {
 		return fmt.Errorf("no pending tool call %s", id)
 	}
-	out, err := a.Client.WaitOutput(id, 10*time.Second)
+	out, err := a.Shell.Wait(ctx, id, 10*time.Second)
 	if err != nil {
 		out = rpc.Output{Output: "(output was not captured: " + err.Error() + ")", Exit: rc}
 	}
@@ -106,11 +157,11 @@ func (a *Agent) Resume(ctx context.Context, id string, rc int) error {
 
 // closePending gives a result to the tool calls a request interrupted with
 // Ctrl+C left without one: every call needs one.
-func (a *Agent) closePending() error {
+func (a *Agent) closePending(ctx context.Context) error {
 	for _, c := range pending(a.entries) {
 		msg := "interrupted by the user"
 		if c.Name == tools.Bash {
-			if out, err := a.Client.WaitOutput(c.ID, 0); err == nil && out.Output != "" {
+			if out, err := a.Shell.Wait(ctx, c.ID, 0); err == nil && out.Output != "" {
 				msg = capture.Truncate(out.Output, a.Cfg.MaxOutputBytes) + "\n[" + msg + "]"
 			}
 		}
@@ -122,11 +173,20 @@ func (a *Agent) closePending() error {
 }
 
 // load reads the journal from the last summary on: nothing before it is
-// sent, and instruction files read before it are read again.
-func (a *Agent) load() error {
-	es, err := a.Client.History()
+// sent, and instruction files read before it are read again. Unless full,
+// the entries are kept when the journal is the one they came from: within
+// a request nothing but the agent writes it, and a journal of any size
+// costs the same.
+func (a *Agent) load(full bool) {
+	if id := a.Journal.ID(); !full && a.entries != nil && id == a.sess && a.Journal.Len() == a.seen {
+		return
+	}
+	es := a.Journal.Entries()
 	a.entries = session.Current(es)
-	return err
+	if a.entries == nil {
+		a.entries = []session.Entry{}
+	}
+	a.sess, a.seen = a.Journal.ID(), len(es)
 }
 
 func (a *Agent) append(es ...session.Entry) error {
@@ -136,7 +196,9 @@ func (a *Agent) append(es ...session.Entry) error {
 		}
 	}
 	a.entries = append(a.entries, es...)
-	return a.Client.Append(es...)
+	err := a.Journal.Append(es...)
+	a.seen += len(es)
+	return err
 }
 
 // mcpNote tells the model about MCP tools it is not given schemas for.
@@ -158,7 +220,7 @@ func (a *Agent) drive(ctx context.Context) error {
 			return nil
 		}
 		if a.Cfg.MaxSteps > 0 && steps(a.entries) >= a.Cfg.MaxSteps {
-			fmt.Fprintf(a.Out, "%s[aish: stopped after %d steps; ask to continue]%s\n", dim, a.Cfg.MaxSteps, reset)
+			fmt.Fprintf(a.UI, "%s[aish: stopped after %d steps; ask to continue]%s\n", dim, a.Cfg.MaxSteps, reset)
 			return a.append(session.Entry{Kind: session.KindAssistant, Text: fmt.Sprintf("(stopped after %d steps)", a.Cfg.MaxSteps)})
 		}
 		if err := a.turn(ctx); err != nil {
@@ -171,8 +233,9 @@ func (a *Agent) drive(ctx context.Context) error {
 func (a *Agent) turn(ctx context.Context) error {
 	req := a.request(a.entries)
 	var streamed strings.Builder
-	sp := startSpinner(a.Out)
-	md := newMarkdown(sp, a.Out, a.Cfg)
+	cols, _ := a.UI.Size()
+	sp := startSpinner(a.UI, cols > 0)
+	md := newMarkdown(sp, a.UI.Size, a.Cfg)
 	resp, err := a.Provider.Complete(ctx, req, func(s string) {
 		io.WriteString(md, s)
 		streamed.WriteString(s)
@@ -195,7 +258,7 @@ func (a *Agent) turn(ctx context.Context) error {
 		e.ToolCalls = append(e.ToolCalls, session.ToolCall{ID: c.ID, Name: c.Name, Args: c.Args})
 	}
 	if resp.StopReason == "max_tokens" || resp.StopReason == "length" {
-		fmt.Fprintf(a.Out, "%s[aish: reply cut at max_tokens]%s\n", dim, reset)
+		fmt.Fprintf(a.UI, "%s[aish: reply cut at max_tokens]%s\n", dim, reset)
 	}
 	return a.append(e)
 }
@@ -212,7 +275,7 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 	if a.env == "" {
 		// From a.entries, not entries: Compact adds its prompt as a request
 		// and must send the system prompt the previous turns were cached with.
-		a.env = environment(requestCwd(a.entries))
+		a.env = environment(requestCwd(a.entries, a.exec.Dir))
 	}
 	req := llm.Request{
 		System:   system(a.env, extra),
@@ -227,8 +290,8 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 	return req
 }
 
-// call executes one tool call. For bash it writes the command for the shell
-// and reports handedOff; the result arrives with `aish agent resume`.
+// call executes one tool call. For bash it leaves the command for the shell
+// and reports handedOff; the result arrives with Resume.
 func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, err error) {
 	t, ok := a.Tools.Get(c.Name)
 	if !ok {
@@ -240,8 +303,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	}
 	title := a.show(t, args)
 
-	cwd, _ := os.Getwd()
-	in := policy.NewInput(t.Name, args, cwd)
+	in := policy.NewInput(t.Name, args, a.exec.Dir)
 	in.Server = t.Server
 	d, err := a.Policy.Check(ctx, in)
 	if err != nil {
@@ -252,7 +314,10 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		if t.Name == tools.Bash {
 			a.showBash(args, true)
 		}
-		d = a.ask(d)
+		d = a.ask(ctx, d)
+		if ctx.Err() != nil {
+			return false, ctx.Err() // the call stays pending: interrupted, not declined
+		}
 	}
 	if d.Action == policy.Deny {
 		msg := "denied by policy"
@@ -262,7 +327,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		if t.Name == tools.Bash && !asked {
 			a.showBash(args, true)
 		}
-		fmt.Fprintf(a.Out, "%s  ✗ %s%s\n", red, msg, reset)
+		fmt.Fprintf(a.UI, "%s  ✗ %s%s\n", red, msg, reset)
 		return false, a.append(toolResult(c, msg, true))
 	}
 
@@ -274,41 +339,42 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		if !asked {
 			a.showBash(args, false)
 		}
-		return true, a.handOff(c.ID, cmd)
+		return true, a.Shell.HandOff(c.ID, cmd)
 	}
 
-	// External tools print live; the proxy folds that output like a command's.
-	a.mark("fold-start;" + title)
-	res, err := t.Execute(ctx, args, a.Out)
-	a.mark("fold-end")
+	// External tools print live, folded like a command's output; built-ins
+	// print nothing until they are done.
+	var out io.Writer
+	var live Live
+	if t.Path != "" {
+		live = a.UI.Live(title)
+		out = live
+	}
+	res, err := t.ExecuteIn(ctx, a.exec, args, out)
+	if live != nil {
+		exit := -1
+		if errors.Is(ctx.Err(), context.Canceled) {
+			exit = 130
+		}
+		live.Finish(exit)
+	}
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return false, ctx.Err()
 		}
-		fmt.Fprintf(a.Out, "%s  ✗ %v%s\n", red, err, reset)
+		fmt.Fprintf(a.UI, "%s  ✗ %v%s\n", red, err, reset)
 		return false, a.append(toolResult(c, strings.TrimSpace(res+"\n"+err.Error()), true))
 	}
 	if t.Run != nil {
-		// Built-ins print nothing live: a one-line result is shown as is, a
-		// longer one is kept for Ctrl+O.
+		// A one-line result is shown as is, a longer one is kept for Ctrl+O.
 		line := summary(res)
 		if strings.Contains(strings.TrimSpace(res), "\n") {
-			line = "(" + line
-			if a.Client.Call(rpc.MethodFold, rpc.Fold{Title: title, Text: res}, nil) == nil {
-				line += " · ctrl+o to expand"
-			}
-			line += ")"
+			a.UI.Fold(title, res)
+			line = "(" + line + " · ctrl+o to expand)"
 		}
-		fmt.Fprintf(a.Out, "%s  %s%s\n", dim, line, reset)
+		fmt.Fprintf(a.UI, "%s  %s%s\n", dim, line, reset)
 	}
 	return false, a.append(toolResult(c, capture.Truncate(res, a.Cfg.MaxOutputBytes*4), false))
-}
-
-func (a *Agent) handOff(id, cmd string) error {
-	if err := os.WriteFile(filepath.Join(a.RunDir, "next.id"), []byte(id+"\n"), 0o600); err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(a.RunDir, "next.cmd"), []byte(cmd), 0o600)
 }
 
 // show prints the call and returns it as a plain title. A bash command is
@@ -330,23 +396,20 @@ func (a *Agent) show(t tools.Tool, args map[string]any) string {
 		}
 		parts = append(parts, s)
 	}
-	fmt.Fprintf(a.Out, "%s⚙%s %s %s\n", cyan, reset, t.Name, strings.Join(parts, " "))
+	fmt.Fprintf(a.UI, "%s⚙%s %s %s\n", cyan, reset, t.Name, strings.Join(parts, " "))
 	return strings.TrimSpace("⚙ " + t.Name + " " + strings.Join(parts, " "))
 }
 
 // showBash prints a bash command. Unless nl, the line is left open when the
-// output will be folded from its first line: the agent-col marker tells the
-// proxy where the command ends, and the proxy puts the status to its right.
+// output will be folded from its first line, and the UI is told where the
+// command ends so the status can go to its right.
 func (a *Agent) showBash(args map[string]any, nl bool) {
 	cmd, _ := args["command"].(string)
 	lines := strings.Split(cmd, "\n")
-	fmt.Fprintf(a.Out, "%s❯%s %s%s%s", cyan, reset, bold, strings.Join(lines, "\n  "), reset)
-	cols := 0
-	if f, ok := a.Out.(*os.File); ok {
-		cols, _, _ = term.GetSize(int(f.Fd()))
-	}
+	fmt.Fprintf(a.UI, "%s❯%s %s%s%s", cyan, reset, bold, strings.Join(lines, "\n  "), reset)
+	cols, _ := a.UI.Size()
 	if nl || a.Cfg.FoldLines != 0 || cols <= 0 {
-		fmt.Fprintln(a.Out)
+		fmt.Fprintln(a.UI)
 		return
 	}
 	last := "  " + lines[len(lines)-1]
@@ -358,62 +421,24 @@ func (a *Agent) showBash(args map[string]any, nl bool) {
 	if w > 0 && col == 0 {
 		col = cols // the cursor waits at the right edge
 	}
-	long := 0
-	if len(lines) > 1 || w > cols {
-		long = 1
-	}
-	a.mark(fmt.Sprintf("agent-col;%d;%d", col, long))
+	a.UI.CommandAt(col, len(lines) > 1 || w > cols)
 }
-
-// mark prints a marker for the proxy, which takes only the ones carrying
-// the nonce it has left in $AISH_RUN.
-func (a *Agent) mark(body string) {
-	if a.nonce == "" {
-		b, _ := os.ReadFile(filepath.Join(a.RunDir, "nonce"))
-		a.nonce = strings.TrimSpace(string(b))
-	}
-	fmt.Fprintf(a.Out, "\x1b]6973;%s;%s\a", a.nonce, markerSafe.Replace(body))
-}
-
-// markerSafe drops what a marker payload cannot hold: BEL would end it, ESC
-// makes the proxy take it for cut short. Tool titles come from the model.
-var markerSafe = strings.NewReplacer("\a", "", "\x1b", "")
 
 // ask lets the user decide an "ask" verdict on the terminal.
-func (a *Agent) ask(d policy.Decision) policy.Decision {
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return policy.Decision{Action: policy.Deny, Reason: "needs confirmation, no terminal: " + d.Reason}
-	}
+func (a *Agent) ask(ctx context.Context, d policy.Decision) policy.Decision {
 	q := "allow?"
 	if d.Reason != "" {
 		q = d.Reason + " — allow?"
 	}
-	fmt.Fprintf(a.Out, "%s%s [y/N] %s", bold, q, reset)
-	switch strings.ToLower(strings.TrimSpace(readLine(os.Stdin))) {
+	ans, err := a.UI.Ask(ctx, fmt.Sprintf("%s%s [y/N] %s", bold, q, reset))
+	if err != nil {
+		return policy.Decision{Action: policy.Deny, Reason: "needs confirmation, no terminal: " + d.Reason}
+	}
+	switch strings.ToLower(strings.TrimSpace(ans)) {
 	case "y", "yes", "д", "да":
 		return policy.Decision{Action: policy.Allow}
 	}
 	return policy.Decision{Action: policy.Deny, Reason: "the user declined"}
-}
-
-// readLine reads one line a byte at a time: a buffer would take what was
-// typed after it too, the answer to the next question or the shell's input.
-func readLine(r io.Reader) string {
-	var line []byte
-	var c [1]byte
-	for {
-		n, err := r.Read(c[:])
-		if n == 1 {
-			if c[0] == '\n' {
-				break
-			}
-			line = append(line, c[0])
-		}
-		if err != nil {
-			break
-		}
-	}
-	return string(line)
 }
 
 func toolResult(c session.ToolCall, out string, isErr bool) session.Entry {

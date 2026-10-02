@@ -22,56 +22,28 @@ func statusCmd(cfg config.Config) int {
 	if err != nil {
 		return fail(err)
 	}
-	var info rpc.Info
-	if err := client.Call(rpc.MethodInfo, nil, &info); err != nil {
+	// Counted by the proxy: the journal need not come over.
+	var st rpc.Status
+	if err := client.Call(rpc.MethodStatus, nil, &st); err != nil {
 		return fail(err)
 	}
-	all, err := client.History()
-	if err != nil {
-		return fail(err)
-	}
-	es := session.Current(all)
-	tokens := session.Tokens(es, cfg.MaxOutputBytes)
-
-	var shell, asks, calls, summaries, in, cached, out int
-	measured := false
-	for _, e := range all {
-		switch e.Kind {
-		case session.KindSummary:
-			summaries++
-		case session.KindAssistant:
-			calls += len(e.ToolCalls)
-			in += e.InputTokens
-			cached += e.CachedTokens
-			out += e.OutputTokens
-		}
-	}
-	for _, e := range es {
-		switch e.Kind {
-		case session.KindShell:
-			shell++
-		case session.KindUser:
-			asks++
-		case session.KindAssistant:
-			measured = measured || e.InputTokens > 0
-		}
-	}
+	info := st.Info
 
 	row := func(k, v string) { fmt.Printf("  \x1b[2m%-16s\x1b[0m %s\n", k, v) }
 	head := func(s string) { fmt.Printf("\x1b[1m%s\x1b[0m\n", s) }
 
 	head("context")
-	ctx := session.Short(tokens) + " tokens"
+	ctx := session.Short(st.Tokens) + " tokens"
 	if info.Window > 0 {
-		ctx = fmt.Sprintf("%s / %s (%d%%)", session.Short(tokens), session.Short(info.Window), tokens*100/info.Window)
+		ctx = fmt.Sprintf("%s / %s (%d%%)", session.Short(st.Tokens), session.Short(info.Window), st.Tokens*100/info.Window)
 	}
-	if !measured && tokens > 0 {
+	if !st.Measured && st.Tokens > 0 {
 		ctx += ", estimated"
 	}
 	row("used", ctx)
-	row("entries", fmt.Sprintf("%d commands, %d requests since the last compact", shell, asks))
+	row("entries", fmt.Sprintf("%d commands, %d requests since the last compact", st.Commands, st.Requests))
 	row("session", fmt.Sprintf("%d tool calls, %d compacts, %s in (%s cached) / %s out tokens spent",
-		calls, summaries, session.Short(in), session.Short(cached), session.Short(out)))
+		st.ToolCalls, st.Compacts, session.Short(st.InputTokens), session.Short(st.CachedTokens), session.Short(st.OutputTokens)))
 	dir := info.Dir
 	if dir == "" { // a proxy started by an older aish
 		dir = cfg.SessionsDir

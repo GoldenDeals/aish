@@ -187,7 +187,7 @@ func TestBadRequest(t *testing.T) {
 func TestConcurrent(t *testing.T) {
 	release := make(chan struct{})
 	c, _ := record(t, func(_ context.Context, method string, _ json.RawMessage) (any, error) {
-		if method == MethodWaitOutput {
+		if method == MethodAgentStart {
 			<-release
 		}
 		return method, nil
@@ -195,9 +195,9 @@ func TestConcurrent(t *testing.T) {
 	done := make(chan error)
 	go func() {
 		var s string
-		done <- c.Call(MethodWaitOutput, nil, &s)
+		done <- c.Call(MethodAgentStart, nil, &s)
 	}()
-	// A call waiting for output does not hold up the others.
+	// A call the proxy works on for long does not hold up the others.
 	var s string
 	if err := c.Call(MethodInfo, nil, &s); err != nil || s != MethodInfo {
 		t.Errorf("%q, %v", s, err)
@@ -213,8 +213,6 @@ func TestHelpers(t *testing.T) {
 		switch method {
 		case MethodHistory:
 			return []session.Entry{{Kind: session.KindUser, Text: "hi"}}, nil
-		case MethodWaitOutput:
-			return Output{Output: "out", Exit: 1, Cwd: "/tmp"}, nil
 		}
 		return nil, nil
 	})
@@ -222,21 +220,12 @@ func TestHelpers(t *testing.T) {
 	if err != nil || len(es) != 1 || es[0].Text != "hi" {
 		t.Errorf("history %+v, %v", es, err)
 	}
-	if err := c.Append(session.Entry{Kind: session.KindShell, Cmd: "ls"}); err != nil {
+	if err := c.Call(MethodAgentResume, AgentParams{ID: "c1", RC: 2, Cwd: "/tmp"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	out, err := c.WaitOutput("c1", 1500*time.Millisecond)
-	if err != nil || out != (Output{Output: "out", Exit: 1, Cwd: "/tmp"}) {
-		t.Errorf("output %+v, %v", out, err)
-	}
-
 	got := calls()
-	var ap AppendParams
-	if err := json.Unmarshal(got[1].params, &ap); err != nil || got[1].method != MethodAppend || len(ap.Entries) != 1 || ap.Entries[0].Cmd != "ls" {
-		t.Errorf("append: %s %s", got[1].method, got[1].params)
-	}
-	if got[2].method != MethodWaitOutput || string(got[2].params) != `{"id":"c1","timeout_ms":1500}` {
-		t.Errorf("wait_output: %s %s", got[2].method, got[2].params)
+	if got[1].method != MethodAgentResume || string(got[1].params) != `{"id":"c1","rc":2,"cwd":"/tmp"}` {
+		t.Errorf("agent_resume: %s %s", got[1].method, got[1].params)
 	}
 }
 

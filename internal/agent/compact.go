@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/inebotov/aish/internal/session"
+	"github.com/inebotov/aish/internal/tools"
 )
 
 const compactPrompt = `Your context is about to be replaced with a summary of this session, written by you now. Do not call tools; reply with the summary only.
@@ -28,15 +28,14 @@ func summaryBlock(e session.Entry) string {
 
 // Compact asks the model to sum the session up and records the summary: from
 // then on it is sent instead of everything before it. Focus says what the
-// summary should keep in particular.
-func (a *Agent) Compact(ctx context.Context, focus string) error {
-	if err := a.load(); err != nil {
-		return err
-	}
+// summary should keep in particular; ex is the shell the user asked from.
+func (a *Agent) Compact(ctx context.Context, focus string, ex tools.Exec) error {
+	a.exec = ex
+	a.load(true)
 	if len(a.entries) == 0 || len(a.entries) == 1 && a.entries[0].Kind == session.KindSummary {
 		return errors.New("nothing to compact")
 	}
-	if err := a.closePending(); err != nil {
+	if err := a.closePending(ctx); err != nil {
 		return err
 	}
 	before := session.Tokens(a.entries, a.Cfg.MaxOutputBytes)
@@ -44,12 +43,13 @@ func (a *Agent) Compact(ctx context.Context, focus string) error {
 	if focus = strings.TrimSpace(focus); focus != "" {
 		prompt += "\n\nThe user asks the summary to focus on: " + focus
 	}
-	cwd, _ := os.Getwd()
+	cwd := ex.Dir
 	es := append(a.entries[:len(a.entries):len(a.entries)], session.Entry{Kind: session.KindUser, Text: prompt, Cwd: cwd})
 	// The tools stay in the request: the history has calls to them.
 	req := a.request(es)
 
-	sp := startSpinner(a.Out)
+	cols, _ := a.UI.Size()
+	sp := startSpinner(a.UI, cols > 0)
 	resp, err := a.Provider.Complete(ctx, req, nil)
 	sp.Stop()
 	if err != nil {
@@ -64,7 +64,7 @@ func (a *Agent) Compact(ctx context.Context, focus string) error {
 		return err
 	}
 	after := session.Tokens([]session.Entry{sum}, 0)
-	fmt.Fprintf(a.Out, "%scompacted: %s → %s tokens (aish session show prints the summary)%s\n",
+	fmt.Fprintf(a.UI, "%scompacted: %s → %s tokens (aish session show prints the summary)%s\n",
 		dim, session.Short(before), session.Short(after), reset)
 	return nil
 }

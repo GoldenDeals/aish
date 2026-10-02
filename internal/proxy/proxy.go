@@ -25,11 +25,13 @@ import (
 	"github.com/creack/pty"
 	"golang.org/x/term"
 
+	"github.com/inebotov/aish/internal/agent"
 	"github.com/inebotov/aish/internal/bashstate"
 	"github.com/inebotov/aish/internal/capture"
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/mcp"
+	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 	"github.com/inebotov/aish/internal/shellinit"
@@ -51,7 +53,7 @@ type segment struct {
 // Fold is one output hidden behind "ctrl+o to expand".
 type Fold = rpc.Fold
 
-// Proxy owns the session and the output recorder.
+// Proxy owns the session, the output recorder and the agent.
 type Proxy struct {
 	sess         *session.Session
 	foldLines    int
@@ -67,11 +69,12 @@ type Proxy struct {
 	asking   bool                // inside __aish_ask, between ask-start and the next prompt
 	user     *segment            // command typed by the user, between cmd-start and cmd-end
 	agent    map[string]*segment // commands run on behalf of the agent, by call id
-	tool     *fold               // live output of a non-bash tool, between fold-start and fold-end
+	tool     *fold               // live output of an external tool, while it runs
 	at       *statusAt           // where the agent left the cursor after printing its next command
 	folds    []Fold              // folded outputs of the last request, for Ctrl+O
 	view     *viewer             // open while Ctrl+O shows the folds
 	held     []byte              // shell output that arrived while the viewer was open
+	ask      *prompt             // a question the agent waits for the user to answer
 	done     map[string]rpc.Output
 	waiters  map[string]chan struct{}
 	mcp      *mcp.Manager
@@ -89,6 +92,16 @@ type Proxy struct {
 
 	restore string // the script that brings back a resumed session
 	resumed *session.Saved
+
+	// The agent, see agent.go. cancelReq is under p.mu; the rest is the
+	// request's own, one at a time under reqMu.
+	reqMu        sync.Mutex
+	ag           *agent.Agent
+	cancelReq    context.CancelFunc
+	policies     policy.Cache
+	agentProv    llm.Provider
+	agentProvKey string
+	newProvider  func(config.Config) (llm.Provider, error) // nil: llm.New; tests set it
 }
 
 func New(sess *session.Session) *Proxy {
@@ -323,6 +336,9 @@ func (p *Proxy) key(b []byte) []byte {
 		}
 		return nil
 	}
+	if p.ask != nil {
+		return p.askKey(b)
+	}
 	i := bytes.IndexByte(b, ctrlO)
 	// A user's command (an editor, say) gets Ctrl+O as usual.
 	if i < 0 || p.user != nil {
@@ -451,15 +467,6 @@ func (p *Proxy) marker(m Marker) {
 	case "ask-start":
 		p.asking = true
 		p.folds = nil
-	case "fold-start":
-		if p.foldLines >= 0 {
-			p.tool = newFold(m.Payload, p.foldLines)
-		}
-	case "fold-end":
-		if p.tool != nil {
-			p.finishFold(p.tool, -1)
-			p.tool = nil
-		}
 	case "cmd-end":
 		defer p.drawStatus() // once the command is in the journal
 		p.at = nil
@@ -506,13 +513,6 @@ func (p *Proxy) marker(m Marker) {
 		}
 		p.at = nil
 		p.agent[id] = seg
-	case "agent-col":
-		// The agent printed its command without a newline: "<col>;<long>".
-		c, long, _ := strings.Cut(m.Payload, ";")
-		col, err := strconv.Atoi(c)
-		if w, _ := p.size(); err == nil && col >= 0 && w > 0 {
-			p.at = &statusAt{col: min(col, w), cols: w, long: long == "1"}
-		}
 	case "agent-end":
 		f := strings.SplitN(m.Payload, ";", 3)
 		if len(f) < 3 {
@@ -533,8 +533,8 @@ func (p *Proxy) marker(m Marker) {
 	}
 }
 
-// finish keeps an agent command's output for `wait_output`, waking the
-// `aish agent resume` that may already be waiting for it.
+// finish keeps an agent command's output for wait, waking the agent's
+// Resume that may already be waiting for it.
 func (p *Proxy) finish(id string, out rpc.Output) {
 	p.done[id] = out
 	if ch, ok := p.waiters[id]; ok {
@@ -582,22 +582,26 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 		}
 		p.effort = mp.Effort
 		return p.info(), nil
+	case rpc.MethodStatus:
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.status(), nil
 	case rpc.MethodHistory:
 		return p.session().Entries(), nil
-	case rpc.MethodAppend:
-		var ap rpc.AppendParams
+	case rpc.MethodAgentStart, rpc.MethodAgentResume, rpc.MethodCompact:
+		var ap rpc.AgentParams
 		if err := json.Unmarshal(params, &ap); err != nil {
 			return nil, err
 		}
-		return nil, p.session().Append(ap.Entries...)
-	case rpc.MethodFold:
-		var f Fold
-		if err := json.Unmarshal(params, &f); err != nil {
-			return nil, err
+		switch method {
+		case rpc.MethodAgentStart:
+			return nil, p.agentStart(ctx, ap)
+		case rpc.MethodAgentResume:
+			return nil, p.agentResume(ctx, ap)
 		}
-		p.mu.Lock()
-		p.folds = append(p.folds, f)
-		p.mu.Unlock()
+		return nil, p.compact(ctx, ap)
+	case rpc.MethodAgentCancel:
+		p.cancelRequest()
 		return nil, nil
 	case rpc.MethodFolds:
 		p.mu.Lock()
@@ -616,12 +620,6 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 		return p.resume(rp.ID)
 	case rpc.MethodMCPStatus:
 		return p.mcp.Status(), nil
-	case rpc.MethodWaitOutput:
-		var wp rpc.WaitParams
-		if err := json.Unmarshal(params, &wp); err != nil {
-			return nil, err
-		}
-		return p.wait(ctx, wp.ID, time.Duration(wp.TimeoutMS)*time.Millisecond)
 	case rpc.MethodMCPList:
 		var lp mcp.ListParams
 		if err := json.Unmarshal(params, &lp); err != nil {

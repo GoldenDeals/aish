@@ -199,6 +199,38 @@ func TestManager(t *testing.T) {
 	}
 }
 
+// Local gives the agent in the proxy the manager's tools without an RPC
+// round trip; the model is not given schemas of commands-only servers.
+func TestLocal(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	m := stubManager(t, filepath.Join(dir, "cache"), filepath.Join(dir, "starts"))
+	defer m.Close()
+	if ts, _ := Local(ctx, m, false); len(ts) != 0 {
+		t.Fatalf("listed without starting: %d tools", len(ts))
+	}
+	ts, problems := Local(ctx, m, true)
+	if len(ts) != 3 || len(problems) != 0 {
+		t.Fatalf("%d tools, problems %q", len(ts), problems)
+	}
+	search := ts[0]
+	if search.Name != "stub_search" || search.Server != "stub" || !search.Hidden || len(search.Args) != 6 {
+		t.Errorf("tool %+v", search)
+	}
+	out, err := search.Execute(ctx, map[string]any{"query": "x"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Split(out, "\n"); lines[0] != `{"query":"x"}` {
+		t.Errorf("output %q", out)
+	} else {
+		os.Remove(lines[1])
+	}
+	if out, err := ts[1].Execute(ctx, nil, nil); out != "no such thing" || err == nil {
+		t.Errorf("isError: %q, %v", out, err)
+	}
+}
+
 // A client that gives up stops waiting at once, but neither the start it
 // asked for nor the server is lost for the others.
 func TestGiveUp(t *testing.T) {

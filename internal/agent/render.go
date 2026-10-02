@@ -2,9 +2,6 @@ package agent
 
 import (
 	"io"
-	"os"
-
-	"golang.org/x/term"
 
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/markdown"
@@ -16,21 +13,19 @@ type flusher interface {
 	Flush()
 }
 
-// newMarkdown renders the assistant's markdown onto w when out is a
+// newMarkdown renders the assistant's markdown onto w when size reports a
 // terminal, and passes it through as is otherwise.
-func newMarkdown(w, out io.Writer, cfg config.Config) flusher {
-	f, ok := out.(*os.File)
-	if !cfg.Markdown || !ok || !term.IsTerminal(int(f.Fd())) {
+func newMarkdown(w io.Writer, size func() (cols, rows int), cfg config.Config) flusher {
+	if cols, _ := size(); !cfg.Markdown || cols <= 0 {
 		return &plain{w: w}
 	}
-	size := func() (int, int) {
-		c, r, err := term.GetSize(int(f.Fd()))
-		if err != nil || c <= 0 {
+	return markdown.New(w, func() (int, int) {
+		c, r := size()
+		if c <= 0 {
 			return 80, 24
 		}
 		return c, r
-	}
-	return markdown.New(w, size, cfg.CodeStyle)
+	}, cfg.CodeStyle)
 }
 
 type plain struct {

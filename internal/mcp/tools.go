@@ -28,6 +28,28 @@ func Remote(c *rpc.Client, wait bool) ([]tools.Tool, []string) {
 	if err := c.CallContext(ctx, rpc.MethodMCPList, ListParams{Wait: wait}, &res); err != nil {
 		return nil, []string{"mcp: " + err.Error()}
 	}
+	return convert(res, func(ctx context.Context, info ToolInfo, args map[string]any) (string, error) {
+		return call(ctx, c, info, args)
+	})
+}
+
+// Local returns the manager's tools for the agent in the manager's own
+// process, the proxy, and the problems found.
+func Local(ctx context.Context, m *Manager, wait bool) ([]tools.Tool, []string) {
+	res := m.List(ctx, wait)
+	return convert(res, func(ctx context.Context, info ToolInfo, args map[string]any) (string, error) {
+		ctx, cancel := context.WithTimeout(ctx, info.Timeout)
+		defer cancel()
+		raw, err := m.Call(ctx, info.Name, args)
+		if err != nil {
+			return "", err
+		}
+		return Format(raw)
+	})
+}
+
+// convert makes tools of a listing, each run through run.
+func convert(res ListResult, run func(context.Context, ToolInfo, map[string]any) (string, error)) ([]tools.Tool, []string) {
 	var out []tools.Tool
 	for _, info := range res.Tools {
 		args, err := Args(info.Schema)
@@ -39,7 +61,7 @@ func Remote(c *rpc.Client, wait bool) ([]tools.Tool, []string) {
 			Name: info.Name, Desc: info.Description, Args: args, Server: info.Server,
 			RawSchema: info.Schema, Hidden: info.Expose != "tools",
 			Run: func(ctx context.Context, args map[string]any) (string, error) {
-				return call(ctx, c, info, args)
+				return run(ctx, info, args)
 			},
 		})
 	}

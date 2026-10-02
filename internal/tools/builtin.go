@@ -177,10 +177,14 @@ func editFile(_ context.Context, args map[string]any) (string, error) {
 // --name VALUE (a true boolean as --name); a Stdin argument on standard
 // input. Every argument given is also in AISH_ARG_<NAME>. Output is shown
 // live and returned.
-func runExternal(ctx context.Context, t Tool, args map[string]any, live io.Writer) (string, error) {
+func runExternal(ctx context.Context, t Tool, ex Exec, args map[string]any, live io.Writer) (string, error) {
 	var pos, flags []string
 	cmd := exec.CommandContext(ctx, t.Path)
-	cmd.Env = os.Environ()
+	cmd.Dir = ex.Dir
+	cmd.Env = ex.Env
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
 	for _, a := range t.Args {
 		v := args[a.Name]
 		if v == nil {

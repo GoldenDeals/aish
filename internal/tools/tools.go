@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -113,13 +114,46 @@ func Load(dir string) *Registry {
 	return r
 }
 
-// Execute runs a non-bash tool and returns its textual result.
+// Exec is where a tool runs: the shell's working directory, which relative
+// paths are taken from, and its environment. The agent lives in the proxy,
+// whose own are not the user's. The zero value is the process's own.
+type Exec struct {
+	Dir string
+	Env []string
+}
+
+// Getenv is the value of name in Env, or in the process's environment when
+// Env is nil.
+func (e Exec) Getenv(name string) string {
+	if e.Env == nil {
+		return os.Getenv(name)
+	}
+	for _, kv := range e.Env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+			return v
+		}
+	}
+	return ""
+}
+
+// Execute runs a non-bash tool in this process's directory and environment
+// and returns its textual result.
 func (t Tool) Execute(ctx context.Context, args map[string]any, out io.Writer) (string, error) {
+	return t.ExecuteIn(ctx, Exec{}, args, out)
+}
+
+// ExecuteIn is Execute in ex: a built-in's relative path is taken from
+// ex.Dir, an external tool runs there with ex.Env.
+func (t Tool) ExecuteIn(ctx context.Context, ex Exec, args map[string]any, out io.Writer) (string, error) {
 	if t.Run != nil {
+		if p, ok := args["path"].(string); ok && ex.Dir != "" && t.Server == "" && p != "" && !filepath.IsAbs(p) {
+			args = maps.Clone(args)
+			args["path"] = filepath.Join(ex.Dir, p)
+		}
 		return t.Run(ctx, args)
 	}
 	if t.Path != "" {
-		return runExternal(ctx, t, args, out)
+		return runExternal(ctx, t, ex, args, out)
 	}
 	return "", fmt.Errorf("tool %s cannot be executed directly", t.Name)
 }

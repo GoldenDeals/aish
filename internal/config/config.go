@@ -179,17 +179,21 @@ func (c Config) check() error {
 }
 
 // Key returns the API key, falling back to the provider's conventional env var.
-func (c Config) Key() string {
+func (c Config) Key() string { return c.KeyFrom(os.Getenv) }
+
+// KeyFrom is Key with the environment read through getenv: the shell's,
+// which the proxy's own stops matching once the user exports the key there.
+func (c Config) KeyFrom(getenv func(string) string) string {
 	if c.APIKey != "" {
 		return c.APIKey
 	}
-	if k := os.Getenv(c.APIKeyEnv); k != "" {
+	if k := getenv(c.APIKeyEnv); k != "" {
 		return k
 	}
 	if c.Provider == "openai" {
-		return os.Getenv("OPENAI_API_KEY")
+		return getenv("OPENAI_API_KEY")
 	}
-	return os.Getenv("ANTHROPIC_API_KEY")
+	return getenv("ANTHROPIC_API_KEY")
 }
 
 // ReplyTokens is MaxTokens, or when it is 0 enough for the effort: at xhigh

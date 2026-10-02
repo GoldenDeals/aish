@@ -11,8 +11,8 @@
 //	aish status                  the context, the model and the settings
 //	aish model [NAME] [EFFORT]   list the models, switch this shell's model or effort
 //	aish expand                  print the outputs folded during the last request (Ctrl+O)
-//	aish agent start -- TEXT     (internal) handle a request
-//	aish agent resume ID RC      (internal) continue after a bash command
+//	aish agent start -- TEXT     (internal) hand a request to the agent in the proxy
+//	aish agent resume ID RC      (internal) continue it after a bash command
 package main
 
 import (
@@ -21,15 +21,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
-	"syscall"
 
-	"github.com/inebotov/aish/internal/agent"
 	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/mcp"
-	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 	"github.com/inebotov/aish/internal/shellinit"
@@ -76,13 +71,13 @@ func run(args []string) int {
 		fmt.Print(shellinit.Bash)
 		return 0
 	case "agent":
-		return agentCmd(cfg, args[1:])
+		return agentCmd(args[1:])
 	case "tool":
 		return toolCmd(cfg, args[1:])
 	case "session":
 		return sessionCmd(args[1:])
 	case "compact":
-		return compactCmd(cfg, args[1:])
+		return compactCmd(args[1:])
 	case "status":
 		return statusCmd(cfg)
 	case "model":
@@ -134,59 +129,6 @@ func shell(cfg config.Config, args []string) int {
 	return startShell(cfg, sess, resume && sess.Len() > 0)
 }
 
-func agentCmd(cfg config.Config, args []string) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	a, err := newAgent(ctx, cfg)
-	if err != nil {
-		return fail(err)
-	}
-	const agentUsage = "usage: aish agent start -- TEXT | aish agent resume ID RC"
-	switch {
-	case len(args) >= 1 && args[0] == "start":
-		text := strings.Join(trimDashes(args[1:]), " ")
-		err = a.Start(ctx, text)
-	case len(args) == 3 && args[0] == "resume":
-		// Not 0 on garbage: the model would be told the command succeeded.
-		rc, perr := strconv.Atoi(args[2])
-		if perr != nil {
-			return fail(fmt.Errorf("RC %q is not a number; %s", args[2], agentUsage))
-		}
-		err = a.Resume(ctx, args[1], rc)
-	default:
-		return fail(errors.New(agentUsage))
-	}
-	if ctx.Err() != nil {
-		fmt.Fprintln(os.Stderr, "\x1b[2m[interrupted]\x1b[0m")
-		return 130
-	}
-	if err != nil {
-		return fail(err)
-	}
-	return 0
-}
-
-func newAgent(ctx context.Context, cfg config.Config) (*agent.Agent, error) {
-	client, err := rpc.FromEnv()
-	if err != nil {
-		return nil, err
-	}
-	cfg = shellConfig(cfg, client)
-	prov, err := llm.New(cfg)
-	if err != nil {
-		return nil, err
-	}
-	pol, err := policy.Load(ctx, cfg.PolicyDir)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.Agent{
-		Cfg: cfg, Provider: prov, Tools: loadTools(cfg, true, nil), Policy: pol,
-		Client: client, RunDir: os.Getenv("AISH_RUN"), Out: os.Stdout,
-	}, nil
-}
-
 // shellConfig is cfg with the model and the effort this shell uses: `aish
 // model` may have switched them.
 func shellConfig(cfg config.Config, client *rpc.Client) config.Config {
@@ -197,24 +139,6 @@ func shellConfig(cfg config.Config, client *rpc.Client) config.Config {
 	return cfg
 }
 
-func compactCmd(cfg config.Config, args []string) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	a, err := newAgent(ctx, cfg)
-	if err != nil {
-		return fail(err)
-	}
-	err = a.Compact(ctx, strings.Join(args, " "))
-	if ctx.Err() != nil {
-		fmt.Fprintln(os.Stderr, "\x1b[2m[interrupted]\x1b[0m")
-		return 130
-	}
-	if err != nil {
-		return fail(err)
-	}
-	return 0
-}
-
 func trimDashes(a []string) []string {
 	if len(a) > 0 && a[0] == "--" {
 		return a[1:]
@@ -222,29 +146,23 @@ func trimDashes(a []string) []string {
 	return a
 }
 
-// loadTools returns the built-in and external tools, the skills of cwd
-// plus, inside aish, the MCP tools the proxy provides; for the model, without
-// the skills only the user may invoke. Problems of the MCP tools go to warn;
-// those of the skills are for `aish skills`.
-//
-// The model gets only the MCP tools already known: waiting for a server the
-// proxy is still warming up would stall the request for up to startTimeout
-// with no output. Such a server reaches the model with the next request, and
-// `aish tool` waits for it anyway.
-func loadTools(cfg config.Config, model bool, warn func(string)) *tools.Registry {
+// loadTools returns the tools the user may run as commands: the built-in
+// and external ones, the skills of cwd and, inside aish, the MCP tools the
+// proxy provides, waiting for servers it has not started yet. Problems of
+// the MCP tools go to warn; those of the skills are for `aish skills`. The
+// agent's tools are the proxy's business.
+func loadTools(cfg config.Config, warn func(string)) *tools.Registry {
 	reg := tools.Load(cfg.ToolsDir)
 	cwd, _ := os.Getwd()
 	found, _ := skills.Find(cwd)
 	for _, s := range found {
-		if !model || !s.UserOnly {
-			reg.Add(s.Tool())
-		}
+		reg.Add(s.Tool())
 	}
 	client, err := rpc.FromEnv()
 	if err != nil {
 		return reg
 	}
-	remote, problems := mcp.Remote(client, !model)
+	remote, problems := mcp.Remote(client, true)
 	for _, t := range remote {
 		if !reg.Add(t) {
 			problems = append(problems, t.Name+": skipped, another tool has this name")
@@ -260,7 +178,7 @@ func loadTools(cfg config.Config, model bool, warn func(string)) *tools.Registry
 
 func toolCmd(cfg config.Config, args []string) int {
 	var problems []string
-	reg := loadTools(cfg, false, func(s string) { problems = append(problems, s) })
+	reg := loadTools(cfg, func(s string) { problems = append(problems, s) })
 	if len(args) == 0 {
 		w := 12
 		for _, t := range reg.All() {

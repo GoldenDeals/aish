@@ -13,11 +13,10 @@
 #   ask-start                    a request to the assistant begins
 #   agent-start;<id>;<command>   before a command requested by the agent
 #   agent-end;<id>;<rc>;<cwd>    after it
-#   fold-start;<title>, fold-end around a tool's live output (printed by aish)
-#   agent-col;<col>;<long>       the agent left its command's line open at <col>
-#                                for the proxy's status (printed by aish)
 #
-# The proxy folds long agent output; Ctrl+O (handled by the proxy) shows it.
+# The agent itself runs in the proxy: `aish agent start|resume` only carry
+# the request there and wait. The proxy folds long agent output; Ctrl+O
+# (handled by the proxy) shows it.
 
 [[ $- == *i* ]] || return 0
 [[ -n ${__aish_loaded-} ]] && return 0

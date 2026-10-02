@@ -432,6 +432,46 @@ func TestRunExternalFails(t *testing.T) {
 	}
 }
 
+// The agent runs in the proxy, not in the shell: tools take the shell's
+// directory and environment from Exec.
+func TestExecuteIn(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read, _ := Load("").Get("read_file")
+	ex := Exec{Dir: dir, Env: []string{"AISH_PROBE=yes", "PATH=" + os.Getenv("PATH")}}
+	args := map[string]any{"path": "f.txt"}
+	out, err := read.ExecuteIn(context.Background(), ex, args, nil)
+	if err != nil || !strings.Contains(out, "hello") {
+		t.Errorf("relative path from Exec.Dir: %q, %v", out, err)
+	}
+	if args["path"] != "f.txt" {
+		t.Errorf("the caller's args were changed: %v", args)
+	}
+	if _, err := read.Execute(context.Background(), args, nil); err == nil {
+		t.Error("without Exec the path is relative to the process")
+	}
+
+	path := filepath.Join(dir, "probe")
+	writeExec(t, path, "#!/bin/sh\npwd\necho \"$AISH_PROBE\"\n", 0o755)
+	tool := Tool{Name: "probe", Path: path}
+	out, err = tool.ExecuteIn(context.Background(), ex, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	real, _ := filepath.EvalSymlinks(dir)
+	if got := strings.Split(strings.TrimSpace(out), "\n"); len(got) != 2 || got[0] != real && got[0] != dir || got[1] != "yes" {
+		t.Errorf("external tool ran as %q, want in %s with the given environment", out, dir)
+	}
+	if got := ex.Getenv("AISH_PROBE"); got != "yes" {
+		t.Errorf("Getenv %q", got)
+	}
+	if got := (Exec{}).Getenv("PATH"); got != os.Getenv("PATH") {
+		t.Errorf("Getenv without Env is the process's: %q", got)
+	}
+}
+
 func TestExecuteBash(t *testing.T) {
 	bash, _ := Load("").Get(Bash)
 	if _, err := bash.Execute(context.Background(), map[string]any{"command": "true"}, nil); err == nil {
