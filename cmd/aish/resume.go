@@ -105,6 +105,7 @@ func startShell(cfg config.Config, sess *session.Session, resume bool) int {
 	for _, s := range found {
 		reg.Add(s.Tool())
 	}
+	p.Commands = UserCommands
 	code, err := p.Run(cfg, reg)
 	if err != nil {
 		return fail(err)

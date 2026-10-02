@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,6 +64,10 @@ type Proxy struct {
 	prov         llm.Provider // for the models list
 	out          io.Writer    // the terminal
 	size         func() (w, h int)
+
+	// Commands are aish subcommands the shell gets as commands of their
+	// own (`status` for `aish status`); set before Run.
+	Commands []string
 
 	mu       sync.Mutex
 	screen   Screen
@@ -152,7 +157,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	}
 	defer func() { p.session().Unlock() }()
 	nonce := rand.Text()
-	run, err := makeRunDir(reg, self, nonce)
+	run, err := makeRunDir(reg, p.Commands, self, nonce)
 	if err != nil {
 		return 1, err
 	}
@@ -171,7 +176,10 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	}
 	p.mcp = mcp.NewManager(servers, filepath.Join(config.CacheDir(), "mcp"))
 	p.mcp.Bin, p.mcp.Self = filepath.Join(run, "bin"), self
-	p.mcp.Taken = func(name string) bool { _, ok := reg.Get(name); return ok }
+	p.mcp.Taken = func(name string) bool {
+		_, ok := reg.Get(name)
+		return ok || slices.Contains(p.Commands, name)
+	}
 	p.mcp.Warm()
 	defer p.mcp.Close()
 
@@ -246,7 +254,13 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	return 0, waitErr
 }
 
-func makeRunDir(reg *tools.Registry, self, nonce string) (string, error) {
+// makeRunDir creates the session's directory with the command wrappers in
+// bin: one per name in cmds (`exec self NAME`) and one per tool with a Run
+// (`exec self tool NAME`). A name that is a command already gets no
+// wrapper: bin comes first in PATH and would hide it for the whole shell.
+// The subcommands go first, so a tool with such a name is left to `aish
+// tool`.
+func makeRunDir(reg *tools.Registry, cmds []string, self, nonce string) (string, error) {
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
 		base = os.TempDir()
@@ -259,12 +273,24 @@ func makeRunDir(reg *tools.Registry, self, nonce string) (string, error) {
 	if err := os.Mkdir(bin, 0o700); err != nil {
 		return "", err
 	}
+	for _, c := range cmds {
+		if _, err := exec.LookPath(c); err == nil {
+			continue // `expand` is coreutils; `aish expand` and Ctrl+O remain
+		}
+		script := fmt.Sprintf("#!/bin/sh\nexec %q %s \"$@\"\n", self, c)
+		if err := os.WriteFile(filepath.Join(bin, c), []byte(script), 0o755); err != nil {
+			return "", err
+		}
+	}
 	for _, t := range reg.All() {
 		if t.Run == nil {
 			continue // bash is bash; external tools are already on PATH
 		}
 		if _, err := exec.LookPath(t.Name); err == nil {
 			continue // the wrapper would shadow it for the whole shell
+		}
+		if slices.Contains(cmds, t.Name) {
+			continue
 		}
 		script := fmt.Sprintf("#!/bin/sh\nexec %q tool %s \"$@\"\n", self, t.Name)
 		if err := os.WriteFile(filepath.Join(bin, t.Name), []byte(script), 0o755); err != nil {

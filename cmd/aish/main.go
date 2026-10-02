@@ -49,6 +49,8 @@ const usage = `usage:
 
 In the shell: commands run as usual; text that is not a command goes to the
 assistant. Prefix with ? to force the assistant, with ! to force bash.
+The subcommands from resume to expand also work without "aish" in front
+(status, model high, compact), unless a command of that name is on PATH.
 `
 
 func main() {

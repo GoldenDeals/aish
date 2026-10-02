@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mattn/go-runewidth"
@@ -28,6 +29,10 @@ func skillsCmd(cfg config.Config, args []string) int {
 	for _, s := range found {
 		if _, taken := reg.Get(s.Name); taken {
 			problems = append(problems, skills.Problem{Path: s.File(), Msg: "skipped, a tool has this name"})
+			continue
+		}
+		if slices.Contains(UserCommands, s.Name) {
+			problems = append(problems, skills.Problem{Path: s.File(), Msg: "skipped, an aish command has this name"})
 			continue
 		}
 		if p := shadowed(s.Name); p != "" && !s.Project {
