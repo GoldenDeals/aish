@@ -62,10 +62,15 @@ type Entry struct {
 	// assistant
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// Raw is the provider's own encoding of the assistant message (thinking
-	// blocks etc.), replayed verbatim when the same provider is used.
+	// blocks etc.), replayed verbatim when the same provider, model and
+	// profile are used.
 	Raw      json.RawMessage `json:"raw,omitempty"`
 	Provider string          `json:"provider,omitempty"`
 	Model    string          `json:"model,omitempty"`
+	// Profile is the one of config.toml the reply came from, "" for its top
+	// level: Raw is replayed only within it, as accounts differ between
+	// profiles.
+	Profile string `json:"profile,omitempty"`
 	// What the request for this turn cost: everything sent, cache included,
 	// the part of it read from the cache, and the reply.
 	InputTokens  int `json:"input_tokens,omitempty"`

@@ -283,7 +283,7 @@ func (a *Agent) turn(ctx context.Context) error {
 	}
 	e := session.Entry{
 		Kind: session.KindAssistant, Text: resp.Text, Raw: resp.Raw,
-		Provider: a.Provider.Name(), Model: a.Provider.Model(),
+		Provider: a.Provider.Name(), Model: a.Provider.Model(), Profile: a.Cfg.Profile,
 		InputTokens: resp.InputTokens, CachedTokens: resp.CachedTokens, OutputTokens: resp.OutputTokens,
 	}
 	for _, c := range resp.ToolCalls {
@@ -319,7 +319,7 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 	}
 	req := llm.Request{
 		System:   system(a.env, extra),
-		Messages: Messages(entries, a.Cfg.MaxOutputBytes, a.mask),
+		Messages: Messages(ownRaw(entries, a.Cfg.Profile), a.Cfg.MaxOutputBytes, a.mask),
 	}
 	for _, t := range a.Tools.All() {
 		if tools.IsHidden(t) {
