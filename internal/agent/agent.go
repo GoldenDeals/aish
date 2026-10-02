@@ -46,6 +46,7 @@ type Agent struct {
 	Out      io.Writer
 
 	entries []session.Entry
+	env     string // see environment; built once per process
 }
 
 // Start records a new request and works on it.
@@ -208,8 +209,13 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 	if hidden {
 		extra = strings.TrimSpace(mcpNote + "\n\n" + extra)
 	}
+	if a.env == "" {
+		// From a.entries, not entries: Compact adds its prompt as a request
+		// and must send the system prompt the previous turns were cached with.
+		a.env = environment(requestCwd(a.entries))
+	}
 	req := llm.Request{
-		System:   system(extra),
+		System:   system(a.env, extra),
 		Messages: Messages(entries, a.Cfg.MaxOutputBytes),
 	}
 	for _, t := range a.Tools.All() {

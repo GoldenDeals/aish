@@ -2,11 +2,13 @@ package agent
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/session"
+	"github.com/inebotov/aish/internal/tools"
 )
 
 func TestMessages(t *testing.T) {
@@ -74,5 +76,26 @@ func TestMessagesFromSummary(t *testing.T) {
 	txt := ms[0].Text
 	if strings.Contains(txt, "old") || !strings.HasPrefix(txt, "<summary>") || !strings.Contains(txt, "we did things") || !strings.Contains(txt, "$ ls") {
 		t.Errorf("text %q", txt)
+	}
+}
+
+// TestSystemStable checks that cd'ing within a request does not change the
+// system prompt, neither in this agent process nor in the one `aish agent
+// resume` starts after the command: it would reset the provider's cache.
+func TestSystemStable(t *testing.T) {
+	dir, _ := os.Getwd()
+	es := []session.Entry{{Kind: session.KindUser, Text: "hi", Cwd: dir}}
+	a := &Agent{Tools: &tools.Registry{}, entries: es}
+	first := a.request(es).System
+	if strings.Contains(first, dir) {
+		t.Errorf("cwd %s is in the system prompt", dir)
+	}
+	t.Chdir(t.TempDir())
+	if got := a.request(es).System; got != first {
+		t.Errorf("system changed after cd:\n%s", got)
+	}
+	b := &Agent{Tools: &tools.Registry{}, entries: es}
+	if got := b.request(es).System; got != first {
+		t.Errorf("system of a resumed agent differs:\n%s\nwant\n%s", got, first)
 	}
 }

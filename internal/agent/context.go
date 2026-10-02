@@ -21,11 +21,11 @@ import (
 //go:embed system.md
 var systemPrompt string
 
-func system(extra string) string {
+func system(env, extra string) string {
 	var b strings.Builder
 	b.WriteString(systemPrompt)
 	b.WriteString("\n\n# Environment\n")
-	b.WriteString(environment())
+	b.WriteString(env)
 	if extra != "" {
 		b.WriteString("\n\n")
 		b.WriteString(extra)
@@ -33,15 +33,16 @@ func system(extra string) string {
 	return b.String()
 }
 
-// environment describes the machine the agent runs on. It is built from the
-// agent process, which inherits the shell's cwd.
-func environment() string {
+// environment describes the machine the agent runs on. It goes into the
+// system prompt, the first thing the provider caches, so it holds nothing
+// that changes within a request: the cwd is in every user message instead,
+// and the git root is taken for dir, where the request was made, not for
+// wherever its commands have cd'ed since.
+func environment(dir string) string {
 	var b strings.Builder
-	cwd, _ := os.Getwd()
 	host, _ := os.Hostname()
-	fmt.Fprintf(&b, "- Working directory: %s\n", cwd)
 	repo := "no"
-	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
 		repo = "yes, root " + strings.TrimSpace(string(out))
 	}
 	fmt.Fprintf(&b, "- Git repository: %s\n", repo)
@@ -53,6 +54,17 @@ func environment() string {
 	b.WriteString("- Shell: bash (interactive, the user's own ~/.bashrc)\n")
 	fmt.Fprintf(&b, "- Today's date: %s", time.Now().Format("2006-01-02"))
 	return b.String()
+}
+
+// requestCwd is the directory the last user request was made in.
+func requestCwd(entries []session.Entry) string {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind == session.KindUser && entries[i].Cwd != "" {
+			return entries[i].Cwd
+		}
+	}
+	cwd, _ := os.Getwd()
+	return cwd
 }
 
 // Messages converts the session journal into a conversation. User commands
