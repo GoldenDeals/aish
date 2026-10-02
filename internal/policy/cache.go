@@ -36,10 +36,13 @@ func (c *Cache) Engine(ctx context.Context, dir string) (*Engine, error) {
 }
 
 func stamp(dir string) string {
+	// A Rego file is a load error, so its arrival must be noticed too.
 	var files []string
 	for _, d := range filepath.SplitList(dir) {
-		fs, _ := filepath.Glob(filepath.Join(d, "*.rego"))
-		files = append(files, fs...)
+		for _, pat := range []string{"*.cedar", "*.rego"} {
+			fs, _ := filepath.Glob(filepath.Join(d, pat))
+			files = append(files, fs...)
+		}
 	}
 	var b strings.Builder
 	for _, f := range files {

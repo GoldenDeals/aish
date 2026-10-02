@@ -4,6 +4,7 @@
 //	aish resume [ID|NAME]        bring a session back, shell state included; pick one or rename
 //	aish mcp                     the MCP servers and how they are doing
 //	aish skills                  the skills that apply here and their problems
+//	aish policy [TOOL ARGS...]   check the policies, or ask them about one call
 //	aish init bash               print the bash integration script
 //	aish tool [NAME ARGS...]     list tools or run one
 //	aish session show|clear      print or reset the current session
@@ -38,6 +39,7 @@ const usage = `usage:
                              and cwd; without an argument choose one (r renames it)
   aish mcp                   show the MCP servers: state, tools, errors
   aish skills                show the skills of this directory and their problems
+  aish policy [TOOL ARGS...] check the policies, or ask them about one call
   aish init bash             print the bash integration script
   aish tool [NAME ARGS...]   list tools, or run one
   aish session show|clear    print or reset the current session
@@ -90,6 +92,8 @@ func run(args []string) int {
 		return mcpCmd(cfg, args[1:])
 	case "skills":
 		return skillsCmd(cfg, args[1:])
+	case "policy":
+		return policyCmd(cfg, args[1:])
 	case "expand":
 		return expandCmd()
 	case "help":

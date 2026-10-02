@@ -278,8 +278,8 @@ func TestClosePending(t *testing.T) {
 // question is open leaves the call pending.
 func TestAsk(t *testing.T) {
 	dir := t.TempDir()
-	rego := "package aish\n\ndecision := {\"action\": \"ask\", \"reason\": \"sure?\"} if input.tool == \"bash\"\n"
-	if err := os.WriteFile(filepath.Join(dir, "a.rego"), []byte(rego), 0o600); err != nil {
+	src := "permit(principal, action, resource);\n@ask(\"sure?\") forbid(principal, action, resource) when { context.tool == \"bash\" };\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.cedar"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	pol, err := policy.Load(context.Background(), dir)

@@ -282,16 +282,40 @@ servers:
 
 ## Политики
 
-Каждый вызов инструмента проверяется Rego-политиками из `~/.config/aish/policy/*.rego` (OPA).
-Запрос — `data.aish.decision`, ответ — `{"action": "allow"|"deny"|"ask", "reason": "..."}`.
-`deny` возвращается модели с причиной, `ask` спрашивает тебя `[y/N]`; нет политик — разрешено всё.
+Каждый вызов инструмента проверяется политиками на [Cedar](https://docs.cedarpolicy.com/) из
+`~/.config/aish/policy/*.cedar`. `forbid` возвращается модели с причиной, `forbid` с аннотацией
+`@ask("…")` спрашивает тебя `[y/N]`; `@reason("…")` — текст, который увидят модель и ты. Нет
+политик — разрешено всё.
 
-В `input`: `tool`, `args`, `cwd`, `home`, `path` (для файловых инструментов — абсолютный, с
-раскрытыми симлинками, даже если файла ещё нет), `server` (для MCP-инструментов) и `commands` —
-argv каждой простой команды из bash-строки, включая конвейеры, `$(...)`, `bash -c '...'` и обёртки:
-`sudo rm x` даёт и `["sudo","rm","x"]`, и `["rm","x"]`.
+Что видит политика (principal везде — `Model::"<имя модели>"`):
 
-Пример `examples/policy/default.rego` запрещает `sudo`, `rm -rf /` и `$HOME`, `git push --force`,
+| инструмент | action | resource | context |
+|---|---|---|---|
+| `bash`, на каждую простую команду | `Action::"run"` | `Command::"rm"` (basename) | `program`, `args`, `flags` (`-rf` → `r`, `f`; `--force` → `force`), `operands`, `paths`, `text`, `line`, `cwd`, `home`, `parse_error` |
+| `read_file` / `write_file`, `edit_file` | `Action::"read"` / `Action::"write"` | `File::"/abs/path"` | `path`, `exists`, `cwd`, `home` |
+| остальные (внешние, MCP, скиллы) | `Action::"call"` | `Tool::"имя"` | `server`, `path`, `cwd`, `home` |
+
+Команды bash-строки разбираются все: конвейеры, `$(...)`, `bash -c '...'` и обёртки — `sudo rm x`
+даёт запросы и для `sudo`, и для `rm`; вердикт вызова — худший из них. `paths` — операнды,
+похожие на пути, уже абсолютные и с раскрытыми симлинками: `rm -rf ~/`, `rm -rf "$HOME"` и
+`rm -rf /home/me/../me/` дают один и тот же `context.home`, и правило одно. `File` лежит в
+цепочке `Dir::"/a/b"` → `Dir::"/a"` → `Dir::"/"`; у домашнего каталога есть псевдоним `Dir::"~"`,
+у текущего — `Dir::"."`, так что `resource in Dir::"~"` не зависит от машины (симлинк из `~`
+наружу туда не попадает). `File` и `Tool` несут аргументы вызова как tags:
+`resource.hasTag("private") && resource.getTag("private") == "false"` (не-строки — компактный JSON).
+Для MCP-инструмента `Tool` лежит в `Server::"<сервер>"`.
+
+Cedar — default deny: без `permit` запрещено всё, поэтому пример начинается с
+`permit(principal, action, resource);` и дальше только запрещает. Движок fail-closed: ошибка
+вычисления, отсутствие подходящего `permit` и файл `*.rego` в каталоге — это deny или ошибка
+загрузки, а не разрешение. Политики проверяются по схеме при загрузке: опечатка в имени атрибута
+(`context.comands`) — ошибка сразу, а не правило, которое молча не срабатывает.
+
+`aish policy` загружает политики и печатает их число (или ошибку валидации);
+`aish policy bash 'sudo ls'`, `aish policy write_file /etc/hosts` — спросить их об одном вызове без
+модели, аргументы как у `aish tool`.
+
+Пример `examples/policy/default.cedar` запрещает `sudo`, `rm -rf /` и `$HOME`, `git push --force`,
 `exit`/`exec`, запись вне `$HOME` и спрашивает перед установкой пакетов.
 
 ## Настройки

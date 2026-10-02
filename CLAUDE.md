@@ -67,7 +67,7 @@ shell (`rpc.AgentParams`) и держит соединение, пока про�
 | `internal/tools` | встроенные инструменты, внешние из `~/.config/aish/tools/`, CLI-разбор |
 | `internal/mcp` | клиент MCP (stdio, Streamable HTTP), менеджер серверов в прокси, обёртки-команды, схема→CLI |
 | `internal/skills` | скиллы Claude Code (`SKILL.md`): поиск от `~` и `/` до cwd, фронтматтер, скилл как `tools.Tool`, чей вызов отдаёт инструкцию с подставленными аргументами; `disable-model-invocation` — только команда, `loadTools` для агента их пропускает |
-| `internal/policy` | Rego (OPA), парсинг bash-строки в список argv через `mvdan.cc/sh` |
+| `internal/policy` | Cedar (`cedar-go`): схема, валидация при загрузке, запрос на каждую простую команду; `Checker` — точка для других бэкендов; парсинг bash-строки в argv через `mvdan.cc/sh` |
 | `internal/capture` | очистка вывода PTY от ANSI/`\r`, буфер «голова+хвост», усечение |
 | `internal/markdown` | потоковый рендер markdown в терминал, подсветка через chroma |
 | `internal/rpc` | один JSON-запрос на соединение, unix-сокет; `AgentParams`/`Status` — что команды носят в прокси и обратно |
@@ -155,6 +155,10 @@ OSC-последовательности `\e]6973;<nonce>;<kind>;<payload>\a`, �
 - **Каждому tool call нужен result.** Прерывание по Ctrl+C оставляет «висящие» вызовы —
   `Agent.Start` закрывает их синтетическими результатами (`closePending`). Не ломай этот инвариант, Anthropic
   API отвергает сообщения без парных результатов.
+- **Политика fail-closed.** Ошибка вычисления Cedar, отсутствие подходящего `permit`, файл
+  `*.rego` в `policy_dir` — всё это deny/ошибка, не allow. Новый атрибут контекста добавляется
+  в `schema.cedarschema` *и* в `requests`, иначе валидация отвергнет политики, которые его
+  используют. `combine` берёт худший вердикт: не возвращай allow из `Checker` раньше времени.
 - **`Entry.Raw`** хранит оригинальное сообщение ассистента от провайдера (thinking-блоки,
   подписи) и воспроизводится дословно, если совпали провайдер и модель. Не «нормализуй» его.
 - **`clear`/Ctrl+L** обнуляют сессию (`Proxy.cleared`): модель видит только то, что на экране.
@@ -271,8 +275,8 @@ checkout, где он лежит, ничего не меняй и git там н�
   `policy.Load` и `tools.Load` его разбирают. Загружается в `Proxy.prepare` на каждый запрос.
 - `~/.config/aish/tools/` — внешние инструменты (заголовок `# aish:desc` / `# aish:arg`,
   пример — `examples/tools/weather`).
-- `~/.config/aish/policy/*.rego` — политики, запрос `data.aish.decision`,
-  пример — `examples/policy/default.rego`.
+- `~/.config/aish/policy/*.cedar` — политики, схема — `internal/policy/schema.cedarschema`,
+  пример — `examples/policy/default.cedar`.
 - `~/.claude/skills/`, `~/.config/aish/skills/`, `.claude/skills/` от `/` до cwd — скиллы; обёртки
   в `$AISH_RUN/bin` получают только личные, проектные — через `aish tool NAME`.
 - `~/.config/aish/mcp.yaml` (или `mcp_config`) — MCP-серверы; кэш списков инструментов —

@@ -1,6 +1,9 @@
-// Package policy decides whether the agent may run a tool call, using Rego
-// policies. The query is data.aish.decision, which must evaluate to
-// {"action": "allow"|"deny"|"ask", "reason": "..."}; undefined means allow.
+// Package policy decides whether the agent may run a tool call. The policies
+// are Cedar files in policy_dir, validated against a built-in schema when
+// loaded; every simple command of a bash call is one authorization request,
+// and the verdict is the strictest answer of every Checker. The engine is
+// fail-closed: an evaluation error, a call no permit covers and a leftover
+// Rego file are all a deny or a load error, never an allow.
 package policy
 
 import (
@@ -9,8 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-
-	"github.com/open-policy-agent/opa/v1/rego"
 )
 
 const (
@@ -24,7 +25,7 @@ type Decision struct {
 	Reason string
 }
 
-// Input is what policies see as `input`.
+// Input is what the policies see of a tool call.
 type Input struct {
 	Tool string `json:"tool"`
 	// Server is the MCP server providing the tool, if any.
@@ -38,37 +39,37 @@ type Input struct {
 	// including those in pipelines, $(...), subshells and `bash -c` strings.
 	Commands   [][]string `json:"commands,omitempty"`
 	ParseError string     `json:"parse_error,omitempty"`
+	// Model is the model making the call, the principal of the request.
+	Model string `json:"model,omitempty"`
 }
 
+// Engine holds the checkers of a policy directory.
 type Engine struct {
-	q *rego.PreparedEvalQuery
+	checkers []Checker
 }
 
-// Load compiles every *.rego file in dir, a directory or a list of them
-// in the form of PATH (the project's after the user's). A missing or
-// empty dir gives an engine that allows everything.
+// Load reads every *.cedar file in dir, a directory or a list of them in
+// the form of PATH (the project's after the user's). A missing or empty
+// dir gives an engine that allows everything; a *.rego file is an error
+// even next to Cedar files, because ignoring a file of prohibitions is not
+// an option.
 func Load(ctx context.Context, dir string) (*Engine, error) {
 	var files []string
 	for _, d := range filepath.SplitList(dir) {
-		fs, _ := filepath.Glob(filepath.Join(d, "*.rego"))
+		if rego, _ := filepath.Glob(filepath.Join(d, "*.rego")); len(rego) > 0 {
+			return nil, fmt.Errorf("policy: %s: Rego policies are not supported anymore, rewrite it in Cedar (see README, «Политики»)", rego[0])
+		}
+		fs, _ := filepath.Glob(filepath.Join(d, "*.cedar"))
 		files = append(files, fs...)
 	}
 	if len(files) == 0 {
 		return &Engine{}, nil
 	}
-	opts := []func(*rego.Rego){rego.Query("data.aish.decision")}
-	for _, f := range files {
-		src, err := os.ReadFile(f)
-		if err != nil {
-			return nil, err
-		}
-		opts = append(opts, rego.Module(f, string(src)))
-	}
-	q, err := rego.New(opts...).PrepareForEval(ctx)
+	c, err := loadCedar(files)
 	if err != nil {
-		return nil, fmt.Errorf("policy: %w", err)
+		return nil, err
 	}
-	return &Engine{q: &q}, nil
+	return &Engine{checkers: []Checker{c}}, nil
 }
 
 // NewInput fills the derived fields of the input for a tool call.
@@ -112,30 +113,33 @@ func resolve(p string) string {
 	}
 }
 
+// Check asks every checker and returns the strictest verdict.
 func (e *Engine) Check(ctx context.Context, in Input) (Decision, error) {
-	if e == nil || e.q == nil {
+	if e == nil || len(e.checkers) == 0 {
 		return Decision{Action: Allow}, nil
 	}
-	rs, err := e.q.Eval(ctx, rego.EvalInput(in))
-	if err != nil {
-		return Decision{}, fmt.Errorf("policy: %w", err)
+	ds := make([]Decision, 0, len(e.checkers))
+	for _, c := range e.checkers {
+		d, err := c.Check(ctx, in)
+		if err != nil {
+			return Decision{}, fmt.Errorf("policy: %w", err)
+		}
+		ds = append(ds, d)
 	}
-	if len(rs) == 0 || len(rs[0].Expressions) == 0 {
-		return Decision{Action: Allow}, nil
+	return combine(ds), nil
+}
+
+// Summary lists the loaded policy files with their policy counts, for
+// `aish policy`.
+func (e *Engine) Summary() []Summary {
+	var out []Summary
+	if e == nil {
+		return out
 	}
-	m, ok := rs[0].Expressions[0].Value.(map[string]any)
-	if !ok {
-		return Decision{}, fmt.Errorf("policy: data.aish.decision is %T, want an object", rs[0].Expressions[0].Value)
+	for _, c := range e.checkers {
+		if s, ok := c.(interface{ Summaries() []Summary }); ok {
+			out = append(out, s.Summaries()...)
+		}
 	}
-	d := Decision{}
-	d.Action, _ = m["action"].(string)
-	d.Reason, _ = m["reason"].(string)
-	switch d.Action {
-	case Allow, Deny, Ask:
-	case "":
-		d.Action = Allow
-	default:
-		return Decision{}, fmt.Errorf("policy: unknown action %q", d.Action)
-	}
-	return d, nil
+	return out
 }

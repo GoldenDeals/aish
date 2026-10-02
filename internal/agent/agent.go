@@ -315,6 +315,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 
 	in := policy.NewInput(t.Name, args, a.exec.Dir)
 	in.Server = t.Server
+	in.Model = a.Cfg.Model
 	d, err := a.Policy.Check(ctx, in)
 	if err != nil {
 		return false, err

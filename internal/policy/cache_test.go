@@ -24,18 +24,18 @@ func TestCache(t *testing.T) {
 		t.Error("an unchanged directory was compiled again")
 	}
 
-	rego := filepath.Join(dir, "a.rego")
+	file := filepath.Join(dir, "a.cedar")
 	write := func(src string) {
 		t.Helper()
-		if err := os.WriteFile(rego, []byte(src), 0o600); err != nil {
+		if err := os.WriteFile(file, []byte(src), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		// Two writes within one mtime tick would look the same; the test
 		// must see every change.
 		future := time.Now().Add(time.Duration(len(src)) * time.Second)
-		os.Chtimes(rego, future, future)
+		os.Chtimes(file, future, future)
 	}
-	write("package aish\n\ndecision := {\"action\": \"deny\", \"reason\": \"no\"} if input.tool == \"bash\"\n")
+	write("permit(principal, action, resource);\n@reason(\"no\") forbid(principal, action, resource) when { context.tool == \"bash\" };\n")
 	second, err := c.Engine(ctx, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +47,7 @@ func TestCache(t *testing.T) {
 		t.Errorf("new policy not in force: %+v", d)
 	}
 
-	write("package aish\n\ndecision := {\"action\": \"ask\"} if input.tool == \"bash\"\n")
+	write("permit(principal, action, resource);\n@ask(\"sure?\") forbid(principal, action, resource) when { context.tool == \"bash\" };\n")
 	third, err := c.Engine(ctx, dir)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestCache(t *testing.T) {
 		t.Errorf("edited policy not in force: %+v", d)
 	}
 
-	write("package aish\n\ndecision := {broken\n")
+	write("permit(principal, action, resource\n")
 	if _, err := c.Engine(ctx, dir); err == nil {
 		t.Error("a broken policy compiled")
 	}

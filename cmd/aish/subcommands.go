@@ -5,4 +5,4 @@ package main
 // Not `agent` and `init`, which are plumbing, nor `tool`, too common a
 // name. Kept next to the switch in run so a new subcommand is not
 // forgotten here.
-var UserCommands = []string{"compact", "expand", "mcp", "model", "resume", "session", "skills", "status"}
+var UserCommands = []string{"compact", "expand", "mcp", "model", "policy", "resume", "session", "skills", "status"}
