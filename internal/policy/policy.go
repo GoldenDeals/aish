@@ -131,7 +131,14 @@ func resolve(p string) string {
 	if p == "" {
 		return p
 	}
-	p = filepath.Clean(p)
+	return walk(filepath.Clean(p))
+}
+
+// walk is resolve of p as spelled. resolve cleans p first, because the file
+// tools clean their path before they open it and write link/../x as x; a
+// command hands its path to the kernel uncleaned, and there the ".." goes
+// up from where link really leads. A relative p is returned as is.
+func walk(p string) string {
 	if !filepath.IsAbs(p) {
 		return p
 	}

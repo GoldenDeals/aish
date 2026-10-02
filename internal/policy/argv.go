@@ -14,7 +14,7 @@ type Command struct {
 	Args     []string // argv[1:] as written
 	Flags    []string // "-rf" → "r", "f"; "--force" → "force"; "--opt=v" → "opt"; none after "--"
 	Operands []string // non-option args, "--" dropped
-	Paths    []string // operands that look like paths, absolute, cleaned and with symlinks resolved
+	Paths    []string // operands that look like paths, absolute and resolved as the kernel opens them
 	Text     string   // argv joined with spaces
 }
 
@@ -47,7 +47,7 @@ func Analyze(argv []string, cwd, home string) Command {
 	}
 	for _, op := range c.Operands {
 		if p, ok := pathOf(op, cwd, home); ok {
-			c.Paths = append(c.Paths, resolve(filepath.Clean(p)))
+			c.Paths = append(c.Paths, walk(p))
 		}
 	}
 	return c
@@ -71,7 +71,9 @@ func pathOf(op, cwd, home string) (string, bool) {
 	case filepath.IsAbs(op):
 		return op, true
 	case op == "." || op == ".." || strings.Contains(op, "/"):
-		return filepath.Join(cwd, op), true
+		// Not filepath.Join: it would take link/.. away before the link
+		// is followed.
+		return cwd + "/" + op, true
 	}
 	return "", false
 }
