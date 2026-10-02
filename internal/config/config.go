@@ -52,6 +52,9 @@ type Config struct {
 	SessionsDir string `toml:"sessions_dir"`
 	// MCPConfig lists MCP servers (YAML).
 	MCPConfig string `toml:"mcp_config"`
+	// Shell is the bash to run. Empty: $SHELL if it is a bash, else the
+	// first bash in PATH.
+	Shell string `toml:"shell"`
 
 	// SystemPrompt is appended to the built-in system prompt.
 	SystemPrompt string `toml:"system_prompt"`
@@ -130,6 +133,7 @@ func Load() (Config, error) {
 	cfg.ToolsDir = expand(cfg.ToolsDir)
 	cfg.SessionsDir = expand(cfg.SessionsDir)
 	cfg.MCPConfig = expand(cfg.MCPConfig)
+	cfg.Shell = expand(cfg.Shell)
 	return cfg, nil
 }
 

@@ -287,6 +287,7 @@ code_style = "monokai"            # стиль подсветки кода: http
 prompt_status = true              # статус контекста справа от промпта
 context_window = 0                # размер окна модели в токенах; 0 — узнать у API
 mcp_config = "~/.config/aish/mcp.yaml"
+shell = "/opt/bash/bin/bash"      # какой bash запускать; нет — $SHELL, если это bash, иначе первый bash в PATH
 system_prompt = "Дополнение к системному промпту"
 ```
 

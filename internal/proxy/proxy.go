@@ -170,7 +170,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	defer l.Close()
 	go rpc.Serve(l, p.handle)
 
-	bash, err := exec.LookPath("bash")
+	bash, err := bashPath(cfg.Shell)
 	if err != nil {
 		return 1, err
 	}
@@ -269,6 +269,25 @@ func makeRunDir(reg *tools.Registry, self, nonce string) (string, error) {
 		return "", err
 	}
 	return run, os.WriteFile(filepath.Join(run, "rc"), []byte(shellinit.RCFile()), 0o600)
+}
+
+// bashPath is the bash to run: the configured one, else the user's login
+// shell if it is a bash, as it need not be the first one in PATH (a newer
+// bash in /opt, an old /bin/bash on macOS).
+func bashPath(configured string) (string, error) {
+	if configured != "" {
+		p, err := exec.LookPath(configured)
+		if err != nil {
+			return "", fmt.Errorf("shell in config: %w", err)
+		}
+		return p, nil
+	}
+	if sh := os.Getenv("SHELL"); filepath.Base(sh) == "bash" {
+		if p, err := exec.LookPath(sh); err == nil {
+			return p, nil
+		}
+	}
+	return exec.LookPath("bash")
 }
 
 // input copies the keyboard to bash. Ctrl+O while the assistant works or
