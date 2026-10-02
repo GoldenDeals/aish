@@ -104,11 +104,16 @@ func (m *Writer) complete() {
 	if m.shown > 0 && !m.frozen {
 		cols, _ := m.size()
 		up := lineRows(raw[:m.shown], cols) - 1
-		erase := "\r"
+		// The first row is erased by itself and the rest from the row
+		// below: erase below from the top-left corner is a clear screen to
+		// tmux, which with scroll-on-clear keeps the screen, the raw line
+		// with it, in its history. A line of one row has nothing below,
+		// and it may be on the bottom row, where cursor down stays put.
+		erase := "\r\x1b[K"
 		if up > 0 {
-			erase += fmt.Sprintf("\x1b[%dA", up)
+			erase = fmt.Sprintf("\r\x1b[%dA\x1b[K\x1b[B\x1b[J\x1b[A", up)
 		}
-		m.out(erase + "\x1b[J")
+		m.out(erase)
 	}
 	rendered := m.render(raw)
 	if m.frozen {

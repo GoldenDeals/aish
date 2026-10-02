@@ -41,10 +41,15 @@ func screen(out string) string {
 				for _, c := range seq[2 : len(seq)-1] {
 					k = k*10 + int(c-'0')
 				}
+				k = max(k, 1)
 				cur = lines[len(lines)-k]
 				lines = lines[:len(lines)-k]
 			}
-			if seq == "\x1b[J" {
+			if seq == "\x1b[B" { // going up has dropped the rows below
+				lines = append(lines, cur)
+				cur = ""
+			}
+			if seq == "\x1b[J" || seq == "\x1b[K" { // erased from the start of the row
 				cur = ""
 			}
 			continue
