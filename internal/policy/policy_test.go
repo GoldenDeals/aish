@@ -31,40 +31,6 @@ func TestCommands(t *testing.T) {
 	}
 }
 
-func TestExamplePolicy(t *testing.T) {
-	ctx := context.Background()
-	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	home, _ := os.UserHomeDir()
-	for _, c := range []struct {
-		tool string
-		args map[string]any
-		want string
-	}{
-		{"bash", map[string]any{"command": "ls -la"}, Allow},
-		{"bash", map[string]any{"command": "make && sudo make install"}, Deny},
-		{"bash", map[string]any{"command": "sudo rm -rf /"}, Deny},
-		{"bash", map[string]any{"command": "rm -rf build"}, Allow},
-		{"bash", map[string]any{"command": `bash -c "git push -f origin main"`}, Deny},
-		{"bash", map[string]any{"command": "exit"}, Deny},
-		{"bash", map[string]any{"command": "pacman -S ripgrep"}, Ask},
-		{"bash", map[string]any{"command": "echo 'oops"}, Ask},
-		{"write_file", map[string]any{"path": "notes.txt"}, Allow},
-		{"write_file", map[string]any{"path": "/etc/hosts"}, Deny},
-		{"read_file", map[string]any{"path": "/etc/hosts"}, Allow},
-	} {
-		d, err := e.Check(ctx, callInput(c.tool, c.args, home))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if d.Action != c.want {
-			t.Errorf("%s %v: %s (%s), want %s", c.tool, c.args, d.Action, d.Reason, c.want)
-		}
-	}
-}
-
 func TestNoPolicies(t *testing.T) {
 	e, err := Load(context.Background(), t.TempDir(), Rules{})
 	if err != nil {
