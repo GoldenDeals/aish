@@ -142,15 +142,20 @@ func agentCmd(cfg config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	const agentUsage = "usage: aish agent start -- TEXT | aish agent resume ID RC"
 	switch {
 	case len(args) >= 1 && args[0] == "start":
 		text := strings.Join(trimDashes(args[1:]), " ")
 		err = a.Start(ctx, text)
 	case len(args) == 3 && args[0] == "resume":
-		rc, _ := strconv.Atoi(args[2])
+		// Not 0 on garbage: the model would be told the command succeeded.
+		rc, perr := strconv.Atoi(args[2])
+		if perr != nil {
+			return fail(fmt.Errorf("RC %q is not a number; %s", args[2], agentUsage))
+		}
 		err = a.Resume(ctx, args[1], rc)
 	default:
-		return fail(errors.New("usage: aish agent start -- TEXT | aish agent resume ID RC"))
+		return fail(errors.New(agentUsage))
 	}
 	if ctx.Err() != nil {
 		fmt.Fprintln(os.Stderr, "\x1b[2m[interrupted]\x1b[0m")
