@@ -9,6 +9,9 @@ var screenSeqs = []struct {
 }{
 	{[]byte("\x1b[2J"), effClear},
 	{[]byte("\x1b[3J"), effClear},
+	// tmux and screen's terminfo `clear`, so Ctrl+L there. ED alone only
+	// erases below the cursor; it erases the screen from its top-left corner.
+	{[]byte("\x1b[H\x1b[J"), effClear},
 	{[]byte("\x1bc"), effClear}, // RIS, `reset`
 	{[]byte("\x1b[?1049h"), effAltOn},
 	{[]byte("\x1b[?1047h"), effAltOn},
