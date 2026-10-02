@@ -5,7 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mattn/go-runewidth"
+
 	"github.com/inebotov/aish/internal/capture"
+	"github.com/inebotov/aish/internal/session"
 )
 
 func TestScreen(t *testing.T) {
@@ -125,29 +128,138 @@ func TestFoldHidesAll(t *testing.T) {
 	}
 }
 
+// drawnAt is where a status of width w is drawn at the right edge of a
+// terminal cols wide: the last column stays free, as with the prompt's.
+func drawnAt(w, cols int) string { return fmt.Sprintf("\x1b[%dG", cols-w) }
+
+// statusOf is a status as drawn, with its gap before it.
+func statusOf(parts ...string) string { return "  (" + strings.Join(parts, " · ") + ")" }
+
+// The status goes on the line of the call, at the right edge: in full
+// when it fits between the call and the edge, short when only that
+// does, on a line of its own below the call otherwise.
 func TestFoldStatusRight(t *testing.T) {
-	f := newFold("❯ seq 3", 0)
-	f.at = &statusAt{col: 7, cols: 60}
-	shown := string(f.write([]byte("1\n2\n3\n"))) + string(f.finish(1))
-	if !strings.HasPrefix(shown, "\r\x1b[7C\x1b[K") || !strings.HasSuffix(shown, "\r\n") {
-		t.Fatalf("status not to the right: %q", shown)
-	}
-	if got := capture.Clean([]byte(shown)); !strings.Contains(got, "(3 lines · exit 1 · ctrl+o to expand)") {
-		t.Errorf("status %q", got)
+	full := statusOf("3 lines", "exit 1", "ctrl+o to expand")
+	short := statusOf("3 lines", "exit 1")
+	fw, sw := runewidth.StringWidth(full), runewidth.StringWidth(short)
+	right := "\r\x1b[7C\x1b[K\x1b[?7l"
+	below := "\r\n\r\x1b[K\x1b[?7l"
+	for _, tc := range []struct {
+		name      string
+		col, cols int
+		start     string // what comes before the status
+		text      string
+	}{
+		{"full", 7, 7 + fw + 1, right + drawnAt(fw, 7+fw+1), full},
+		{"short", 7, 7 + fw, right + drawnAt(sw, 7+fw), short},
+		{"below", 7, 7 + sw, below, short},
+		{"below in full", fw - sw, fw, below, full},
+	} {
+		f := newFold("❯ seq 3", 0)
+		f.at = &statusAt{col: tc.col, cols: tc.cols}
+		f.hiddenLines = 3
+		if got, want := string(f.finish(1)), tc.start+"\x1b[0m"+dim+tc.text+reset+"\x1b[?7h\r\n"; got != want {
+			t.Errorf("%s: status\n%q, want\n%q", tc.name, got, want)
+		}
 	}
 
+	// Drawn at the right while the command ran, the status moves below
+	// when it outgrows the room.
+	f := newFold("❯ seq 3", 0)
+	f.at = &statusAt{col: 7, cols: 7 + sw}
+	if got := string(f.write([]byte("1\n2\n3\n"))); !strings.HasPrefix(got, right) {
+		t.Errorf("running: %q", got)
+	}
+	if got, want := string(f.finish(1)), "\r\x1b[7C\x1b[K"+below+"\x1b[0m"+dim+short+reset+"\x1b[?7h\r\n"; got != want {
+		t.Errorf("outgrown: status\n%q, want\n%q", got, want)
+	}
+}
+
+// A command of several lines gets the status of any other, hint and all;
+// one cut short has something to expand even without output.
+func TestFoldStatusLong(t *testing.T) {
 	long := newFold("❯ a\n  b", 0)
-	long.at = &statusAt{col: 3, cols: 60, long: true}
-	if got := capture.Clean(long.finish(0)); !strings.Contains(got, "(no output)") || strings.Contains(got, "ctrl+o") {
+	long.at = &statusAt{col: 3, cols: 80}
+	long.write([]byte("1\n2\n"))
+	if got := capture.Clean(long.finish(0)); !strings.Contains(got, "(2 lines · ctrl+o to expand)") {
 		t.Errorf("long command status %q", got)
 	}
-
-	full := newFold("❯ x", 0)
-	full.at = &statusAt{col: 55, cols: 60}
-	if got := string(full.write([]byte("1\n2\n"))); !strings.HasPrefix(got, "\r\n\r\x1b[K") {
-		t.Errorf("no room, status not below: %q", got)
+	whole := newFold("❯ a\n  b", 0)
+	whole.at = &statusAt{col: 3, cols: 80}
+	if got := capture.Clean(whole.finish(0)); !strings.Contains(got, "(no output)") || strings.Contains(got, "ctrl+o") {
+		t.Errorf("whole command, no output: %q", got)
 	}
-	if got := string(full.finish(0)); !strings.HasPrefix(got, "\r\x1b[K") {
-		t.Errorf("no room, final status: %q", got)
+	cut := newFold("❯ cat > f <<EOF\na\nb\nc\nd\nEOF", 0)
+	cut.at = &statusAt{col: 14, cols: 80, hidden: 3}
+	if got := capture.Clean(cut.finish(0)); !strings.Contains(got, "(no output · ctrl+o to expand)") {
+		t.Errorf("cut command, no output: %q", got)
+	}
+}
+
+// statusProxy is a proxy on a terminal cols wide, inside a request.
+func statusProxy(t *testing.T, cols int) (*Proxy, *terminal) {
+	t.Helper()
+	sess, err := session.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := New(sess)
+	out := &terminal{}
+	p.out = out
+	p.size = func() (int, int) { return cols, 24 }
+	p.marker(Marker{Kind: "ask-start"})
+	return p, out
+}
+
+// A built-in's long result has its status drawn by the proxy, at the
+// right edge of the call when the agent left its line open, on a line of
+// its own when it did not.
+func TestFoldResultStatus(t *testing.T) {
+	p, out := statusProxy(t, 80)
+	u := &ui{p: p}
+	u.CommandAt(22, false, 0)
+	u.Fold("⚙ read_file notes.txt", "1\n2\n3\n")
+	text := statusOf("3 lines", "ctrl+o to expand")
+	want := "\r\x1b[22C\x1b[K\x1b[?7l" + drawnAt(runewidth.StringWidth(text), 80) + "\x1b[0m" + dim + text + reset + "\x1b[?7h\r\n"
+	if got := out.String(); got != want {
+		t.Errorf("status\n%q, want\n%q", got, want)
+	}
+	if p.at != nil || len(p.folds) != 1 || p.folds[0].Text != "1\n2\n3\n" {
+		t.Errorf("at %v, folds %+v", p.at, p.folds)
+	}
+
+	p, out = statusProxy(t, 80)
+	(&ui{p: p}).Fold("⚙ read_file notes.txt", "1\n2\n")
+	if got := out.String(); got != "\r\x1b[K\x1b[0m"+dim+statusOf("2 lines", "ctrl+o to expand")+reset+"\r\n" {
+		t.Errorf("status of its own %q", got)
+	}
+}
+
+// An external tool's status goes at the right of its call as a
+// command's does; without output it says so.
+func TestLiveStatusRight(t *testing.T) {
+	p, out := statusProxy(t, 80)
+	u := &ui{p: p}
+	u.CommandAt(9, false, 0)
+	l := u.Live("⚙ probe")
+	l.Finish(-1)
+	text := statusOf("no output")
+	if got := out.String(); !strings.HasPrefix(got, "\r\x1b[9C\x1b[K\x1b[?7l"+drawnAt(runewidth.StringWidth(text), 80)) || !strings.Contains(got, text) {
+		t.Errorf("no output: %q", got)
+	}
+	if p.at != nil || len(p.folds) != 0 {
+		t.Errorf("at %v, folds %+v", p.at, p.folds)
+	}
+
+	// Lines shown before folding go below the call.
+	p, out = statusProxy(t, 80)
+	p.foldLines = 3
+	u = &ui{p: p}
+	u.CommandAt(9, false, 0)
+	l = u.Live("⚙ probe")
+	l.Write([]byte("one\n"))
+	l.Finish(0)
+	if got := out.String(); got != "\r\none\r\n" {
+		t.Errorf("fold_lines 3: %q", got)
 	}
 }

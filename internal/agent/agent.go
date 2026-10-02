@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mattn/go-runewidth"
 
@@ -64,15 +65,18 @@ type UI interface {
 	// Ask prints q and returns the line the user answers with. An error
 	// means nobody can answer.
 	Ask(ctx context.Context, q string) (string, error)
-	// Fold keeps text, a tool's result, behind "ctrl+o to expand".
+	// Fold keeps text, a tool's result, behind "ctrl+o to expand" and
+	// shows its status, which ends the line.
 	Fold(title, text string)
 	// Live is where an external tool's output goes as it runs: shown
 	// folded, like a command's.
 	Live(title string) Live
-	// CommandAt says the bash command was printed without a newline and
-	// ends at column col, so the status can go to its right; long when it
-	// took several lines. hidden is how many lines of the command were not
-	// printed: the UI keeps the command for Ctrl+O even without output.
+	// CommandAt says the call, a bash command or another tool's, was
+	// printed without a newline and ends at column col, so the status can
+	// go at the right edge of that line: the status of the next Fold, Live
+	// or command the shell runs. long when the call took several lines.
+	// hidden is how many lines of the command were not printed: the UI
+	// keeps the command for Ctrl+O even without output.
 	CommandAt(col int, long bool, hidden int)
 }
 
@@ -334,7 +338,6 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	if err != nil {
 		return false, a.append(toolResult(c, err.Error(), true))
 	}
-	title := a.show(t, args)
 
 	in := policy.NewInput(t.Name(), args, a.exec.Dir)
 	in.Server = tools.ServerOf(t)
@@ -348,20 +351,26 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		return false, err
 	}
 	d, args = v.Decision, v.args
-	if v.replaced {
-		title = a.show(t, args)
-	}
 	h, toShell := t.(tools.HandsOff)
 	var cmd string
 	var hasCmd bool
 	if toShell {
 		cmd, hasCmd = h.Command(args)
 	}
-	asked := d.Action == policy.Ask
-	if asked {
+	// The call is shown once the policy and the hooks have decided, with
+	// what it runs: nothing they print can come between its line and the
+	// status at the right of it.
+	title := tools.Title(t, args)
+	showClosed := func() {
 		if toShell {
 			a.showBash(cmd, true)
+		} else {
+			a.show(title, true)
 		}
+	}
+	asked := d.Action == policy.Ask
+	if asked {
+		showClosed()
 		d = a.ask(ctx, d)
 		if ctx.Err() != nil {
 			return false, ctx.Err() // the call stays pending: interrupted, not declined
@@ -372,8 +381,8 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		if d.Reason != "" {
 			msg += ": " + d.Reason
 		}
-		if toShell && !asked {
-			a.showBash(cmd, true)
+		if !asked {
+			showClosed()
 		}
 		fmt.Fprintf(a.UI, "%s  ✗ %s%s\n", red, msg, reset)
 		return false, a.append(toolResult(c, msg, true))
@@ -389,14 +398,23 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		return true, a.Shell.HandOff(c.ID, cmd)
 	}
 
+	col := -1 // where the line of the call was left open, if it was
+	if !asked {
+		col = a.show(title, false)
+	}
+	title = "⚙ " + title
 	// Streaming tools (external ones) print live, folded like a command's
 	// output; the others print nothing until they are done.
 	streams := tools.Streams(t)
 	var out io.Writer
 	var live Live
 	if streams {
+		if col >= 0 {
+			a.UI.CommandAt(col, false, 0)
+		}
 		live = a.UI.Live(title)
 		out = live
+		col = -1 // the UI ends the line
 	}
 	res, err := t.Execute(ctx, a.exec, args, out)
 	if live != nil {
@@ -407,6 +425,9 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		live.Finish(exit)
 	}
 	if err != nil {
+		if col >= 0 {
+			fmt.Fprint(a.UI, "\n")
+		}
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return false, ctx.Err()
 		}
@@ -414,26 +435,66 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		return false, a.postTool(ctx, c, args, strings.TrimSpace(res+"\n"+err.Error()), true)
 	}
 	if !streams {
-		// A one-line result is shown as is, a longer one is kept for Ctrl+O.
-		line := summary(res)
+		// A longer result is kept for Ctrl+O, and the UI shows its status;
+		// a one-line result is no status: it is shown as is, below the call.
 		if strings.Contains(strings.TrimSpace(res), "\n") {
+			if col >= 0 {
+				a.UI.CommandAt(col, false, 0)
+			}
 			a.UI.Fold(title, res)
-			line = "(" + line + " · ctrl+o to expand)"
+		} else {
+			if col >= 0 {
+				fmt.Fprint(a.UI, "\n")
+			}
+			fmt.Fprintf(a.UI, "%s  %s%s\n", dim, summary(res), reset)
 		}
-		fmt.Fprintf(a.UI, "%s  %s%s\n", dim, line, reset)
 	}
 	return false, a.postTool(ctx, c, args, capture.Truncate(res, a.Cfg.MaxOutputBytes*4), false)
 }
 
-// show prints the call and returns it as a plain title. A command for the
-// shell is printed later, by showBash, once the policy has decided.
-func (a *Agent) show(t tools.Tool, args map[string]any) string {
-	title := tools.Title(t, args)
-	if handsOff(t) {
-		return "❯ " + title
+// show prints the call of a tool other than bash, titled title. Unless nl,
+// the line is left open when the output will be folded from its first
+// line, and show returns the column it ends at, for the status to go at
+// the right edge of it; -1 when the line is closed.
+func (a *Agent) show(title string, nl bool) int {
+	cols, _ := a.UI.Size()
+	open := !nl && a.Cfg.FoldLines == 0 && cols > 0
+	text, col := renderCall(title, cols, open)
+	fmt.Fprint(a.UI, text)
+	return col
+}
+
+// shortStatus is the widest short status the proxy draws at the right
+// edge, as long as the counts go.
+const shortStatus = "  (99999 lines · exit 255)"
+
+// callMin is the narrowest a call line is cut to for the status to fit
+// beside it; in a narrower terminal it takes the whole width and the
+// status goes below.
+const callMin = 20
+
+// renderCall is what show prints for a call titled title and, when the
+// line is left open for the status, the column it ends at; -1 when it is
+// closed. An open line is a single one, cut with "…" to leave room for the
+// short status and the column the proxy keeps free at the right edge. The
+// whole title is in Ctrl+O and in the journal.
+func renderCall(title string, cols int, open bool) (text string, col int) {
+	if !open || cols <= 0 {
+		return fmt.Sprintf("%s⚙%s %s\n", cyan, reset, title), -1
 	}
-	fmt.Fprintf(a.UI, "%s⚙%s %s\n", cyan, reset, title)
-	return "⚙ " + title
+	// Control characters would take columns of their own, or none.
+	title = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, title)
+	w := cols - runewidth.StringWidth(shortStatus) - 1
+	if w < callMin {
+		w = cols
+	}
+	title = runewidth.Truncate(title, w-runewidth.StringWidth("⚙ "), "…")
+	return fmt.Sprintf("%s⚙%s %s", cyan, reset, title), runewidth.StringWidth("⚙ " + title)
 }
 
 // handsOff tells whether a call of t is a command for the shell.

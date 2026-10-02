@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 
 	"github.com/inebotov/aish/internal/capture"
 )
@@ -36,17 +37,17 @@ type fold struct {
 	partial     bool // the hidden part ends without a newline
 	status      time.Time
 
-	// at is set when the status goes to the right of the command, which the
+	// at is set when the status goes on the line of the call, which the
 	// agent printed without a newline.
 	at    *statusAt
-	drawn bool // the status is on the screen at at.col
+	drawn bool // the status is on the screen, after at.col
 }
 
-// statusAt is where the command printed by the agent ends on the screen.
+// statusAt is where the call printed by the agent ends on the screen; col
+// is 0 once the status moved to a line of its own.
 type statusAt struct {
 	col, cols int
-	long      bool // the command takes several lines: the status is short
-	hidden    int  // lines of the command the agent did not print
+	hidden    int // lines of the command the agent did not print
 }
 
 func newFold(title string, limit int) *fold {
@@ -55,6 +56,15 @@ func newFold(title string, limit int) *fold {
 		raw:  capture.NewBuffer(foldRawCap, foldRawCap),
 		rest: capture.NewBuffer(foldRawCap, foldRawCap),
 	}
+}
+
+// newResult is the fold of a built-in tool's result, given whole: only its
+// status is shown, the lines counted as the agent counts them in a summary.
+func newResult(title, text string) *fold {
+	f := newFold(title, 0)
+	s := strings.TrimSpace(text)
+	f.hiddenLines, f.partial = strings.Count(s, "\n"), s != ""
+	return f
 }
 
 // write returns what of b goes to the terminal.
@@ -104,36 +114,53 @@ func (f *fold) cut() bool { return f.at != nil && f.at.hidden > 0 }
 // keep reports whether the fold is worth keeping for Ctrl+O.
 func (f *fold) keep() bool { return f.folded() || f.cut() }
 
-// statusExit draws the status; exit < 0 while the command runs.
+// statusExit draws the status; exit < 0 while the command runs. On the
+// line of the call it goes at the right edge, where the prompt's status
+// does: in full if it fits between the call and the edge, short if only
+// that does, and on a line of its own below the call otherwise.
 func (f *fold) statusExit(exit int) string {
-	if f.at == nil {
-		return "\r\x1b[K\x1b[0m" + dim + "  (" + strings.Join(f.parts(exit, true), " · ") + ")" + reset
-	}
 	full := "  (" + strings.Join(f.parts(exit, true), " · ") + ")"
+	if f.at == nil {
+		return "\r\x1b[K\x1b[0m" + dim + full + reset
+	}
 	short := "  (" + strings.Join(f.parts(exit, false), " · ") + ")"
-	room := f.at.cols - f.at.col
 	var b strings.Builder
-	if !f.drawn && utf8.RuneCountInString(short) > room {
-		// No room after the command: the status goes below it.
+	if f.at.col > 0 && !f.fits(short) {
+		// The status outgrew the room it had: it moves below, for good.
+		if f.drawn {
+			b.WriteString(f.clearAt())
+		}
 		b.WriteString("\r\n")
-		f.at.col, room = 0, f.at.cols
+		f.at.col = 0
 	}
 	f.drawn = true
 	text := short
-	if !f.at.long && utf8.RuneCountInString(full) <= room {
+	if f.fits(full) {
 		text = full
 	}
 	// The status is redrawn in place: autowrap stays off so it never moves
 	// the cursor to another line.
-	b.WriteString("\r")
+	b.WriteString(f.clearAt() + "\x1b[?7l")
 	if f.at.col > 0 {
-		fmt.Fprintf(&b, "\x1b[%dC", f.at.col)
+		fmt.Fprintf(&b, "\x1b[%dG", max(f.at.col+1, f.at.cols-runewidth.StringWidth(text)))
 	}
-	b.WriteString("\x1b[K\x1b[?7l\x1b[0m" + dim + text + reset + "\x1b[?7h")
+	b.WriteString("\x1b[0m" + dim + text + reset + "\x1b[?7h")
 	return b.String()
 }
 
-// parts are the items of the status; hint adds "ctrl+o to expand".
+// fits reports whether the status text fits where it is drawn: between
+// the call and the right edge, whose last column stays free as with the
+// prompt's status, or on a line of its own.
+func (f *fold) fits(text string) bool {
+	w := runewidth.StringWidth(text)
+	if f.at.col == 0 {
+		return w <= f.at.cols
+	}
+	return f.at.col+w < f.at.cols
+}
+
+// parts are the items of the status; hint adds "ctrl+o to expand" when
+// there is something to expand: output, or a command cut short.
 func (f *fold) parts(exit int, hint bool) []string {
 	n := f.hiddenLines
 	if f.partial {
@@ -154,7 +181,7 @@ func (f *fold) parts(exit int, hint bool) []string {
 	case exit > 0:
 		parts = append(parts, fmt.Sprintf("exit %d", exit))
 	}
-	if n > 0 && hint {
+	if hint && f.keep() {
 		parts = append(parts, "ctrl+o to expand")
 	}
 	return parts

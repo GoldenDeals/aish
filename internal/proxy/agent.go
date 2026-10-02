@@ -245,9 +245,15 @@ func (u *ui) Size() (int, int) {
 
 func (u *ui) Ask(ctx context.Context, q string) (string, error) { return u.p.askUser(ctx, q) }
 
+// Fold shows the status of a result as a command's is shown: drawn by the
+// same code, on the line of the call if it was left open. The text is
+// kept as it came, whole.
 func (u *ui) Fold(title, text string) {
 	u.p.mu.Lock()
 	defer u.p.mu.Unlock()
+	f := newResult(title, text)
+	f.at, u.p.at = u.p.at, nil
+	u.p.emit(f.finish(-1))
 	u.p.folds = append(u.p.folds, Fold{Title: title, Text: text})
 }
 
@@ -255,21 +261,30 @@ func (u *ui) Live(title string) agent.Live {
 	u.p.mu.Lock()
 	defer u.p.mu.Unlock()
 	l := &live{p: u.p}
+	at := u.p.at
+	u.p.at = nil
 	if u.p.foldLines >= 0 {
 		l.f = newFold(title, u.p.foldLines)
 		u.p.tool = l.f
 	}
+	if l.f != nil && u.p.foldLines == 0 {
+		l.f.at = at
+	} else if at != nil {
+		u.p.emit([]byte("\r\n")) // the output shows below the call
+	}
 	return l
 }
 
-func (u *ui) CommandAt(col int, long bool, hidden int) {
+// CommandAt needs no long: the status goes at the right edge of the last
+// line, however many the call took.
+func (u *ui) CommandAt(col int, _ bool, hidden int) {
 	u.p.mu.Lock()
 	defer u.p.mu.Unlock()
 	if u.p.size == nil {
 		return
 	}
 	if w, _ := u.p.size(); col >= 0 && w > 0 {
-		u.p.at = &statusAt{col: min(col, w), cols: w, long: long, hidden: hidden}
+		u.p.at = &statusAt{col: min(col, w), cols: w, hidden: hidden}
 	}
 }
 

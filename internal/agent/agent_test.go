@@ -387,8 +387,8 @@ func TestToolOutputs(t *testing.T) {
 	if !strings.Contains(out, "live-from-"+cwd) && !strings.Contains(out, "live-from-"+real) {
 		t.Errorf("external tool did not run in the shell's directory:\n%s", out)
 	}
-	if !strings.Contains(out, "(3 lines · ctrl+o to expand)") {
-		t.Errorf("no summary of the long result:\n%s", out)
+	if strings.Contains(out, "ctrl+o") {
+		t.Errorf("the status of the long result is the UI's to draw:\n%s", out)
 	}
 	if got := kinds(j.es); got != "user assistant tool_result tool_result assistant" {
 		t.Errorf("journal %s", got)
