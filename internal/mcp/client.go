@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +24,10 @@ import (
 )
 
 const protocolVersion = "2025-06-18"
+
+// cancelTimeout bounds telling a server about a request nobody waits for:
+// it is a courtesy, the caller has already gone.
+const cancelTimeout = 2 * time.Second
 
 // Server is one entry of mcp.yaml: a command speaking MCP on stdio, or the
 // URL of a Streamable HTTP endpoint.
@@ -89,7 +94,7 @@ func (m message) result() (json.RawMessage, error) {
 // conn is a JSON-RPC connection to one server.
 type conn interface {
 	call(ctx context.Context, method string, params any) (json.RawMessage, error)
-	notify(ctx context.Context, method string) error
+	notify(ctx context.Context, method string, params any) error
 	close()
 	alive() bool
 }
@@ -115,7 +120,25 @@ func initialize(ctx context.Context, c conn) error {
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
-	return c.notify(ctx, "notifications/initialized")
+	return c.notify(ctx, "notifications/initialized", nil)
+}
+
+// cancelRequest tells the server in the background that nobody waits for
+// request id anymore, so that it can stop the work. The server may never
+// hear it; the error is of no use to anyone.
+func cancelRequest(c conn, method string, id json.RawMessage, why error) {
+	if method == "initialize" {
+		return // the spec forbids cancelling it
+	}
+	reason := "cancelled by the user"
+	if errors.Is(why, context.DeadlineExceeded) {
+		reason = "timed out"
+	}
+	go func() {
+		ctx, stop := context.WithTimeout(context.Background(), cancelTimeout)
+		defer stop()
+		c.notify(ctx, "notifications/cancelled", map[string]any{"requestId": id, "reason": reason})
+	}()
 }
 
 type stdio struct {
@@ -123,11 +146,16 @@ type stdio struct {
 	in     io.WriteCloser
 	stderr *tail
 
+	// wmu orders the writes to the server's stdin. Not mu: a server that
+	// stops reading blocks a write for good.
+	wmu sync.Mutex
+
 	mu      sync.Mutex
 	next    int
 	pending map[string]chan message
 	dead    chan struct{}
 	err     error
+	closed  bool // given up on, though the process may still be exiting
 }
 
 func startStdio(s Server) (*stdio, error) {
@@ -173,7 +201,9 @@ func (c *stdio) read(r io.Reader) {
 			} else {
 				reply.Error = &rpcError{Code: -32601, Message: "method not found"}
 			}
-			c.write(reply)
+			// Not in this goroutine: a server that does not read would stop
+			// the reading too, and with it the answers to the calls that wait.
+			go c.write(context.Background(), reply)
 		case m.Method == "":
 			c.mu.Lock()
 			ch := c.pending[string(m.ID)]
@@ -191,16 +221,60 @@ func (c *stdio) read(r io.Reader) {
 	close(c.dead)
 }
 
-func (c *stdio) write(m message) error {
+// write sends m unless ctx ends first. A write the server does not take is
+// given up by closing the server: the line it got may be cut short, and
+// nothing can be said to it after that.
+func (c *stdio) write(ctx context.Context, m message) error {
 	m.JSONRPC = "2.0"
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_, err = c.in.Write(append(b, '\n'))
-	return err
+	var (
+		mu              sync.Mutex
+		started, gaveUp bool
+	)
+	done := make(chan error, 1)
+	go func() {
+		c.wmu.Lock()
+		defer c.wmu.Unlock()
+		mu.Lock()
+		started = !gaveUp
+		mu.Unlock()
+		if started {
+			_, err := c.in.Write(append(b, '\n'))
+			done <- err
+		}
+	}()
+	wrote := func(err error) error {
+		if err != nil {
+			return c.failure(err)
+		}
+		return nil
+	}
+	var stop error
+	select {
+	case err := <-done:
+		return wrote(err)
+	case <-c.dead:
+		stop = c.failure(nil)
+	case <-ctx.Done():
+		stop = ctx.Err()
+	}
+	mu.Lock()
+	gaveUp = true
+	hung := started
+	mu.Unlock()
+	if !hung {
+		return stop // waited for another write and sent nothing
+	}
+	select {
+	case err := <-done:
+		return wrote(err) // it got through after all
+	default:
+		c.abandon()
+		return stop
+	}
 }
 
 func (c *stdio) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
@@ -215,8 +289,8 @@ func (c *stdio) call(ctx context.Context, method string, params any) (json.RawMe
 		delete(c.pending, string(id))
 		c.mu.Unlock()
 	}()
-	if err := c.write(message{ID: id, Method: method, Params: params}); err != nil {
-		return nil, c.failure(err)
+	if err := c.write(ctx, message{ID: id, Method: method, Params: params}); err != nil {
+		return nil, err
 	}
 	select {
 	case m := <-ch:
@@ -224,6 +298,7 @@ func (c *stdio) call(ctx context.Context, method string, params any) (json.RawMe
 	case <-c.dead:
 		return nil, c.failure(nil)
 	case <-ctx.Done():
+		cancelRequest(c, method, id, ctx.Err())
 		return nil, ctx.Err()
 	}
 }
@@ -239,11 +314,17 @@ func (c *stdio) failure(err error) error {
 	}
 }
 
-func (c *stdio) notify(_ context.Context, method string) error {
-	return c.write(message{Method: method})
+func (c *stdio) notify(ctx context.Context, method string, params any) error {
+	return c.write(ctx, message{Method: method, Params: params})
 }
 
 func (c *stdio) alive() bool {
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return false
+	}
 	select {
 	case <-c.dead:
 		return false
@@ -252,7 +333,20 @@ func (c *stdio) alive() bool {
 	}
 }
 
+// abandon gives the server up at once, so that the next call starts a new
+// one, and stops it in the background.
+func (c *stdio) abandon() {
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+	go c.close()
+}
+
 func (c *stdio) close() {
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+	// Also wakes up a write blocked on the pipe.
 	c.in.Close()
 	if c.cmd.Process != nil {
 		syscall.Kill(-c.cmd.Process.Pid, syscall.SIGTERM)
@@ -298,6 +392,7 @@ type httpConn struct {
 	mu      sync.Mutex
 	next    int
 	session string
+	expired bool // the server forgot the session; a new one needs initialize
 }
 
 func (c *httpConn) post(ctx context.Context, m message) (*http.Response, error) {
@@ -317,13 +412,23 @@ func (c *httpConn) post(ctx context.Context, m message) (*http.Response, error) 
 		req.Header.Set(k, v)
 	}
 	c.mu.Lock()
-	if c.session != "" {
-		req.Header.Set("Mcp-Session-Id", c.session)
-	}
+	session := c.session
 	c.mu.Unlock()
+	if session != "" {
+		req.Header.Set("Mcp-Session-Id", session)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == http.StatusNotFound && session != "" {
+		// The answer to a session the server no longer knows: it restarted,
+		// or the session expired.
+		resp.Body.Close()
+		c.mu.Lock()
+		c.expired = true
+		c.mu.Unlock()
+		return nil, fmt.Errorf("%s: session expired", c.url)
 	}
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
@@ -338,11 +443,19 @@ func (c *httpConn) post(ctx context.Context, m message) (*http.Response, error) 
 	return resp, nil
 }
 
-func (c *httpConn) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+func (c *httpConn) call(ctx context.Context, method string, params any) (_ json.RawMessage, err error) {
 	c.mu.Lock()
 	c.next++
 	id := json.RawMessage(fmt.Sprint(c.next))
 	c.mu.Unlock()
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			// Whether the request reached the server is unknown; a server
+			// ignores the cancellation of a request it never saw.
+			cancelRequest(c, method, id, ctx.Err())
+			err = ctx.Err()
+		}
+	}()
 	resp, err := c.post(ctx, message{ID: id, Method: method, Params: params})
 	if err != nil {
 		return nil, err
@@ -377,13 +490,18 @@ func (c *httpConn) call(ctx context.Context, method string, params any) (json.Ra
 	return nil, fmt.Errorf("%s: stream ended without a response", c.url)
 }
 
-func (c *httpConn) notify(ctx context.Context, method string) error {
-	resp, err := c.post(ctx, message{Method: method})
+func (c *httpConn) notify(ctx context.Context, method string, params any) error {
+	resp, err := c.post(ctx, message{Method: method, Params: params})
 	if err != nil {
 		return err
 	}
 	return resp.Body.Close()
 }
 
-func (c *httpConn) alive() bool { return true }
-func (c *httpConn) close()      {}
+func (c *httpConn) alive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.expired
+}
+
+func (c *httpConn) close() {}

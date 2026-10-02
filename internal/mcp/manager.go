@@ -183,12 +183,22 @@ func (m *Manager) Call(ctx context.Context, name string, args map[string]any) (j
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", s.name, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, s.timeout())
-	defer cancel()
 	if args == nil {
 		args = map[string]any{}
 	}
-	res, err := c.call(ctx, "tools/call", map[string]any{"name": t.Tool, "arguments": args})
+	call := func(c conn) (json.RawMessage, error) {
+		ctx, cancel := context.WithTimeout(ctx, s.timeout())
+		defer cancel()
+		return c.call(ctx, "tools/call", map[string]any{"name": t.Tool, "arguments": args})
+	}
+	res, err := call(c)
+	// An HTTP server that forgot the session did not run the call, so it is
+	// safe to repeat in a new one. A stdio server that died may have run it.
+	if err != nil && s.cfg.URL != "" && !c.alive() {
+		if c, err = m.ensure(ctx, s, true); err == nil {
+			res, err = call(c)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", s.name, err)
 	}
