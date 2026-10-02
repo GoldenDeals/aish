@@ -11,6 +11,9 @@ import (
 // Remove deletes the files of a saved session. An open one is refused:
 // its lock is held while the files go, so that no aish opens it meanwhile.
 func Remove(dir, id string) error {
+	if err := CheckID(id); err != nil {
+		return err
+	}
 	found, err := remove(dir, id)
 	if err == nil && !found {
 		return fmt.Errorf("no session %s", id)

@@ -191,6 +191,9 @@ func (p *Proxy) saveState(cwd string) {
 // resume switches the shell to session id: the journal at once, the shell
 // at its next prompt, when __aish_precmd sources the script written here.
 func (p *Proxy) resume(id string) (rpc.Info, error) {
+	if err := session.CheckID(id); err != nil {
+		return rpc.Info{}, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.asking {
@@ -220,7 +223,8 @@ func (p *Proxy) resume(id string) (rpc.Info, error) {
 	if p.base != nil && p.cur != nil {
 		change = bashstate.Diff(*p.cur, bashstate.Apply(*p.base, saved.Shell))
 	}
-	script := bashstate.Script(change) + "export AISH_SESSION=" + id + "\n"
+	// CheckID already keeps quotes out; the quoting is a second line.
+	script := bashstate.Script(change) + "export AISH_SESSION='" + next.ID + "'\n"
 	if err := os.WriteFile(filepath.Join(p.run, "restore.bash"), []byte(script), 0o600); err != nil {
 		next.Unlock()
 		return rpc.Info{}, err

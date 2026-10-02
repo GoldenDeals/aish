@@ -269,5 +269,8 @@ func CheckName(dir, id, name string) error {
 
 // Load opens the session id in dir.
 func Load(dir, id string) (*Session, error) {
+	if err := CheckID(id); err != nil {
+		return nil, err
+	}
 	return Open(filepath.Join(dir, id+".jsonl"))
 }
