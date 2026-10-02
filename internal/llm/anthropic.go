@@ -150,7 +150,11 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 			resp.ToolCalls = append(resp.ToolCalls, ToolCall{ID: b.ID, Name: b.Name, Args: args})
 		}
 	}
-	resp.Raw, _ = json.Marshal(msg.ToParam())
+	// An empty reply (a refusal, a bare end_turn) replayed as is is a 400 on
+	// every later request: leave it to messages to stand in for it.
+	if len(msg.Content) > 0 {
+		resp.Raw, _ = json.Marshal(msg.ToParam())
+	}
 	return resp, nil
 }
 
@@ -160,7 +164,9 @@ func (p *anthropicProvider) messages(ms []Message) []anthropic.MessageParam {
 		if m.Role == RoleAssistant {
 			if replay(m, p.Name(), p.model) {
 				var mp anthropic.MessageParam
-				if json.Unmarshal(m.Raw, &mp) == nil {
+				// Journals from before Complete stopped keeping an empty Raw
+				// still have one: rebuild it rather than send it back.
+				if json.Unmarshal(m.Raw, &mp) == nil && len(mp.Content) > 0 {
 					out = append(out, mp)
 					continue
 				}
