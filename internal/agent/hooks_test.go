@@ -72,7 +72,7 @@ func TestPreToolVerdicts(t *testing.T) {
 		{"ask on an allowed call", "make deploy", `{"action":"ask","reason":"deploys"}`, true, "make deploy", ""},
 		{"deny with a reason", "make deploy", `{"action":"deny","reason":"not on friday"}`, false, "", "denied by hook h: not on friday"},
 		{"replaced command runs", "git push --force", `{"args":{"command":"git push --force-with-lease"}}`, true, "git push --force-with-lease", ""},
-		{"replaced command checked", "ls", `{"args":{"command":"rm -rf x"}}`, false, "", `denied by policy: policy: matches "rm *"`},
+		{"replaced command checked", "ls", `{"args":{"command":"rm -rf x"}}`, false, "", `denied by policy: matches "rm *"`},
 	} {
 		prov := &fakeProvider{replies: []*llm.Response{
 			{ToolCalls: []llm.ToolCall{toolCall("c1", "bash", `{"command":"`+tc.command+`"}`)}},

@@ -108,8 +108,8 @@ func TestRulesAndCedar(t *testing.T) {
 	}
 	home, _ := os.UserHomeDir()
 	for _, c := range []struct{ cmd, want, reason string }{
-		{"ls -la", Ask, `policy: matches "ls *"`},                      // Cedar allows, the rules ask
-		{"pacman -S ripgrep", Deny, `policy: matches "pacman *"`},      // Cedar asks, the rules deny
+		{"ls -la", Ask, `matches "ls *"`},                              // Cedar allows, the rules ask
+		{"pacman -S ripgrep", Deny, `matches "pacman *"`},              // Cedar asks, the rules deny
 		{"sudo git status", Deny, "sudo is not allowed for the agent"}, // Cedar denies, the rules ask
 		{"cat README.md", Allow, ""},                                   // neither has anything against it
 	} {

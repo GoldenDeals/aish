@@ -58,7 +58,7 @@ func (c rulesChecker) Check(ctx context.Context, in Input) (Decision, error) {
 		}
 	case "write_file", "edit_file":
 		if a := c.WriteOutsideHome; a != "" && a != Allow && !under(in.Path, in.Home) {
-			ds = append(ds, Decision{Action: a, Reason: fmt.Sprintf("policy: writes outside home: %s", in.Path)})
+			ds = append(ds, Decision{Action: a, Reason: fmt.Sprintf("writes outside home: %s", in.Path)})
 		}
 	}
 	return combine(ds), nil
@@ -68,7 +68,7 @@ func matches(action string, patterns []string, text string) []Decision {
 	var ds []Decision
 	for _, p := range patterns {
 		if match(p, text) {
-			ds = append(ds, Decision{Action: action, Reason: fmt.Sprintf("policy: matches %q", p)})
+			ds = append(ds, Decision{Action: action, Reason: fmt.Sprintf("matches %q", p)})
 		}
 	}
 	return ds

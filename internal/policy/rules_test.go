@@ -65,23 +65,23 @@ func TestRules(t *testing.T) {
 		want   string
 		reason string
 	}{
-		{"bash", map[string]any{"command": "sudo cat /etc/x"}, Deny, `policy: matches "sudo *"`},
-		{"bash", map[string]any{"command": "rm -rf /"}, Deny, `policy: matches "rm -rf /"`},
+		{"bash", map[string]any{"command": "sudo cat /etc/x"}, Deny, `matches "sudo *"`},
+		{"bash", map[string]any{"command": "rm -rf /"}, Deny, `matches "rm -rf /"`},
 		{"bash", map[string]any{"command": "rm -rf /tmp/x"}, Allow, ""},
 		{"bash", map[string]any{"command": "ls -la"}, Allow, ""},
-		{"bash", map[string]any{"command": "make && echo x | sudo tee /etc/x"}, Deny, `policy: matches "sudo *"`},
-		{"bash", map[string]any{"command": `bash -c "sudo ls"`}, Deny, `policy: matches "sudo *"`},
-		{"bash", map[string]any{"command": "cd /tmp && apt install ripgrep"}, Ask, `policy: matches "apt install *"`},
+		{"bash", map[string]any{"command": "make && echo x | sudo tee /etc/x"}, Deny, `matches "sudo *"`},
+		{"bash", map[string]any{"command": `bash -c "sudo ls"`}, Deny, `matches "sudo *"`},
+		{"bash", map[string]any{"command": "cd /tmp && apt install ripgrep"}, Ask, `matches "apt install *"`},
 		// Matching both lists, the command is denied and the question is moot.
-		{"bash", map[string]any{"command": "sudo apt install ripgrep"}, Deny, `policy: matches "sudo *"`},
-		{"bash", map[string]any{"command": "apt install x; sudo ls"}, Deny, `policy: matches "sudo *"`},
+		{"bash", map[string]any{"command": "sudo apt install ripgrep"}, Deny, `matches "sudo *"`},
+		{"bash", map[string]any{"command": "apt install x; sudo ls"}, Deny, `matches "sudo *"`},
 		// What does not parse is matched as one command.
-		{"bash", map[string]any{"command": "sudo ls 'oops"}, Deny, `policy: matches "sudo *"`},
+		{"bash", map[string]any{"command": "sudo ls 'oops"}, Deny, `matches "sudo *"`},
 		{"bash", map[string]any{"command": "echo 'oops"}, Allow, ""},
 		{"write_file", map[string]any{"path": "notes.txt"}, Allow, ""},
 		{"write_file", map[string]any{"path": filepath.Join(home, "a", "b.txt")}, Allow, ""},
-		{"write_file", map[string]any{"path": "/etc/hosts"}, Deny, "policy: writes outside home: " + resolve("/etc/hosts")},
-		{"edit_file", map[string]any{"path": "../outside.txt"}, Deny, "policy: writes outside home: " + resolve(filepath.Join(filepath.Dir(home), "outside.txt"))},
+		{"write_file", map[string]any{"path": "/etc/hosts"}, Deny, "writes outside home: " + resolve("/etc/hosts")},
+		{"edit_file", map[string]any{"path": "../outside.txt"}, Deny, "writes outside home: " + resolve(filepath.Join(filepath.Dir(home), "outside.txt"))},
 		{"read_file", map[string]any{"path": "/etc/hosts"}, Allow, ""},
 	} {
 		d, err := e.Check(ctx, NewInput(c.tool, c.args, home))
