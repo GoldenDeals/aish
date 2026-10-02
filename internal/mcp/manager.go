@@ -64,7 +64,7 @@ type Manager struct {
 	Taken     func(name string) bool
 
 	mu    sync.Mutex
-	notes map[string]bool // wrappers not written, and why
+	notes map[string]bool // wrappers and caches not written, and why
 }
 
 type server struct {
@@ -318,9 +318,22 @@ func (s *server) connect() (conn, []ToolInfo, error) {
 
 func (m *Manager) save(s *server, tools []ToolInfo) {
 	b, err := json.Marshal(map[string]any{"key": s.key, "tools": tools})
-	if err == nil && os.MkdirAll(m.cacheDir, 0o700) == nil {
-		os.WriteFile(m.cachePath(s.name), b, 0o600)
+	if err == nil {
+		err = os.MkdirAll(m.cacheDir, 0o700)
 	}
+	if err == nil {
+		err = os.WriteFile(m.cachePath(s.name), b, 0o600)
+	}
+	if err != nil {
+		// Without the cache the next shell has no wrappers until a call.
+		m.note("%s: tool list not cached: %v", s.name, err)
+	}
+}
+
+func (m *Manager) note(format string, args ...any) {
+	m.mu.Lock()
+	m.notes[fmt.Sprintf(format, args...)] = true
+	m.mu.Unlock()
 }
 
 // wrap writes a command wrapper for every known tool, except those whose
@@ -339,20 +352,18 @@ func (m *Manager) wrap() {
 			if _, err := os.Stat(path); err == nil {
 				continue
 			}
-			note := ""
 			if p, err := exec.LookPath(t.Name); err == nil {
-				note = fmt.Sprintf("%s: not a command, it would shadow %s", t.Name, p)
-			} else if m.Taken != nil && m.Taken(t.Name) {
-				note = fmt.Sprintf("%s: skipped, another tool has this name", t.Name)
+				m.note("%s: not a command, it would shadow %s", t.Name, p)
+				continue
 			}
-			if note != "" {
-				m.mu.Lock()
-				m.notes[note] = true
-				m.mu.Unlock()
+			if m.Taken != nil && m.Taken(t.Name) {
+				m.note("%s: skipped, another tool has this name", t.Name)
 				continue
 			}
 			script := fmt.Sprintf("#!/bin/sh\nexec %q tool %s \"$@\"\n", m.Self, t.Name)
-			os.WriteFile(path, []byte(script), 0o755)
+			if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+				m.note("%s: not a command: %v", t.Name, err)
+			}
 		}
 	}
 }
@@ -380,7 +391,8 @@ type Status struct {
 	Failed    time.Time `json:"failed,omitzero"`
 }
 
-// StatusResult also has the notes about wrappers that were not written.
+// StatusResult also has the notes about wrappers and caches that were not
+// written.
 type StatusResult struct {
 	Servers []Status `json:"servers"`
 	Notes   []string `json:"notes,omitempty"`

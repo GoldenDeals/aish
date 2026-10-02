@@ -91,6 +91,23 @@ func stubManager(t *testing.T, cache, starts string) *Manager {
 	return m
 }
 
+// TestManagerWriteNotes: a cache or a wrapper that could not be written is
+// a note in `aish mcp`, not lost silently.
+func TestManagerWriteNotes(t *testing.T) {
+	dir := t.TempDir()
+	cache := filepath.Join(dir, "cache")
+	os.WriteFile(cache, nil, 0o600) // a file where the directory should be
+	m := stubManager(t, cache, filepath.Join(dir, "starts"))
+	m.Bin, m.Self = filepath.Join(dir, "missing"), "/x/aish"
+	m.List(context.Background(), true)
+	notes := strings.Join(m.Status().Notes, "\n")
+	for _, want := range []string{"stub: tool list not cached: ", "stub_search: not a command: "} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("no %q in notes:\n%s", want, notes)
+		}
+	}
+}
+
 func TestManager(t *testing.T) {
 	dir := t.TempDir()
 	cache, starts, bin := filepath.Join(dir, "cache"), filepath.Join(dir, "starts"), filepath.Join(dir, "bin")
