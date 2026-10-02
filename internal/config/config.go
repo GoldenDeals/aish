@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -52,6 +53,14 @@ type Config struct {
 	// PromptStatus shows the context size and the model at the right of the
 	// prompt.
 	PromptStatus bool `toml:"prompt_status"`
+
+	// JournalIgnore are shell patterns, as HISTIGNORE takes them, for the
+	// commands whose output stays out of the journal: a line with a simple
+	// command matching one (`sudo env` too) is recorded without its output.
+	JournalIgnore []string `toml:"journal_ignore"`
+	// StateIgnore are shell patterns for the variables that stay out of a
+	// session's shell state.
+	StateIgnore []string `toml:"state_ignore"`
 
 	PolicyDir   string `toml:"policy_dir"`
 	ToolsDir    string `toml:"tools_dir"`
@@ -103,6 +112,8 @@ func Default() Config {
 		Markdown:       true,
 		CodeStyle:      "monokai",
 		PromptStatus:   true,
+		JournalIgnore:  []string{"*secret*", "env", "printenv", "cat *credentials*", "history"},
+		StateIgnore:    []string{"*TOKEN*", "*SECRET*", "*KEY*", "*PASSWORD*", "AWS_*"},
 		PolicyDir:      filepath.Join(Dir(), "policy"),
 		ToolsDir:       filepath.Join(Dir(), "tools"),
 		SessionsDir:    filepath.Join(dataDir(), "sessions"),
@@ -167,7 +178,8 @@ func unknown(md toml.MetaData) error {
 }
 
 // check rejects negative limits, which the code would quietly take for 0,
-// and mask patterns that do not compile. fold_lines is not here: negative
+// mask patterns that do not compile and ignore patterns that are malformed,
+// which would quietly match nothing. fold_lines is not here: negative
 // there means "do not fold".
 func (c Config) check() error {
 	for _, p := range c.Mask {
@@ -186,6 +198,19 @@ func (c Config) check() error {
 	} {
 		if f.n < 0 {
 			return fmt.Errorf("%s = %d: must not be negative", f.key, f.n)
+		}
+	}
+	for _, l := range []struct {
+		key      string
+		patterns []string
+	}{
+		{"journal_ignore", c.JournalIgnore},
+		{"state_ignore", c.StateIgnore},
+	} {
+		for _, p := range l.patterns {
+			if _, err := path.Match(p, ""); err != nil {
+				return fmt.Errorf("%s: pattern %q: %w", l.key, p, err)
+			}
 		}
 	}
 	return nil

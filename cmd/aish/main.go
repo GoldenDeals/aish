@@ -291,7 +291,11 @@ func expandCmd() int {
 func printEntry(e session.Entry) {
 	switch e.Kind {
 	case session.KindShell:
-		fmt.Printf("\x1b[2m%s\x1b[0m $ %s  \x1b[2m[exit %d]\x1b[0m\n", e.Time.Format("15:04:05"), e.Cmd, e.Exit)
+		note := ""
+		if e.Output == session.NotRecorded {
+			note = " " + session.NotRecorded
+		}
+		fmt.Printf("\x1b[2m%s\x1b[0m $ %s  \x1b[2m[exit %d]%s\x1b[0m\n", e.Time.Format("15:04:05"), e.Cmd, e.Exit, note)
 	case session.KindUser:
 		fmt.Printf("\x1b[2m%s\x1b[0m \x1b[1m? %s\x1b[0m\n", e.Time.Format("15:04:05"), e.Text)
 	case session.KindAssistant:

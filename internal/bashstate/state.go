@@ -8,6 +8,7 @@ package bashstate
 import (
 	"bytes"
 	"fmt"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -49,12 +50,26 @@ func ignored(name string) bool {
 		ignoredVars[name]
 }
 
+// secret reports whether a variable name matches one of the shell patterns
+// (`*TOKEN*`, `AWS_*`) the user keeps out of the session's state. A bad
+// pattern matches nothing: the config rejects them before they get here.
+func secret(name string, ignore []string) bool {
+	for _, p := range ignore {
+		if ok, _ := path.Match(p, name); ok {
+			return true
+		}
+	}
+	return false
+}
+
 var funcHeader = regexp.MustCompile(`(?m)^(\S+) \(\) $\n\{ $`)
 
 // Parse reads what __aish_dump printed: `declare -p`, NUL, `declare -f`,
 // NUL, alias name/value pairs each ended by NUL, an empty name, then
-// `set +o` and `shopt -p`.
-func Parse(dump []byte, cwd string) (State, error) {
+// `set +o` and `shopt -p`. Variables matching a pattern in ignore are left
+// out, so that a state parsed with the same list neither saves nor undoes
+// them.
+func Parse(dump []byte, cwd string, ignore []string) (State, error) {
 	parts := bytes.SplitN(dump, []byte{0}, 3)
 	if len(parts) < 3 {
 		return State{}, fmt.Errorf("bash state: truncated dump")
@@ -76,7 +91,7 @@ func Parse(dump []byte, cwd string) (State, error) {
 			continue
 		}
 		name, _, _ := strings.Cut(f[2], "=")
-		if ignored(name) || strings.Contains(f[1], "r") {
+		if ignored(name) || strings.Contains(f[1], "r") || secret(name, ignore) {
 			continue // readonly ones cannot be set again
 		}
 		if name == "PATH" && tools != "" {

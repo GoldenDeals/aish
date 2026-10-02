@@ -99,6 +99,8 @@ func statusCmd(cfg config.Config) int {
 	mask, _ := agent.NewMasker(cfg.MaskDefaults, cfg.Mask)
 	row("mask", fmt.Sprintf("%d patterns (%d built-in, %d from mask)", mask.Len(), mask.Len()-len(cfg.Mask), len(cfg.Mask)))
 	row("fold_lines", fmt.Sprint(cfg.FoldLines))
+	row("ignored", fmt.Sprintf("%d command patterns (journal_ignore), %d variable patterns (state_ignore)",
+		len(cfg.JournalIgnore), len(cfg.StateIgnore)))
 	row("markdown", fmt.Sprint(cfg.Markdown))
 	row("prompt_status", fmt.Sprint(cfg.PromptStatus))
 	row("config", configFiles(project, st.ProjectConfig))

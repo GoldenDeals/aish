@@ -157,9 +157,20 @@ coreutils, а свёрнутое показывают `aish expand` и Ctrl+O. �
 bash, без fork.
 
 Файлы лежат в `~/.local/share/aish/sessions/`: `<id>.jsonl` — журнал, `<id>.state` — состояние shell
-(значения переменных открытым текстом, в том числе секреты из окружения; права 0600), `<id>.name` —
-имя, `<id>.lock` — пока сессия открыта. `aish session show` печатает журнал, `aish session clear`
-сбрасывает его.
+(значения переменных открытым текстом; права 0600), `<id>.name` — имя, `<id>.lock` — пока сессия
+открыта. `aish session show` печатает журнал, `aish session clear` сбрасывает его.
+
+Что не пишется на диск, задают два списка шаблонов в настройках (синтаксис — как у `HISTIGNORE`):
+
+- `journal_ignore` — команды, чей вывод не попадает в журнал, а значит и к модели: по умолчанию
+  `env`, `printenv`, `history`, `cat *credentials*` и всё с `secret`. Шаблон сверяется с каждой
+  простой командой строки целиком, так что `sudo env` и `env | grep X` тоже подходят; в журнале
+  остаётся сама команда с выводом `[not recorded]`.
+- `state_ignore` — переменные, которые не попадают в `<id>.state` и не восстанавливаются: по
+  умолчанию `*TOKEN*`, `*SECRET*`, `*KEY*`, `*PASSWORD*`, `AWS_*`.
+
+Пустой список (`journal_ignore = []`) отключает фильтр. Это защита от случайного попадания в
+журнал, не маскирование: `cat secret.txt | base64` отфильтруется, а `grep -r token .` — нет.
 
 Секреты в том, что уходит модели, маскируются: вывод команд, файлы из `@`, инструкции и результаты
 инструментов проходят через набор регулярок (ключи AWS, GitHub, OpenAI, Slack, блоки `PRIVATE KEY`,
@@ -299,6 +310,8 @@ max_output_bytes = 16000          # сколько вывода команды �
 mask = ["corp-[0-9a-f]{32}"]      # свои регулярки секретов, которые LLM видит как corp***; группа прячет только себя
 mask_defaults = true              # встроенные регулярки (AWS, GitHub, OpenAI, Slack, PRIVATE KEY, password=…)
 fold_lines = 0                    # сколько строк вывода агента показывать до сворачивания (-1 — не сворачивать)
+journal_ignore = ["*secret*", "env", "printenv", "cat *credentials*", "history"]  # команды без вывода в журнале
+state_ignore = ["*TOKEN*", "*SECRET*", "*KEY*", "*PASSWORD*", "AWS_*"]            # переменные вне <id>.state
 markdown = true                   # рендерить ответы как markdown (false — как есть)
 code_style = "monokai"            # стиль подсветки кода: https://xyproto.github.io/splash/docs/
 prompt_status = true              # статус контекста справа от промпта

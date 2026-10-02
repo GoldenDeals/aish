@@ -60,6 +60,8 @@ type Proxy struct {
 	foldLines    int
 	maxOutput    int
 	promptStatus bool
+	ignore       []string     // journal_ignore: commands recorded without their output
+	stateIgnore  []string     // state_ignore: variables kept out of the shell state
 	fixedWindow  bool         // context_window is set in the config
 	prov         llm.Provider // for the models list
 	out          io.Writer    // the terminal
@@ -125,6 +127,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	p.foldLines = cfg.FoldLines
 	p.maxOutput = cfg.MaxOutputBytes
 	p.promptStatus = cfg.PromptStatus
+	p.ignore, p.stateIgnore = cfg.JournalIgnore, cfg.StateIgnore
 	p.provName = cfg.Provider
 	p.fixedWindow = cfg.ContextWindow > 0
 	// Only the models list is asked of it: a wrong effort must not lose it.
@@ -527,6 +530,9 @@ func (p *Proxy) marker(m Marker) {
 		out, tui := render(seg.buf)
 		if seg.cleared && strings.TrimSpace(out) == "" {
 			return // `clear` itself: nothing left on the screen
+		}
+		if ignoredCommand(seg.cmd, p.ignore) {
+			out = session.NotRecorded
 		}
 		_ = p.sess.Append(session.Entry{Kind: session.KindShell, Cmd: seg.cmd, Output: out, Exit: exit, Cwd: cwd, TUI: tui})
 	case "agent-start":

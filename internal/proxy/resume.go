@@ -70,7 +70,7 @@ func (p *Proxy) saveState(cwd string) {
 		if err != nil {
 			return
 		}
-		base, err := bashstate.Parse(b, "")
+		base, err := bashstate.Parse(b, "", p.stateIgnore)
 		if err != nil {
 			return
 		}
@@ -80,7 +80,7 @@ func (p *Proxy) saveState(cwd string) {
 	if err != nil {
 		return
 	}
-	cur, err := bashstate.Parse(b, cwd)
+	cur, err := bashstate.Parse(b, cwd, p.stateIgnore)
 	if err != nil {
 		return
 	}

@@ -23,6 +23,11 @@ func dumpFunc(t *testing.T) string {
 // dump runs script in a clean bash and returns the state it ends in.
 func dump(t *testing.T, script string) State {
 	t.Helper()
+	return dumpIgnoring(t, script, nil)
+}
+
+func dumpIgnoring(t *testing.T, script string, ignore []string) State {
+	t.Helper()
 	dir := t.TempDir()
 	out := filepath.Join(dir, "state")
 	cmd := exec.Command("bash", "--norc", "--noprofile", "-c", dumpFunc(t)+"\n"+script+"\n__aish_dump >"+out)
@@ -35,11 +40,35 @@ func dump(t *testing.T, script string) State {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := Parse(b, "")
+	st, err := Parse(b, "", ignore)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return st
+}
+
+func TestStateIgnore(t *testing.T) {
+	script := `export FOO_TOKEN=x AWS_PROFILE=p KEEP=1; MY_SECRET=s; NOT_A_SECRET_AT_ALL=1`
+	ignore := []string{"*TOKEN*", "*SECRET", "AWS_*"}
+	st := dumpIgnoring(t, script, ignore)
+	for _, gone := range []string{"FOO_TOKEN", "AWS_PROFILE", "MY_SECRET"} {
+		if _, ok := st.Vars[gone]; ok {
+			t.Errorf("%s should be ignored: %s", gone, st.Vars[gone])
+		}
+	}
+	for _, kept := range []string{"KEEP", "NOT_A_SECRET_AT_ALL"} {
+		if _, ok := st.Vars[kept]; !ok {
+			t.Errorf("%s should be kept: %v", kept, keys(st.Vars))
+		}
+	}
+	// A diff of states parsed with the same list never touches them.
+	base := dumpIgnoring(t, "", ignore)
+	if d := Diff(base, st); d.Vars["FOO_TOKEN"] != "" || d.Vars["KEEP"] == "" {
+		t.Errorf("diff %v", d.Vars)
+	}
+	if _, ok := dump(t, script).Vars["FOO_TOKEN"]; !ok {
+		t.Error("an empty list ignores nothing")
+	}
 }
 
 func TestRoundTrip(t *testing.T) {

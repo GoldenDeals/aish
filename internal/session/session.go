@@ -30,6 +30,10 @@ const (
 	KindSummary = "summary"
 )
 
+// NotRecorded is the Output of a shell command that journal_ignore matched:
+// the journal, and so the model, know the command ran, not what it printed.
+const NotRecorded = "[not recorded]"
+
 type ToolCall struct {
 	ID   string          `json:"id"`
 	Name string          `json:"name"`
