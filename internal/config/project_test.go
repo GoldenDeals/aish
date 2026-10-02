@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -142,7 +143,7 @@ func TestProjectNone(t *testing.T) {
 	base := Default()
 	base.SystemPrompt = "Global."
 	cfg, file, err := Project(base, root)
-	if err != nil || file != "" || cfg != base {
+	if err != nil || file != "" || !reflect.DeepEqual(cfg, base) {
 		t.Errorf("without a file: %q, %v, %+v", file, err, cfg)
 	}
 }
