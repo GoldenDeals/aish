@@ -6,7 +6,8 @@
 #
 # Markers (OSC 6973, stripped by the proxy before they reach the terminal):
 #   cmd-start;<command>          PS0, right before a user command runs
-#   cmd-end;<rc>;<cwd>           PROMPT_COMMAND, before each primary prompt
+#   cmd-end;<rc>;<cwd>           PROMPT_COMMAND, before each primary prompt;
+#                                $AISH_RUN/state holds the shell's state by then
 #   ask-start                    a request to the assistant begins
 #   agent-start;<id>;<command>   before a command requested by the agent
 #   agent-end;<id>;<rc>;<cwd>    after it
@@ -103,12 +104,40 @@ __aish_mark() {
 	__aish_ps0=$'\e]6973;cmd-start;'"${__aish_buf//[$'\a\e']/}"$'\a'
 }
 
+# __aish_dump prints the shell's state for the proxy to save with the
+# session (internal/bashstate parses it). Builtins only: it runs at every
+# prompt, and a fork there would be felt.
+__aish_dump() {
+	local __aish_n
+	declare -p
+	printf '\0'
+	declare -f
+	printf '\0'
+	for __aish_n in "${!BASH_ALIASES[@]}"; do
+		printf '%s\0%s\0' "$__aish_n" "${BASH_ALIASES[$__aish_n]}"
+	done
+	printf '\0'
+	set +o
+	shopt -p
+}
+
 __aish_precmd() {
-	local rc=$?
-	printf '\e]6973;cmd-end;%s;%s\a' "$rc" "$PWD"
+	local __aish_rc=$?
+	if [[ -n ${AISH_RUN-} ]]; then
+		# The state the shell starts with, which a session's changes are
+		# measured against; then the session `aish resume` switched to.
+		[[ -z ${__aish_based-} ]] && __aish_based=1 && __aish_dump >|"$AISH_RUN/state.base"
+		if [[ -s $AISH_RUN/restore.bash ]]; then
+			builtin source "$AISH_RUN/restore.bash"
+			: >|"$AISH_RUN/restore.bash"
+		fi
+		# Written before cmd-end: the proxy reads it when the marker arrives.
+		__aish_dump >|"$AISH_RUN/state"
+	fi
+	printf '\e]6973;cmd-end;%s;%s\a' "$__aish_rc" "$PWD"
 	__aish_fresh=1
 	__aish_ps0=
-	return $rc
+	return $__aish_rc
 }
 
 # __aish_unecho replaces the `__aish_ask '...'` line readline has echoed with
@@ -150,7 +179,7 @@ __aish_ask() {
 	while [[ -s $AISH_RUN/next.cmd ]]; do
 		IFS= read -r __aish_id <"$AISH_RUN/next.id"
 		IFS= read -r -d '' __aish_cmd <"$AISH_RUN/next.cmd"
-		: >"$AISH_RUN/next.cmd"
+		: >|"$AISH_RUN/next.cmd"
 		__aish_rc=${__aish_cmd//[$'\a\e']/}
 		printf '\e]6973;agent-start;%s;%s\a' "$__aish_id" "${__aish_rc:0:1000}"
 		eval "$__aish_cmd" </dev/null

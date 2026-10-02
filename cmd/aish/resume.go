@@ -1,0 +1,162 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"golang.org/x/term"
+
+	"github.com/inebotov/aish/internal/config"
+	"github.com/inebotov/aish/internal/proxy"
+	"github.com/inebotov/aish/internal/rpc"
+	"github.com/inebotov/aish/internal/session"
+	"github.com/inebotov/aish/internal/skills"
+	"github.com/inebotov/aish/internal/tools"
+)
+
+// resumeCmd brings a session back: inside aish this shell switches to it,
+// outside a new aish starts with it.
+func resumeCmd(cfg config.Config, args []string) int {
+	if len(args) > 1 || len(args) == 1 && strings.HasPrefix(args[0], "-") {
+		return fail(errors.New("usage: aish resume [ID|NAME]"))
+	}
+	var client *rpc.Client
+	cur := ""
+	if c, err := rpc.FromEnv(); err == nil {
+		client = c
+		var info rpc.Info
+		if err := client.Call(rpc.MethodInfo, nil, &info); err != nil {
+			return fail(err)
+		}
+		cur = info.SessionID
+	}
+	dir := cfg.SessionsDir
+	list, err := session.List(dir)
+	if err != nil {
+		return fail(err)
+	}
+	var pick session.Info
+	if len(args) == 1 {
+		if pick, err = session.Find(list, args[0]); err != nil {
+			return fail(err)
+		}
+	} else {
+		if len(list) == 0 {
+			return fail(errors.New("no sessions yet"))
+		}
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return fail(errors.New("usage: aish resume ID|NAME (choosing needs a terminal)"))
+		}
+		var ok bool
+		if pick, ok, err = pickSession(dir, list, cur); err != nil {
+			return fail(err)
+		} else if !ok {
+			return 0
+		}
+	}
+	switch {
+	case pick.ID == cur:
+		return fail(fmt.Errorf("this shell is in session %s already", pick.Title()))
+	case pick.Open:
+		return fail(fmt.Errorf("session %s is open in another aish", pick.Title()))
+	}
+
+	if client != nil {
+		var info rpc.Info
+		if err := client.Call(rpc.MethodResume, rpc.ResumeParams{ID: pick.ID}, &info); err != nil {
+			return fail(err)
+		}
+		if sess, err := session.Load(dir, pick.ID); err == nil {
+			printResumed(pick, sess.Entries())
+		}
+		return 0
+	}
+	sess, err := session.Load(dir, pick.ID)
+	if err != nil {
+		return fail(err)
+	}
+	return startShell(cfg, sess, true)
+}
+
+// startShell runs bash under aish with sess, brought back as it was left
+// if resume.
+func startShell(cfg config.Config, sess *session.Session, resume bool) int {
+	p := proxy.New(sess)
+	if resume {
+		saved, err := session.LoadState(cfg.SessionsDir, sess.ID)
+		if err != nil {
+			return fail(err)
+		}
+		p.Resume(saved)
+		if list, err := session.List(cfg.SessionsDir); err == nil {
+			for _, i := range list {
+				if i.ID == sess.ID {
+					printResumed(i, sess.Entries())
+				}
+			}
+		}
+	}
+	// The user's skills become commands; project ones would outlive a cd.
+	reg := tools.Load(cfg.ToolsDir)
+	found, _ := skills.Find("")
+	for _, s := range found {
+		reg.Add(s.Tool())
+	}
+	code, err := p.Run(cfg, reg)
+	if err != nil {
+		return fail(err)
+	}
+	return code
+}
+
+// printResumed reminds what the session was about: its last entries.
+func printResumed(i session.Info, es []session.Entry) {
+	es = session.Current(es)
+	var parts []string
+	if i.Name != "" {
+		parts = append(parts, i.ID)
+	}
+	parts = append(parts, fmt.Sprintf("%d requests", i.Requests), "last used "+ago(i.Modified))
+	if i.Cwd != "" {
+		parts = append(parts, home(i.Cwd))
+	}
+	fmt.Printf("\x1b[1mresumed %s\x1b[0m \x1b[2m(%s)\x1b[0m\n", i.Title(), strings.Join(parts, " · "))
+	const tail = 8
+	if len(es) > tail {
+		fmt.Printf("\x1b[2m… %d earlier entries (aish session show)\x1b[0m\n", len(es)-tail)
+		es = es[len(es)-tail:]
+	}
+	for _, e := range es {
+		printEntry(e)
+	}
+}
+
+func ago(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+	return t.Format("2 Jan 2006")
+}
+
+func home(path string) string {
+	if h, err := os.UserHomeDir(); err == nil && h != "/" {
+		if path == h {
+			return "~"
+		}
+		if rest, ok := strings.CutPrefix(path, h+"/"); ok {
+			return "~/" + rest
+		}
+	}
+	return path
+}

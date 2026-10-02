@@ -13,6 +13,7 @@ import (
 type anthropicProvider struct {
 	client    anthropic.Client
 	model     string
+	effort    string
 	maxTokens int64
 }
 
@@ -21,7 +22,10 @@ func newAnthropic(cfg config.Config) *anthropicProvider {
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}
-	return &anthropicProvider{client: anthropic.NewClient(opts...), model: cfg.Model, maxTokens: cfg.MaxTokens}
+	return &anthropicProvider{
+		client: anthropic.NewClient(opts...), model: cfg.Model,
+		effort: cfg.Effort, maxTokens: cfg.ReplyTokens(),
+	}
 }
 
 func (p *anthropicProvider) Name() string  { return "anthropic" }
@@ -32,7 +36,21 @@ func (p *anthropicProvider) Models(ctx context.Context) ([]ModelInfo, error) {
 	pages := p.client.Models.ListAutoPaging(ctx, anthropic.ModelListParams{})
 	for pages.Next() {
 		m := pages.Current()
-		out = append(out, ModelInfo{ID: m.ID, Window: int(m.MaxInputTokens)})
+		info := ModelInfo{ID: m.ID, Window: int(m.MaxInputTokens), EffortsKnown: m.JSON.Capabilities.Valid()}
+		if e := m.Capabilities.Effort; e.Supported {
+			for _, l := range []struct {
+				name string
+				ok   bool
+			}{
+				{"low", e.Low.Supported}, {"medium", e.Medium.Supported}, {"high", e.High.Supported},
+				{"xhigh", e.Xhigh.Supported}, {"max", e.Max.Supported},
+			} {
+				if l.ok {
+					info.Efforts = append(info.Efforts, l.name)
+				}
+			}
+		}
+		out = append(out, info)
 	}
 	return out, pages.Err()
 }
@@ -42,6 +60,9 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 		Model:     anthropic.Model(p.model),
 		MaxTokens: p.maxTokens,
 		Messages:  p.messages(req.Messages),
+	}
+	if p.effort != "" {
+		params.OutputConfig = anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffort(p.effort)}
 	}
 	if req.System != "" {
 		params.System = []anthropic.TextBlockParam{{Text: req.System}}

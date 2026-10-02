@@ -19,7 +19,11 @@ type Config struct {
 	APIKey    string `toml:"api_key"`
 	APIKeyEnv string `toml:"api_key_env"`
 	Model     string `toml:"model"`
-	MaxTokens int64  `toml:"max_tokens"`
+	// Effort is how hard the model thinks: "low" … "max" (and "none",
+	// "minimal" for OpenAI). Empty leaves it to the model.
+	Effort string `toml:"effort"`
+	// MaxTokens bounds a reply; 0 picks it by the effort (see ReplyTokens).
+	MaxTokens int64 `toml:"max_tokens"`
 
 	// MaxSteps bounds the number of LLM round-trips per user request.
 	MaxSteps int `toml:"max_steps"`
@@ -80,7 +84,6 @@ func Default() Config {
 		BaseURL:        "http://127.0.0.1:8317",
 		APIKeyEnv:      "AISH_API_KEY",
 		Model:          "claude-opus-5",
-		MaxTokens:      32000,
 		MaxSteps:       50,
 		MaxOutputBytes: 16000,
 		FoldLines:      0,
@@ -108,6 +111,9 @@ func Load() (Config, error) {
 	if m := os.Getenv("AISH_MODEL"); m != "" {
 		cfg.Model = m
 	}
+	if e := os.Getenv("AISH_EFFORT"); e != "" {
+		cfg.Effort = e
+	}
 	cfg.PolicyDir = expand(cfg.PolicyDir)
 	cfg.ToolsDir = expand(cfg.ToolsDir)
 	cfg.SessionsDir = expand(cfg.SessionsDir)
@@ -127,6 +133,18 @@ func (c Config) Key() string {
 		return os.Getenv("OPENAI_API_KEY")
 	}
 	return os.Getenv("ANTHROPIC_API_KEY")
+}
+
+// ReplyTokens is MaxTokens, or when it is 0 enough for the effort: at xhigh
+// and max the model thinks long, and a reply cut short in thinking is lost.
+func (c Config) ReplyTokens() int64 {
+	switch {
+	case c.MaxTokens > 0:
+		return c.MaxTokens
+	case c.Effort == "xhigh" || c.Effort == "max":
+		return 64000
+	}
+	return 32000
 }
 
 func expand(p string) string {

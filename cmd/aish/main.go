@@ -1,12 +1,15 @@
 // Command aish runs your bash with an LLM agent built in.
 //
 //	aish [--resume]              start bash under aish (a new or the latest session)
+//	aish resume [ID|NAME]        bring a session back, shell state included; pick one or rename
+//	aish mcp                     the MCP servers and how they are doing
+//	aish skills                  the skills that apply here and their problems
 //	aish init bash               print the bash integration script
 //	aish tool [NAME ARGS...]     list tools or run one
 //	aish session show|clear      print or reset the current session
 //	aish compact [FOCUS]         replace the session with a summary
 //	aish status                  the context, the model and the settings
-//	aish model [NAME]            list the models or switch this shell's one
+//	aish model [NAME] [EFFORT]   list the models, switch this shell's model or effort
 //	aish expand                  print the outputs folded during the last request (Ctrl+O)
 //	aish agent start -- TEXT     (internal) handle a request
 //	aish agent resume ID RC      (internal) continue after a bash command
@@ -27,21 +30,26 @@ import (
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/mcp"
 	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/proxy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 	"github.com/inebotov/aish/internal/shellinit"
+	"github.com/inebotov/aish/internal/skills"
 	"github.com/inebotov/aish/internal/tools"
 )
 
 const usage = `usage:
   aish [--resume]            start bash with aish (--resume continues the latest session)
+  aish resume [ID|NAME]      continue a session: its history, env, functions, aliases
+                             and cwd; without an argument choose one (r renames it)
+  aish mcp                   show the MCP servers: state, tools, errors
+  aish skills                show the skills of this directory and their problems
   aish init bash             print the bash integration script
   aish tool [NAME ARGS...]   list tools, or run one
   aish session show|clear    print or reset the current session
   aish compact [FOCUS]       replace the session with its summary (FOCUS: what to keep)
   aish status                show the context size, the model and the settings
-  aish model [NAME]          list the models, or switch to one for this shell
+  aish model [NAME] [EFFORT] list the models, or switch the model and/or the
+                             effort (low … max, default) for this shell
   aish expand                print outputs folded during the last request (Ctrl+O)
 
 In the shell: commands run as usual; text that is not a command goes to the
@@ -79,6 +87,12 @@ func run(args []string) int {
 		return statusCmd(cfg)
 	case "model":
 		return modelCmd(cfg, args[1:])
+	case "resume":
+		return resumeCmd(cfg, args[1:])
+	case "mcp":
+		return mcpCmd(cfg, args[1:])
+	case "skills":
+		return skillsCmd(cfg, args[1:])
 	case "expand":
 		return expandCmd()
 	case "help":
@@ -116,11 +130,8 @@ func shell(cfg config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	code, err := proxy.New(sess).Run(cfg, tools.Load(cfg.ToolsDir))
-	if err != nil {
-		return fail(err)
-	}
-	return code
+	// Latest starts a new session when there is nothing to continue.
+	return startShell(cfg, sess, resume && sess.Len() > 0)
 }
 
 func agentCmd(cfg config.Config, args []string) int {
@@ -166,17 +177,17 @@ func newAgent(ctx context.Context, cfg config.Config) (*agent.Agent, error) {
 		return nil, err
 	}
 	return &agent.Agent{
-		Cfg: cfg, Provider: prov, Tools: loadTools(cfg, nil), Policy: pol,
+		Cfg: cfg, Provider: prov, Tools: loadTools(cfg, true, nil), Policy: pol,
 		Client: client, RunDir: os.Getenv("AISH_RUN"), Out: os.Stdout,
 	}, nil
 }
 
-// shellConfig is cfg with the model this shell uses: `aish model` may have
-// switched it.
+// shellConfig is cfg with the model and the effort this shell uses: `aish
+// model` may have switched them.
 func shellConfig(cfg config.Config, client *rpc.Client) config.Config {
 	var info rpc.Info
 	if client.Call(rpc.MethodInfo, nil, &info) == nil && info.Model != "" {
-		cfg.Model = info.Model
+		cfg.Model, cfg.Effort = info.Model, info.Effort
 	}
 	return cfg
 }
@@ -206,15 +217,29 @@ func trimDashes(a []string) []string {
 	return a
 }
 
-// loadTools returns the built-in and external tools plus, inside aish, the
-// MCP tools the proxy provides. Their problems go to warn.
-func loadTools(cfg config.Config, warn func(string)) *tools.Registry {
+// loadTools returns the built-in and external tools, the skills of cwd
+// plus, inside aish, the MCP tools the proxy provides; for the model, without
+// the skills only the user may invoke. Problems of the MCP tools go to warn;
+// those of the skills are for `aish skills`.
+//
+// The model gets only the MCP tools already known: waiting for a server the
+// proxy is still warming up would stall the request for up to startTimeout
+// with no output. Such a server reaches the model with the next request, and
+// `aish tool` waits for it anyway.
+func loadTools(cfg config.Config, model bool, warn func(string)) *tools.Registry {
 	reg := tools.Load(cfg.ToolsDir)
+	cwd, _ := os.Getwd()
+	found, _ := skills.Find(cwd)
+	for _, s := range found {
+		if !model || !s.UserOnly {
+			reg.Add(s.Tool())
+		}
+	}
 	client, err := rpc.FromEnv()
 	if err != nil {
 		return reg
 	}
-	remote, problems := mcp.Remote(client, true)
+	remote, problems := mcp.Remote(client, !model)
 	for _, t := range remote {
 		if !reg.Add(t) {
 			problems = append(problems, t.Name+": skipped, another tool has this name")
@@ -230,10 +255,14 @@ func loadTools(cfg config.Config, warn func(string)) *tools.Registry {
 
 func toolCmd(cfg config.Config, args []string) int {
 	var problems []string
-	reg := loadTools(cfg, func(s string) { problems = append(problems, s) })
+	reg := loadTools(cfg, false, func(s string) { problems = append(problems, s) })
 	if len(args) == 0 {
+		w := 12
 		for _, t := range reg.All() {
-			fmt.Printf("%-12s %s\n", t.Name, firstSentence(t.Desc))
+			w = max(w, len(t.Name))
+		}
+		for _, t := range reg.All() {
+			fmt.Printf("%-*s %s\n", w, t.Name, firstSentence(t.Desc))
 		}
 		for _, p := range problems {
 			fmt.Fprintf(os.Stderr, "\x1b[2mmcp: %s\x1b[0m\n", p)

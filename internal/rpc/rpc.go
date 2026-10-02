@@ -29,11 +29,13 @@ const (
 	MethodAppend     = "append"
 	MethodWaitOutput = "wait_output"
 	MethodClear      = "clear"
-	MethodModel      = "model" // switch the model for this shell
+	MethodModel      = "model" // switch the model and its effort for this shell
 	MethodFold       = "fold"  // keep an output for Ctrl+O
 	MethodFolds      = "folds" // outputs kept since the request started
 	MethodMCPList    = "mcp_list"
 	MethodMCPCall    = "mcp_call"
+	MethodMCPStatus  = "mcp_status"
+	MethodResume     = "resume" // switch this shell to another session
 )
 
 // Fold is an output hidden from the terminal, shown again with Ctrl+O.
@@ -44,15 +46,22 @@ type Fold struct {
 
 type Info struct {
 	SessionID string `json:"session_id"`
-	// Model is the one this shell uses, which `aish model` may have changed;
-	// Window is its context size, 0 if unknown.
+	// Model and Effort are what this shell uses, which `aish model` may
+	// have changed; Window is the model's context size, 0 if unknown.
 	Model  string `json:"model"`
+	Effort string `json:"effort,omitempty"`
 	Window int    `json:"window"`
 }
 
+// ModelParams set both the model and the effort: "" is the model's default.
 type ModelParams struct {
 	Model  string `json:"model"`
+	Effort string `json:"effort,omitempty"`
 	Window int    `json:"window"` // 0: the proxy finds out
+}
+
+type ResumeParams struct {
+	ID string `json:"id"`
 }
 
 type AppendParams struct {

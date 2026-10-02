@@ -102,7 +102,13 @@ func TestManager(t *testing.T) {
 	if res := m.List(ctx, false); len(res.Tools) != 0 {
 		t.Fatalf("listed without starting: %+v", res)
 	}
+	if st := m.Status().Servers; len(st) != 1 || st[0].State != "new" || st[0].Transport != "stdio" {
+		t.Errorf("status before start: %+v", st)
+	}
 	res := m.List(ctx, true)
+	if st := m.Status(); st.Servers[0].State != "running" || len(st.Servers[0].Tools) != 3 || len(st.Notes) != 1 {
+		t.Errorf("status: %+v", st)
+	}
 	var names []string
 	for _, ti := range res.Tools {
 		names = append(names, ti.Name)
@@ -166,6 +172,9 @@ func TestManager(t *testing.T) {
 	if after, _ := os.ReadFile(starts); len(after) != len(before) {
 		t.Error("listing from the cache started the server")
 	}
+	if st := m2.Status().Servers[0]; st.State != "idle" || len(st.Tools) != 3 {
+		t.Errorf("status from the cache: %+v", st)
+	}
 }
 
 func TestBrokenServer(t *testing.T) {
@@ -174,6 +183,25 @@ func TestBrokenServer(t *testing.T) {
 	res := m.List(context.Background(), true)
 	if len(res.Tools) != 0 || len(res.Errors) != 1 || !strings.HasPrefix(res.Errors[0], "bad: ") {
 		t.Fatalf("%+v", res)
+	}
+	if st := m.Status().Servers[0]; st.State != "failed" || st.Error == "" || st.Failed.IsZero() {
+		t.Errorf("status %+v", st)
+	}
+}
+
+func TestMask(t *testing.T) {
+	got := strings.Join(maskArgs([]string{"srv", "--token", "abc", "--api-key=def", "GITHUB_TOKEN=ghi", "--port", "80", "plain"}), " ")
+	if want := "srv --token *** --api-key=*** GITHUB_TOKEN=*** --port 80 plain"; got != want {
+		t.Errorf("args %q, want %q", got, want)
+	}
+	if got := maskURL("https://u:pw@h/mcp?api_key=s&x=1"); got != "https://u@h/mcp?api_key=***&x=1" {
+		t.Errorf("url %q", got)
+	}
+	cfg := Server{URL: "https://u:pw123@h/mcp?api_key=abc123", Args: []string{"--token", "s3cr3t"},
+		Env: map[string]string{"GITHUB_TOKEN": "ghp_x"}, Headers: map[string]string{"Authorization": "Bearer zzz"}}
+	got = maskError(`Post "https://u:***@h/mcp?api_key=abc123": EOF; s3cr3t ghp_x Bearer zzz`, cfg)
+	if want := `Post "https://u:***@h/mcp?api_key=***": EOF; *** *** ***`; got != want {
+		t.Errorf("maskError = %q, want %q", got, want)
 	}
 }
 

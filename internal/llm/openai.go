@@ -15,6 +15,7 @@ import (
 type openaiProvider struct {
 	client    openai.Client
 	model     string
+	effort    string
 	maxTokens int64
 }
 
@@ -32,7 +33,10 @@ func newOpenAI(cfg config.Config) *openaiProvider {
 			opts = append(opts, option.WithUnsafeAllowHTTP())
 		}
 	}
-	return &openaiProvider{client: openai.NewClient(opts...), model: cfg.Model, maxTokens: cfg.MaxTokens}
+	return &openaiProvider{
+		client: openai.NewClient(opts...), model: cfg.Model,
+		effort: cfg.Effort, maxTokens: cfg.ReplyTokens(),
+	}
 }
 
 func (p *openaiProvider) Name() string  { return "openai" }
@@ -54,8 +58,9 @@ func (p *openaiProvider) Complete(ctx context.Context, req Request, onText func(
 		// Without it a stream reports no token counts.
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)},
 	}
-	if p.maxTokens > 0 {
-		params.MaxCompletionTokens = openai.Int(p.maxTokens)
+	params.MaxCompletionTokens = openai.Int(p.maxTokens)
+	if p.effort != "" {
+		params.ReasoningEffort = shared.ReasoningEffort(p.effort)
 	}
 	for _, t := range req.Tools {
 		params.Tools = append(params.Tools, openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{

@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/inebotov/aish/internal/config"
 )
@@ -66,6 +68,30 @@ type Response struct {
 type ModelInfo struct {
 	ID     string
 	Window int
+	// Efforts are the levels the model takes, when EffortsKnown: proxies
+	// such as cliproxyapi do not report them.
+	Efforts      []string
+	EffortsKnown bool
+}
+
+// Efforts are the levels a provider's API takes, from the lightest.
+func Efforts(provider string) []string {
+	switch provider {
+	case "anthropic":
+		return []string{"low", "medium", "high", "xhigh", "max"}
+	case "openai":
+		return []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+	}
+	return nil
+}
+
+// CheckEffort tells why effort is not a level of provider; "" is the
+// model's default and always fits.
+func CheckEffort(provider, effort string) error {
+	if effort == "" || slices.Contains(Efforts(provider), effort) {
+		return nil
+	}
+	return fmt.Errorf("unknown effort %q for %s (want %s)", effort, provider, strings.Join(Efforts(provider), ", "))
 }
 
 type Provider interface {
@@ -84,6 +110,9 @@ func replay(m Message, provider, model string) bool {
 }
 
 func New(cfg config.Config) (Provider, error) {
+	if err := CheckEffort(cfg.Provider, cfg.Effort); err != nil {
+		return nil, err
+	}
 	switch cfg.Provider {
 	case "anthropic":
 		return newAnthropic(cfg), nil

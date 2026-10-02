@@ -24,6 +24,7 @@ import (
 	"github.com/creack/pty"
 	"golang.org/x/term"
 
+	"github.com/inebotov/aish/internal/bashstate"
 	"github.com/inebotov/aish/internal/capture"
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
@@ -60,21 +61,33 @@ type Proxy struct {
 	out          io.Writer    // the terminal
 	size         func() (w, h int)
 
-	mu      sync.Mutex
-	screen  Screen
-	asking  bool                // inside __aish_ask, between ask-start and the next prompt
-	user    *segment            // command typed by the user, between cmd-start and cmd-end
-	agent   map[string]*segment // commands run on behalf of the agent, by call id
-	tool    *fold               // live output of a non-bash tool, between fold-start and fold-end
-	at      *statusAt           // where the agent left the cursor after printing its next command
-	folds   []Fold              // folded outputs of the last request, for Ctrl+O
-	view    *viewer             // open while Ctrl+O shows the folds
-	held    []byte              // shell output that arrived while the viewer was open
-	done    map[string]rpc.Output
-	waiters map[string]chan struct{}
-	mcp     *mcp.Manager
-	model   string // `aish model` switches it for this shell
-	window  int    // its context size, 0 if unknown
+	mu       sync.Mutex
+	screen   Screen
+	asking   bool                // inside __aish_ask, between ask-start and the next prompt
+	user     *segment            // command typed by the user, between cmd-start and cmd-end
+	agent    map[string]*segment // commands run on behalf of the agent, by call id
+	tool     *fold               // live output of a non-bash tool, between fold-start and fold-end
+	at       *statusAt           // where the agent left the cursor after printing its next command
+	folds    []Fold              // folded outputs of the last request, for Ctrl+O
+	view     *viewer             // open while Ctrl+O shows the folds
+	held     []byte              // shell output that arrived while the viewer was open
+	done     map[string]rpc.Output
+	waiters  map[string]chan struct{}
+	mcp      *mcp.Manager
+	model    string // `aish model` switches it for this shell
+	effort   string // and this, "" being the model's default
+	window   int    // its context size, 0 if unknown
+	provName string
+
+	// The shell's state: how it started, how it was at the last prompt, and
+	// what of it was saved last (session id and all).
+	run       string
+	base, cur *bashstate.State
+	lastSaved []byte
+	switched  bool // `aish resume` switched the session during this command
+
+	restore string // the script that brings back a resumed session
+	resumed *session.Saved
 }
 
 func New(sess *session.Session) *Proxy {
@@ -92,13 +105,18 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	p.foldLines = cfg.FoldLines
 	p.maxOutput = cfg.MaxOutputBytes
 	p.promptStatus = cfg.PromptStatus
-	p.model, p.window = cfg.Model, cfg.ContextWindow
+	p.provName = cfg.Provider
 	p.fixedWindow = cfg.ContextWindow > 0
-	if prov, err := llm.New(cfg); err == nil {
+	// Only the models list is asked of it: a wrong effort must not lose it.
+	pc := cfg
+	pc.Effort = ""
+	if prov, err := llm.New(pc); err == nil {
 		p.prov = prov
-		if !p.fixedWindow {
-			go p.lookupWindow(cfg.Model)
-		}
+	}
+	p.effort, p.window = cfg.Effort, cfg.ContextWindow
+	p.setModel(cfg.Model, cfg.ContextWindow)
+	if p.resumed != nil {
+		p.restoreModel(*p.resumed)
 	}
 	p.out = os.Stdout
 	p.size = func() (int, int) {
@@ -115,11 +133,21 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	if err := p.sess.Lock(); err != nil {
+		return 1, err
+	}
+	defer func() { p.session().Unlock() }()
 	run, err := makeRunDir(reg, self)
 	if err != nil {
 		return 1, err
 	}
 	defer os.RemoveAll(run)
+	p.run = run
+	if p.restore != "" {
+		if err := os.WriteFile(filepath.Join(run, "restore.bash"), []byte(p.restore), 0o600); err != nil {
+			return 1, err
+		}
+	}
 
 	servers, err := mcp.LoadConfig(cfg.MCPConfig)
 	if err != nil {
@@ -219,6 +247,9 @@ func makeRunDir(reg *tools.Registry, self string) (string, error) {
 	for _, t := range reg.All() {
 		if t.Run == nil {
 			continue // bash is bash; external tools are already on PATH
+		}
+		if _, err := exec.LookPath(t.Name); err == nil {
+			continue // the wrapper would shadow it for the whole shell
 		}
 		script := fmt.Sprintf("#!/bin/sh\nexec %q tool %s \"$@\"\n", self, t.Name)
 		if err := os.WriteFile(filepath.Join(bin, t.Name), []byte(script), 0o755); err != nil {
@@ -422,13 +453,15 @@ func (p *Proxy) marker(m Marker) {
 			}
 		}
 		clear(p.agent)
-		if p.user == nil {
-			return
-		}
+		rc, cwd, _ := strings.Cut(m.Payload, ";")
+		defer p.saveState(cwd) // with the command that changed it in the journal
 		seg := p.user
 		p.user = nil
-		rc, cwd, _ := strings.Cut(m.Payload, ";")
-		if strings.TrimSpace(seg.cmd) == "" {
+		if p.switched {
+			p.switched = false
+			return // `aish resume` belongs to neither session
+		}
+		if seg == nil || strings.TrimSpace(seg.cmd) == "" {
 			return
 		}
 		exit, _ := strconv.Atoi(rc)
@@ -499,7 +532,7 @@ func (p *Proxy) handle(method string, params json.RawMessage) (any, error) {
 	case rpc.MethodInfo:
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		return rpc.Info{SessionID: p.sess.ID, Model: p.model, Window: p.window}, nil
+		return p.info(), nil
 	case rpc.MethodModel:
 		var mp rpc.ModelParams
 		if err := json.Unmarshal(params, &mp); err != nil {
@@ -510,22 +543,22 @@ func (p *Proxy) handle(method string, params json.RawMessage) (any, error) {
 		}
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		p.model = mp.Model
-		if !p.fixedWindow {
-			p.window = mp.Window
-			if p.window == 0 {
-				go p.lookupWindow(mp.Model)
-			}
+		if err := llm.CheckEffort(p.provName, mp.Effort); err != nil {
+			return nil, err
 		}
-		return rpc.Info{SessionID: p.sess.ID, Model: p.model, Window: p.window}, nil
+		if mp.Model != p.model || mp.Window > 0 {
+			p.setModel(mp.Model, mp.Window)
+		}
+		p.effort = mp.Effort
+		return p.info(), nil
 	case rpc.MethodHistory:
-		return p.sess.Entries(), nil
+		return p.session().Entries(), nil
 	case rpc.MethodAppend:
 		var ap rpc.AppendParams
 		if err := json.Unmarshal(params, &ap); err != nil {
 			return nil, err
 		}
-		return nil, p.sess.Append(ap.Entries...)
+		return nil, p.session().Append(ap.Entries...)
 	case rpc.MethodFold:
 		var f Fold
 		if err := json.Unmarshal(params, &f); err != nil {
@@ -540,8 +573,18 @@ func (p *Proxy) handle(method string, params json.RawMessage) (any, error) {
 		defer p.mu.Unlock()
 		return append([]Fold{}, p.folds...), nil
 	case rpc.MethodClear:
+		p.mu.Lock()
+		defer p.mu.Unlock()
 		p.sess.Clear()
-		return rpc.Info{SessionID: p.sess.ID}, nil
+		return p.info(), nil
+	case rpc.MethodResume:
+		var rp rpc.ResumeParams
+		if err := json.Unmarshal(params, &rp); err != nil {
+			return nil, err
+		}
+		return p.resume(rp.ID)
+	case rpc.MethodMCPStatus:
+		return p.mcp.Status(), nil
 	case rpc.MethodWaitOutput:
 		var wp rpc.WaitParams
 		if err := json.Unmarshal(params, &wp); err != nil {

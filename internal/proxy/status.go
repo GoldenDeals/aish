@@ -33,11 +33,14 @@ func (p *Proxy) lookupWindow(model string) {
 	}
 }
 
-// statusText is the context size and the model, colored by how full the
-// context is.
+// statusText is the context size, the model and its effort, colored by how
+// full the context is.
 func (p *Proxy) statusText() (text, color string) {
 	tokens := session.Tokens(p.sess.Entries(), p.maxOutput)
 	text, color = p.model, "\x1b[2m"
+	if p.effort != "" {
+		text += " · " + p.effort
+	}
 	if tokens == 0 {
 		return text, color
 	}

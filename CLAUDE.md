@@ -18,7 +18,7 @@ go test ./...
 go vet ./...
 ```
 
-Тесты есть у `agent`, `capture`, `markdown`, `mcp`, `policy`, `proxy`, `shellinit`; они чистые
+Тесты есть у `agent`, `bashstate`, `capture`, `markdown`, `mcp`, `policy`, `proxy`, `session`, `shellinit`, `skills`; они чистые
 (без PTY и сети; `mcp` запускает свой тестовый бинарь как stub-сервер). После изменений в `internal/shellinit/init.bash` обязательно гоняй
 `go test ./internal/shellinit` — он проверяет скрипт реальным bash.
 
@@ -54,10 +54,12 @@ go vet ./...
 | `internal/proxy` | PTY, фильтр маркеров, запись вывода, сворачивание, Ctrl+O-вьюер, RPC-сервер |
 | `internal/shellinit` | `init.bash` (встроен через `go:embed`) — вся интеграция с bash |
 | `internal/agent` | цикл запроса: LLM-ход → инструменты → bash-команда или финальный ответ |
-| `internal/session` | журнал сессии, JSONL в `~/.local/share/aish/sessions/` |
+| `internal/session` | журнал сессии, JSONL в `~/.local/share/aish/sessions/`; рядом состояние, имя, lock; список и поиск для `aish resume` |
+| `internal/bashstate` | состояние shell (переменные, функции, алиасы, опции, cwd) из дампа `__aish_dump`: разбор, дифф, скрипт восстановления |
 | `internal/llm` | провайдер-нейтральный интерфейс + Anthropic и OpenAI |
 | `internal/tools` | встроенные инструменты, внешние из `~/.config/aish/tools/`, CLI-разбор |
 | `internal/mcp` | клиент MCP (stdio, Streamable HTTP), менеджер серверов в прокси, обёртки-команды, схема→CLI |
+| `internal/skills` | скиллы Claude Code (`SKILL.md`): поиск от `~` и `/` до cwd, фронтматтер, скилл как `tools.Tool`, чей вызов отдаёт инструкцию с подставленными аргументами; `disable-model-invocation` — только команда, `loadTools` для агента их пропускает |
 | `internal/policy` | Rego (OPA), парсинг bash-строки в список argv через `mvdan.cc/sh` |
 | `internal/capture` | очистка вывода PTY от ANSI/`\r`, буфер «голова+хвост», усечение |
 | `internal/markdown` | потоковый рендер markdown в терминал, подсветка через chroma |
@@ -112,11 +114,27 @@ OSC-последовательности `\e]6973;<kind>;<payload>\a`, выре�
 - **`KindSummary`** (от `aish compact`) заменяет всё, что было до неё: и `Messages`, и
   `Agent.load`, и подсчёт токенов работают с `session.Current(es)`. Новое место, которое читает
   журнал для модели, тоже должно начинать с `Current`.
-- **Модель переключается на shell, а не в конфиге**: `aish model` пишет её в прокси (rpc `model`),
-  агент берёт `Info.Model` поверх `cfg.Model` (`shellConfig` в `cmd/aish`). Сырые сообщения
-  (`Entry.Raw`) воспроизводятся только при совпадении и провайдера, и модели.
+- **Модель и effort переключаются на shell, а не в конфиге**: `aish model` пишет их в прокси
+  (rpc `model`, параметры задают обе величины сразу, `""` — effort по умолчанию), агент берёт
+  `Info.Model`/`Info.Effort` поверх `cfg` (`shellConfig` в `cmd/aish`); оба сохраняются в
+  `<id>.state` и восстанавливаются при resume. Сырые сообщения (`Entry.Raw`) воспроизводятся
+  только при совпадении и провайдера, и модели. `max_tokens = 0` значит «по effort»
+  (`Config.ReplyTokens`), поэтому провайдеры читают его только через этот метод.
 - **Статус справа от промпта рисует прокси** на маркере `cmd-end` (`proxy/status.go`) через
   `\e7 … \e8`, `PS1` не трогается. Всё, что печатается между `cmd-end` и промптом, может его сдвинуть.
+- **Состояние shell снимается до `cmd-end`.** `__aish_precmd` один раз пишет базу
+  (`$AISH_RUN/state.base`, shell сразу после `~/.bashrc`), исполняет и опустошает
+  `$AISH_RUN/restore.bash`, если он не пуст, и пишет `$AISH_RUN/state` — всё это *до* печати
+  `cmd-end`, потому что прокси читает дамп по этому маркеру (`Proxy.saveState`). В сессию
+  (`<id>.state`) идёт только дифф `Diff(base, cur)`. Дамп — без fork, на каждом приглашении:
+  не добавляй туда внешних команд. Что пропускается (`_*`, `AISH_*`, `BASH_*`, readonly,
+  переменные bash) — `internal/bashstate`; новое служебное имя без этих префиксов попадёт в сессию.
+- **Переключение сессии внутри shell** (`rpc resume`) пишет в `restore.bash`
+  `Diff(cur, Apply(base, target))` — то есть заодно откатывает изменения прежней сессии — и
+  ставит `Proxy.switched`, чтобы команда `aish resume` не попала ни в один журнал. Агенту
+  (`p.asking`) переключаться нельзя.
+- **Сессию держит один aish**: `<id>.lock` (flock) берёт `Run`/`resume`, `Clear` переносит его на
+  новый ID. `Latest` и пикер пропускают открытые сессии.
 - **Маркеры сейчас без nonce** — любой байтовый поток может их подделать (см. §3 `PROPOSAL.md`).
   Помни об этом, когда правишь фильтр.
 
@@ -136,9 +154,12 @@ OSC-последовательности `\e]6973;<kind>;<payload>\a`, выре�
   пример — `examples/tools/weather`).
 - `~/.config/aish/policy/*.rego` — политики, запрос `data.aish.decision`,
   пример — `examples/policy/default.rego`.
+- `~/.claude/skills/`, `~/.config/aish/skills/`, `.claude/skills/` от `/` до cwd — скиллы; обёртки
+  в `$AISH_RUN/bin` получают только личные, проектные — через `aish tool NAME`.
 - `~/.config/aish/mcp.yaml` (или `mcp_config`) — MCP-серверы; кэш списков инструментов —
   `~/.cache/aish/mcp/<server>.json`.
-- `~/.local/share/aish/sessions/*.jsonl` — журналы, открытым текстом.
+- `~/.local/share/aish/sessions/` — `<id>.jsonl` журналы, `<id>.state` состояние shell и модель
+  (значения переменных открытым текстом, 0600), `<id>.name` имя, `<id>.lock`.
 - `$AISH_RUN` — временный каталог сессии: `rc`, `sock`, `bin/` (обёртки инструментов),
-  `next.cmd`, `next.id`. Удаляется при выходе.
+  `next.cmd`, `next.id`, `state.base`, `state`, `restore.bash`. Удаляется при выходе.
 - Переменные для shell: `AISH_SOCK`, `AISH_RUN`, `AISH_BIN`, `AISH_SESSION`, `AISH_TOOLS_PATH`.

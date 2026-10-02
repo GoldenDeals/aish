@@ -1,5 +1,7 @@
 // Package session is the journal of one aish shell: commands with their
-// output, user requests, assistant turns and tool results.
+// output, user requests, assistant turns and tool results. Next to it are
+// kept the shell's state, so that `aish resume` brings back the shell along
+// with what the assistant knows, and the session's name.
 package session
 
 import (
@@ -8,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"sync"
 	"time"
 )
@@ -79,6 +80,7 @@ type Session struct {
 	ID      string
 	path    string
 	entries []Entry
+	lock    *os.File
 }
 
 func New(dir string) (*Session, error) {
@@ -89,14 +91,16 @@ func New(dir string) (*Session, error) {
 	return &Session{ID: id, path: filepath.Join(dir, id+".jsonl")}, nil
 }
 
-// Latest opens the most recently modified session in dir.
+// Latest opens the most recently modified session in dir that no other
+// aish has open.
 func Latest(dir string) (*Session, error) {
-	files, _ := filepath.Glob(filepath.Join(dir, "*.jsonl"))
-	if len(files) == 0 {
-		return New(dir)
+	list, _ := List(dir)
+	for _, i := range list {
+		if !i.Open {
+			return Load(dir, i.ID)
+		}
 	}
-	sort.Slice(files, func(i, j int) bool { return modTime(files[i]).After(modTime(files[j])) })
-	return Open(files[0])
+	return New(dir)
 }
 
 func Open(path string) (*Session, error) {
@@ -152,6 +156,12 @@ func (s *Session) Clear() {
 	dir := filepath.Dir(s.path)
 	s.ID = freshID(dir, s.ID)
 	s.path = filepath.Join(dir, s.ID+".jsonl")
+	if s.lock != nil {
+		if f, err := lock(dir, s.ID); err == nil {
+			unlock(s.lock)
+			s.lock = f
+		}
+	}
 }
 
 // freshID names a journal that is neither cur nor on disk: two clears within
@@ -164,6 +174,24 @@ func freshID(dir, cur string) string {
 		}
 		id = fmt.Sprintf("%s-%d", base, n)
 	}
+}
+
+func (s *Session) Len() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.entries)
+}
+
+// LastCwd is the directory of the last command recorded, if any.
+func (s *Session) LastCwd() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.entries) - 1; i >= 0; i-- {
+		if s.entries[i].Cwd != "" {
+			return s.entries[i].Cwd
+		}
+	}
+	return ""
 }
 
 // Current is the part of the journal the model is sent: from the last

@@ -32,6 +32,9 @@ type Arg struct {
 	// Flag marks an argument given as --name VALUE (a boolean as --name)
 	// rather than by position.
 	Flag bool
+	// Rest takes all the remaining positional arguments of the CLI form,
+	// joined so that splitting them as a shell does gives them back.
+	Rest bool
 }
 
 type Tool struct {
@@ -124,8 +127,8 @@ func (t Tool) Execute(ctx context.Context, args map[string]any, out io.Writer) (
 }
 
 // ParseCLI maps command-line arguments to tool arguments: positional ones in
-// declaration order, flags as --name VALUE or --name=VALUE; a Stdin argument
-// that is not given is read from stdin.
+// declaration order, a Rest one taking what is left, flags as --name VALUE or
+// --name=VALUE; a Stdin argument that is not given is read from stdin.
 func (t Tool) ParseCLI(argv []string, stdin io.Reader) (map[string]any, error) {
 	args := map[string]any{}
 	usage := fmt.Errorf("usage: %s", t.Usage())
@@ -173,6 +176,8 @@ func (t Tool) ParseCLI(argv []string, stdin io.Reader) (map[string]any, error) {
 		}
 		var raw string
 		switch {
+		case a.Rest && n < len(pos):
+			raw, n = shellJoin(pos[n:]), len(pos)
 		case n < len(pos):
 			raw = pos[n]
 			n++
@@ -213,6 +218,8 @@ func (t Tool) Usage() string {
 			n = "--" + a.Name + " " + n
 		case a.Stdin:
 			n += "|-"
+		case a.Rest:
+			n += "..."
 		}
 		if a.Required {
 			fmt.Fprintf(&b, " %s", n)
@@ -221,6 +228,18 @@ func (t Tool) Usage() string {
 		}
 	}
 	return b.String()
+}
+
+// shellJoin quotes the words that have blanks, quotes or backslashes.
+func shellJoin(words []string) string {
+	out := make([]string, len(words))
+	for i, w := range words {
+		out[i] = w
+		if w == "" || strings.ContainsAny(w, " \t\n'\"\\") {
+			out[i] = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 func isJSON(typ string) bool { return typ == "object" || typ == "array" || typ == "any" }

@@ -89,7 +89,21 @@ func statusCmd(cfg config.Config) int {
 		window = session.Short(info.Window) + " (from the API)"
 	}
 	row("window", window)
-	row("max_tokens", fmt.Sprint(cfg.MaxTokens))
+	effort := effortName(info.Effort)
+	if info.Effort == "" {
+		effort = "the model's default"
+	}
+	if info.Model != "" && info.Effort != cfg.Effort {
+		effort += fmt.Sprintf(" (switched in this shell; config: %s)", effortName(cfg.Effort))
+	}
+	row("effort", effort)
+	sc := cfg
+	sc.Effort = info.Effort
+	maxTokens := fmt.Sprint(sc.ReplyTokens())
+	if cfg.MaxTokens == 0 {
+		maxTokens += " (by the effort; max_tokens sets it)"
+	}
+	row("max_tokens", maxTokens)
 
 	head("settings")
 	row("max_steps", fmt.Sprint(cfg.MaxSteps))
@@ -113,16 +127,27 @@ func configPath() string {
 	return filepath.Join(config.Dir(), "config.toml")
 }
 
+// modelCmd lists the models or switches this shell's model and effort:
+// aish model [NAME] [EFFORT], where a lone EFFORT keeps the model.
 func modelCmd(cfg config.Config, args []string) int {
 	client, err := rpc.FromEnv()
 	if err != nil {
 		return fail(err)
 	}
-	if len(args) > 1 {
-		return fail(errors.New("usage: aish model [NAME]"))
+	levels := llm.Efforts(cfg.Provider)
+	isEffort := func(s string) bool { return s == "default" || slices.Contains(levels, s) }
+	switch {
+	case len(args) > 2:
+		return fail(errors.New("usage: aish model [NAME] [EFFORT|default]"))
+	case len(args) == 2 && !isEffort(args[1]):
+		return fail(fmt.Errorf("no effort %q for %s (want %s or default)", args[1], cfg.Provider, strings.Join(levels, ", ")))
 	}
+	conf := cfg
 	cfg = shellConfig(cfg, client)
-	prov, err := llm.New(cfg)
+	// The list is asked without the effort: a wrong one is what may need fixing.
+	lc := cfg
+	lc.Effort = ""
+	prov, err := llm.New(lc)
 	if err != nil {
 		return fail(err)
 	}
@@ -133,33 +158,102 @@ func modelCmd(cfg config.Config, args []string) int {
 
 	if len(args) == 0 {
 		if listErr != nil {
-			fmt.Println(cfg.Model)
+			fmt.Printf("%s, effort %s\n", cfg.Model, effortName(cfg.Effort))
 			return fail(fmt.Errorf("list models: %w", listErr))
 		}
+		known := false
 		for _, m := range ms {
 			mark, window := "  ", ""
-			if m.ID == cfg.Model {
+			cur := m.ID == cfg.Model
+			if cur {
 				mark = "\x1b[1m* "
 			}
 			if m.Window > 0 {
 				window = session.Short(m.Window)
 			}
-			fmt.Printf("%s%-40s\x1b[0m \x1b[2m%s\x1b[0m\n", mark, m.ID, window)
+			fmt.Printf("%s%-40s\x1b[0m \x1b[2m%-6s%s\x1b[0m\n", mark, m.ID, window, effortLevels(m, cur, cfg.Effort))
+			known = known || m.EffortsKnown
 		}
+		fmt.Printf("\x1b[2meffort %s", effortName(cfg.Effort))
+		if !known {
+			// A proxy such as cliproxyapi: the API refuses what does not fit.
+			fmt.Printf(" · %s", strings.Join(levels, " "))
+		}
+		fmt.Print(" · aish model [NAME] [EFFORT|default]\x1b[0m\n")
 		return 0
 	}
 
-	name, window := args[0], 0
+	name, effort, setEffort := cfg.Model, cfg.Effort, false
+	if isEffort(args[len(args)-1]) {
+		effort, setEffort = args[len(args)-1], true
+		if effort == "default" {
+			effort = ""
+		}
+	}
+	if len(args) == 2 || !setEffort {
+		name = args[0]
+	}
+	var model *llm.ModelInfo
 	if listErr == nil {
-		i := slices.IndexFunc(ms, func(m llm.ModelInfo) bool { return m.ID == name })
-		if i < 0 {
+		if i := slices.IndexFunc(ms, func(m llm.ModelInfo) bool { return m.ID == name }); i >= 0 {
+			model = &ms[i]
+		} else if name != cfg.Model {
 			return fail(fmt.Errorf("no model %q; aish model lists them", name))
 		}
-		window = ms[i].Window
 	}
-	if err := client.Call(rpc.MethodModel, rpc.ModelParams{Model: name, Window: window}, nil); err != nil {
+	window := 0
+	if model != nil {
+		window = model.Window
+		if model.EffortsKnown && effort != "" && !slices.Contains(model.Efforts, effort) {
+			switch {
+			case !setEffort:
+				fmt.Printf("\x1b[33m%s does not take effort %s: back to its default\x1b[0m\n", name, effort)
+				effort = ""
+			case len(model.Efforts) == 0:
+				return fail(fmt.Errorf("%s takes no effort level", name))
+			default:
+				return fail(fmt.Errorf("%s takes effort %s", name, strings.Join(model.Efforts, ", ")))
+			}
+		}
+	}
+	if err := client.Call(rpc.MethodModel, rpc.ModelParams{Model: name, Effort: effort, Window: window}, nil); err != nil {
 		return fail(err)
 	}
-	fmt.Printf("model %s for this shell; set model in %s to keep it\n", name, configPath())
+	var keep []string
+	if name != conf.Model {
+		keep = append(keep, "model")
+	}
+	if effort != conf.Effort {
+		keep = append(keep, "effort")
+	}
+	fmt.Printf("model %s, effort %s for this shell", name, effortName(effort))
+	if len(keep) > 0 {
+		fmt.Printf("; set %s in %s to keep it", strings.Join(keep, " and "), home(configPath()))
+	}
+	fmt.Println()
 	return 0
+}
+
+func effortName(e string) string {
+	if e == "" {
+		return "default"
+	}
+	return e
+}
+
+// effortLevels shows what effort a model takes, the one in use bright.
+func effortLevels(m llm.ModelInfo, cur bool, effort string) string {
+	if !m.EffortsKnown {
+		return ""
+	}
+	if len(m.Efforts) == 0 {
+		return "no effort"
+	}
+	ls := slices.Clone(m.Efforts)
+	for i, l := range ls {
+		if cur && l == effort {
+			ls[i] = "\x1b[0;1m" + l + "\x1b[0;2m"
+		}
+	}
+	return "effort " + strings.Join(ls, " ")
 }

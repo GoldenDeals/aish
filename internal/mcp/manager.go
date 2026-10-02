@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -328,4 +330,136 @@ func (m *Manager) Close() {
 		}
 		s.mu.Unlock()
 	}
+}
+
+// Status is how one server is doing, for `aish mcp`.
+type Status struct {
+	Name      string    `json:"name"`
+	Transport string    `json:"transport"` // stdio or http
+	Target    string    `json:"target"`    // the command or the URL, secrets masked
+	Expose    string    `json:"expose"`
+	State     string    `json:"state"` // running, starting, failed, exited, idle, new
+	Tools     []string  `json:"tools,omitempty"`
+	Error     string    `json:"error,omitempty"`
+	Failed    time.Time `json:"failed,omitzero"`
+}
+
+// StatusResult also has the notes about wrappers that were not written.
+type StatusResult struct {
+	Servers []Status `json:"servers"`
+	Notes   []string `json:"notes,omitempty"`
+}
+
+func (m *Manager) Status() StatusResult {
+	var res StatusResult
+	for _, s := range m.servers {
+		st := Status{Name: s.name, Transport: "stdio", Expose: s.cfg.Expose}
+		if s.cfg.URL != "" {
+			st.Transport, st.Target = "http", maskURL(s.cfg.URL)
+		} else {
+			st.Target = strings.Join(maskArgs(append([]string{s.cfg.Command}, s.cfg.Args...)), " ")
+		}
+		s.mu.Lock()
+		switch {
+		case s.conn != nil && s.conn.alive():
+			st.State = "running"
+		case s.starting != nil:
+			st.State = "starting"
+		case s.err != nil:
+			st.State, st.Error, st.Failed = "failed", maskError(s.err.Error(), s.cfg), s.failed
+		case s.conn != nil:
+			st.State = "exited"
+		case s.known:
+			st.State = "idle" // tools from the cache; started on the first call
+		default:
+			st.State = "new"
+		}
+		for _, t := range s.tools {
+			st.Tools = append(st.Tools, t.Name)
+		}
+		s.mu.Unlock()
+		res.Servers = append(res.Servers, st)
+	}
+	m.mu.Lock()
+	for n := range m.notes {
+		res.Notes = append(res.Notes, n)
+	}
+	m.mu.Unlock()
+	sort.Strings(res.Notes)
+	return res
+}
+
+var secretWord = regexp.MustCompile(`(?i)token|key|secret|pass|auth|credential`)
+
+// maskArgs hides the values of arguments that look like secrets:
+// `--token X`, `--api-key=X`, `KEY=X`.
+func maskArgs(args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = a
+		if k, _, ok := strings.Cut(a, "="); ok && secretWord.MatchString(k) {
+			out[i] = k + "=***"
+		} else if i > 0 && strings.HasPrefix(args[i-1], "-") && !strings.Contains(args[i-1], "=") && secretWord.MatchString(args[i-1]) {
+			out[i] = "***"
+		}
+	}
+	return out
+}
+
+// maskError hides the config's secrets in an error: a transport error may
+// quote the URL with its query, a server may print its own arguments.
+func maskError(msg string, cfg Server) string {
+	var secrets []string
+	for i, a := range cfg.Args {
+		if k, v, ok := strings.Cut(a, "="); ok && secretWord.MatchString(k) {
+			secrets = append(secrets, v)
+		} else if i > 0 && strings.HasPrefix(cfg.Args[i-1], "-") && secretWord.MatchString(cfg.Args[i-1]) {
+			secrets = append(secrets, a)
+		}
+	}
+	for k, v := range cfg.Env {
+		if secretWord.MatchString(k) {
+			secrets = append(secrets, v)
+		}
+	}
+	for _, v := range cfg.Headers {
+		secrets = append(secrets, v)
+	}
+	if u, err := url.Parse(cfg.URL); err == nil && cfg.URL != "" {
+		if pw, ok := u.User.Password(); ok {
+			secrets = append(secrets, pw)
+		}
+		for k, vs := range u.Query() {
+			if secretWord.MatchString(k) {
+				secrets = append(secrets, vs...)
+			}
+		}
+	}
+	for _, v := range secrets {
+		// Short values would mask unrelated text and are no real secrets.
+		if len(v) >= 3 {
+			msg = strings.ReplaceAll(msg, v, "***")
+		}
+	}
+	return msg
+}
+
+func maskURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "***"
+	}
+	if u.User != nil {
+		u.User = url.User(u.User.Username())
+	}
+	if u.RawQuery != "" {
+		q := u.Query()
+		for k := range q {
+			if secretWord.MatchString(k) {
+				q.Set(k, "***")
+			}
+		}
+		u.RawQuery = strings.ReplaceAll(q.Encode(), "%2A%2A%2A", "***")
+	}
+	return u.String()
 }
