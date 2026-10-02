@@ -72,7 +72,11 @@ func statusCmd(cfg config.Config) int {
 	row("entries", fmt.Sprintf("%d commands, %d requests since the last compact", shell, asks))
 	row("session", fmt.Sprintf("%d tool calls, %d compacts, %s in (%s cached) / %s out tokens spent",
 		calls, summaries, session.Short(in), session.Short(cached), session.Short(out)))
-	row("journal", filepath.Join(cfg.SessionsDir, info.SessionID+".jsonl"))
+	dir := info.Dir
+	if dir == "" { // a proxy started by an older aish
+		dir = cfg.SessionsDir
+	}
+	row("journal", filepath.Join(dir, info.SessionID+".jsonl"))
 
 	head("model")
 	row("provider", cfg.Provider)

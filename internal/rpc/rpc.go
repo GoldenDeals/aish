@@ -49,6 +49,9 @@ type Fold struct {
 
 type Info struct {
 	SessionID string `json:"session_id"`
+	// Dir holds the session's files: the proxy's sessions_dir, which the
+	// config a later command reads need not match.
+	Dir string `json:"dir"`
 	// Model and Effort are what this shell uses, which `aish model` may
 	// have changed; Window is the model's context size, 0 if unknown.
 	Model  string `json:"model"`

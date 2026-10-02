@@ -50,7 +50,7 @@ func TestModelEffort(t *testing.T) {
 	if p.effort != "max" {
 		t.Errorf("restored a level of another provider: %q", p.effort)
 	}
-	if i := p.info(); i.Model != "c" || i.Effort != "max" {
+	if i := p.info(); i.Model != "c" || i.Effort != "max" || i.Dir != sess.Dir() {
 		t.Errorf("info %+v", i)
 	}
 }

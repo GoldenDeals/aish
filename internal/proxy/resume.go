@@ -56,7 +56,7 @@ func (p *Proxy) setModel(model string, window int) {
 // info is what `aish` commands ask the proxy about the shell. Called under
 // p.mu.
 func (p *Proxy) info() rpc.Info {
-	return rpc.Info{SessionID: p.sess.ID, Model: p.model, Effort: p.effort, Window: p.window}
+	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Model: p.model, Effort: p.effort, Window: p.window}
 }
 
 // saveState records how the shell differs from the one that started, from
