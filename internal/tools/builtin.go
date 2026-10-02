@@ -28,11 +28,19 @@ func (t builtin) Schema() map[string]any { return Schema(t.args) }
 func (t builtin) Wrapper() bool          { return true }
 
 // Execute takes a relative path from ex.Dir: the agent runs in the proxy,
-// whose directory is not the shell's.
+// whose directory is not the shell's. The path is cleaned as the policy
+// cleans it (policy.NewInput), so that /home/u/link/../x is not checked as
+// /home/u/x and written wherever link leads.
 func (t builtin) Execute(ctx context.Context, ex Exec, args map[string]any, _ io.Writer) (string, error) {
-	if p, ok := args["path"].(string); ok && ex.Dir != "" && p != "" && !filepath.IsAbs(p) {
-		args = maps.Clone(args)
-		args["path"] = filepath.Join(ex.Dir, p)
+	if p, ok := args["path"].(string); ok && p != "" {
+		q := homePath(p)
+		if ex.Dir != "" && !filepath.IsAbs(q) {
+			q = filepath.Join(ex.Dir, q)
+		}
+		if q = filepath.Clean(q); q != p {
+			args = maps.Clone(args)
+			args["path"] = q
+		}
 	}
 	return t.run(ctx, args)
 }
@@ -284,7 +292,7 @@ func writeFile(_ context.Context, args map[string]any) (string, error) {
 	if st, err := os.Stat(path); err == nil {
 		mode = st.Mode().Perm()
 	}
-	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+	if err := writeAtomic(path, []byte(content), mode); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("wrote %d bytes to %s", len(content), path), nil
@@ -311,7 +319,7 @@ func editFile(_ context.Context, args map[string]any) (string, error) {
 		return "", err
 	}
 	out := bytes.ReplaceAll(data, []byte(old), []byte(repl))
-	if err := os.WriteFile(path, out, st.Mode().Perm()); err != nil {
+	if err := writeAtomic(path, out, st.Mode().Perm()); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("replaced %d occurrence(s) in %s", n, path), nil

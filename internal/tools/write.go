@@ -1,0 +1,114 @@
+package tools
+
+import (
+	"errors"
+	"fmt"
+	"math/rand/v2"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+)
+
+// homePath expands a leading ~ of a builtin's path. The home is the
+// proxy's, os.UserHomeDir, and not HOME from ex.Env as the rest of Exec
+// would suggest: the policy expands ~ with it too (policy.NewInput), and a
+// shell with HOME=/etc must not get one path checked and another written.
+func homePath(p string) string {
+	rest, ok := strings.CutPrefix(p, "~")
+	if !ok || rest != "" && !strings.HasPrefix(rest, "/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	return filepath.Join(home, rest)
+}
+
+// maxLinks is MAXSYMLINKS of Linux, as for the policy's resolve.
+const maxLinks = 40
+
+// writeAtomic replaces the file at path with data, whole or not at all. A
+// symlink is followed to its target, which is replaced in its own
+// directory, so that a link (a dotfile kept in a repository) stays a link.
+// mode is that of a new file under the umask, as with os.WriteFile; an
+// existing file is given mode as is, the umask has no say over it.
+func writeAtomic(path string, data []byte, mode os.FileMode) error {
+	target, err := linkTarget(path)
+	if err != nil {
+		return err
+	}
+	_, statErr := os.Stat(target)
+	if statErr == nil {
+		// A rename replaces a file the user may not write to as well, if
+		// only the directory lets them: a read-only file stays a refusal.
+		if err := syscall.Access(target, wOK); err != nil {
+			return &os.PathError{Op: "open", Path: target, Err: err}
+		}
+	}
+	dir, base := filepath.Split(target)
+	f, err := createTemp(dir, "."+base+".aish-", mode)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil && statErr == nil {
+		err = f.Chmod(mode)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), target)
+	}
+	if err != nil {
+		os.Remove(f.Name())
+	}
+	return err
+}
+
+// wOK is W_OK of access(2), which package syscall does not name.
+const wOK = 2
+
+// createTemp is os.CreateTemp that creates the file with mode under the
+// umask rather than 0600, so that a new file gets the mode os.WriteFile
+// would give it.
+func createTemp(dir, prefix string, mode os.FileMode) (*os.File, error) {
+	for range 10000 {
+		name := dir + prefix + strconv.FormatUint(rand.Uint64(), 36)
+		f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, mode)
+		if !errors.Is(err, os.ErrExist) {
+			return f, err
+		}
+	}
+	return nil, fmt.Errorf("create a temporary file in %s: too many attempts", dir)
+}
+
+// linkTarget follows path while it is a symlink, dangling or not: rename(2)
+// would replace the link itself.
+func linkTarget(path string) (string, error) {
+	for range maxLinks + 1 {
+		st, err := os.Lstat(path)
+		if err != nil || st.Mode()&os.ModeSymlink == 0 {
+			return path, nil
+		}
+		link, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(link) {
+			// Not filepath.Join: it would clean "sub/../x" to "x", where the
+			// kernel, and with it the policy's resolve, goes up from
+			// wherever the link sub leads.
+			dir, _ := filepath.Split(path)
+			link = dir + link
+		}
+		path = link
+	}
+	return "", &os.PathError{Op: "write", Path: path, Err: syscall.ELOOP}
+}

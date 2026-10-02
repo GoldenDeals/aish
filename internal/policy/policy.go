@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
+	"strings"
 )
 
 const (
@@ -89,6 +89,7 @@ func NewInput(tool string, args map[string]any, cwd string) Input {
 	home, _ := os.UserHomeDir()
 	in := Input{Tool: tool, Args: args, Cwd: cwd, Home: resolve(home)}
 	if p, ok := args["path"].(string); ok && p != "" {
+		p = homePath(p, home)
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(cwd, p)
 		}
@@ -104,25 +105,75 @@ func NewInput(tool string, args map[string]any, cwd string) Input {
 	return in
 }
 
+// maxLinks is MAXSYMLINKS of Linux: after as many links on one path the
+// kernel gives up with ELOOP.
+const maxLinks = 40
+
 // resolve follows the symlinks in p, so that ~/link → /etc does not pass for
-// a path in $HOME. The part of p that does not exist yet (a file to be
-// written) is kept as is on top of its nearest existing parent.
+// a path in $HOME. It walks p name by name, as the kernel does: a dangling
+// link is followed to its target, which a write through it would create,
+// and a ".." in a link's target goes up from where the link really is. The
+// part of p that does not exist yet (a file to be written) is kept as is on
+// top of its nearest existing parent. On a loop of links it gives up, as
+// the kernel does, with the target of the last link read: a write there
+// fails with ELOOP.
 func resolve(p string) string {
 	if p == "" {
 		return p
 	}
 	p = filepath.Clean(p)
-	var rest []string
-	for dir := p; ; dir = filepath.Dir(dir) {
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			slices.Reverse(rest)
-			return filepath.Join(append([]string{real}, rest...)...)
-		}
-		if parent := filepath.Dir(dir); parent == dir {
-			return p
-		}
-		rest = append(rest, filepath.Base(dir))
+	if !filepath.IsAbs(p) {
+		return p
 	}
+	done, todo := "/", p
+	for links := 0; todo != ""; {
+		var name string
+		name, todo, _ = strings.Cut(todo, "/")
+		switch name {
+		case "", ".":
+			continue
+		case "..":
+			done = filepath.Dir(done)
+			continue
+		}
+		next := filepath.Join(done, name)
+		st, err := os.Lstat(next)
+		if err != nil {
+			// Nothing exists below a missing name: the rest is created as
+			// it is spelled.
+			return filepath.Join(next, todo)
+		}
+		if st.Mode()&os.ModeSymlink == 0 {
+			done = next
+			continue
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return filepath.Join(next, todo)
+		}
+		if filepath.IsAbs(target) {
+			done = "/"
+		}
+		if links++; links > maxLinks {
+			return filepath.Join(done, target, todo)
+		}
+		todo = target + "/" + todo
+	}
+	return done
+}
+
+// homePath expands a leading ~ of a file tool's path, before it is taken
+// as relative to cwd. The home is os.UserHomeDir, as in the builtin tools'
+// Execute, and not HOME of the shell: the policy must see the path the
+// tool writes.
+func homePath(p, home string) string {
+	if home == "" {
+		return p
+	}
+	if rest, ok := strings.CutPrefix(p, "~"); ok && (rest == "" || strings.HasPrefix(rest, "/")) {
+		return filepath.Join(home, rest)
+	}
+	return p
 }
 
 // Check asks every checker and returns the strictest verdict.
