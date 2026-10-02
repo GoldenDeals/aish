@@ -62,8 +62,8 @@ func trustCmd(cfg config.Config, args []string) int {
 	return 0
 }
 
-// trustList prints the files trusted, with those changed since marked:
-// they are not trusted as they are now.
+// trustList prints the files trusted, with those changed since, or their
+// hooks and tools, marked: they are not trusted as they are now.
 func trustList() int {
 	all := config.TrustedFiles()
 	if len(all) == 0 {
@@ -77,9 +77,13 @@ func trustList() int {
 	slices.Sort(paths)
 	for _, p := range paths {
 		var note string
-		switch sum := config.Sum(p); {
-		case sum == "":
+		sum := config.Sum(p)
+		_, err := os.Stat(p)
+		switch {
+		case sum == "" && err != nil:
 			note = " \x1b[2m(gone)\x1b[0m"
+		case sum == "":
+			note = " \x1b[33m(it or its hooks and tools cannot be read, not trusted)\x1b[0m"
 		case sum != all[p]:
 			note = " \x1b[33m(changed since, not trusted: run aish trust there again)\x1b[0m"
 		}
