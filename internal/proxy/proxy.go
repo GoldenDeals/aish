@@ -1,0 +1,594 @@
+// Package proxy runs the user's bash inside a pseudo-terminal, passes all
+// bytes through untouched except aish markers, and records command output
+// into the session.
+package proxy
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/creack/pty"
+	"golang.org/x/term"
+
+	"github.com/inebotov/aish/internal/capture"
+	"github.com/inebotov/aish/internal/config"
+	"github.com/inebotov/aish/internal/llm"
+	"github.com/inebotov/aish/internal/mcp"
+	"github.com/inebotov/aish/internal/rpc"
+	"github.com/inebotov/aish/internal/session"
+	"github.com/inebotov/aish/internal/shellinit"
+	"github.com/inebotov/aish/internal/tools"
+)
+
+const (
+	headCap = 64 << 10
+	tailCap = 64 << 10
+)
+
+type segment struct {
+	cmd     string
+	buf     *capture.Buffer
+	fold    *fold // agent commands only
+	cleared bool  // the command erased the screen
+}
+
+// Fold is one output hidden behind "ctrl+o to expand".
+type Fold = rpc.Fold
+
+// Proxy owns the session and the output recorder.
+type Proxy struct {
+	sess         *session.Session
+	foldLines    int
+	maxOutput    int
+	promptStatus bool
+	fixedWindow  bool         // context_window is set in the config
+	prov         llm.Provider // for the models list
+	out          io.Writer    // the terminal
+	size         func() (w, h int)
+
+	mu      sync.Mutex
+	screen  Screen
+	asking  bool                // inside __aish_ask, between ask-start and the next prompt
+	user    *segment            // command typed by the user, between cmd-start and cmd-end
+	agent   map[string]*segment // commands run on behalf of the agent, by call id
+	tool    *fold               // live output of a non-bash tool, between fold-start and fold-end
+	at      *statusAt           // where the agent left the cursor after printing its next command
+	folds   []Fold              // folded outputs of the last request, for Ctrl+O
+	view    *viewer             // open while Ctrl+O shows the folds
+	held    []byte              // shell output that arrived while the viewer was open
+	done    map[string]rpc.Output
+	waiters map[string]chan struct{}
+	mcp     *mcp.Manager
+	model   string // `aish model` switches it for this shell
+	window  int    // its context size, 0 if unknown
+}
+
+func New(sess *session.Session) *Proxy {
+	return &Proxy{
+		sess:    sess,
+		agent:   map[string]*segment{},
+		done:    map[string]rpc.Output{},
+		waiters: map[string]chan struct{}{},
+		mcp:     mcp.NewManager(nil, ""),
+	}
+}
+
+// Run starts bash and blocks until it exits, returning its exit code.
+func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
+	p.foldLines = cfg.FoldLines
+	p.maxOutput = cfg.MaxOutputBytes
+	p.promptStatus = cfg.PromptStatus
+	p.model, p.window = cfg.Model, cfg.ContextWindow
+	p.fixedWindow = cfg.ContextWindow > 0
+	if prov, err := llm.New(cfg); err == nil {
+		p.prov = prov
+		if !p.fixedWindow {
+			go p.lookupWindow(cfg.Model)
+		}
+	}
+	p.out = os.Stdout
+	p.size = func() (int, int) {
+		w, h, err := term.GetSize(int(os.Stdin.Fd()))
+		if err != nil || w == 0 || h == 0 {
+			return 80, 24
+		}
+		return w, h
+	}
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return 1, errors.New("aish must be started from a terminal")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return 1, err
+	}
+	run, err := makeRunDir(reg, self)
+	if err != nil {
+		return 1, err
+	}
+	defer os.RemoveAll(run)
+
+	servers, err := mcp.LoadConfig(cfg.MCPConfig)
+	if err != nil {
+		// A broken MCP config must not keep the shell from starting.
+		fmt.Fprintf(os.Stderr, "aish: %v\n", err)
+	}
+	p.mcp = mcp.NewManager(servers, filepath.Join(config.CacheDir(), "mcp"))
+	p.mcp.Bin, p.mcp.Self = filepath.Join(run, "bin"), self
+	p.mcp.Taken = func(name string) bool { _, ok := reg.Get(name); return ok }
+	p.mcp.Warm()
+	defer p.mcp.Close()
+
+	sock := filepath.Join(run, "sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		return 1, err
+	}
+	defer l.Close()
+	go rpc.Serve(l, p.handle)
+
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		return 1, err
+	}
+	cmd := exec.Command(bash, "--rcfile", filepath.Join(run, "rc"), "-i")
+	cmd.Env = append(os.Environ(),
+		"AISH_SOCK="+sock,
+		"AISH_RUN="+run,
+		"AISH_BIN="+self,
+		"AISH_SESSION="+p.sess.ID,
+		"AISH_TOOLS_PATH="+filepath.Join(run, "bin")+":"+cfg.ToolsDir,
+	)
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return 1, err
+	}
+	defer ptmx.Close()
+
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	go func() {
+		for range winch {
+			_ = pty.InheritSize(os.Stdin, ptmx)
+			p.resized()
+		}
+	}()
+	winch <- syscall.SIGWINCH
+	defer signal.Stop(winch)
+
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP, syscall.SIGTERM)
+	go func() {
+		s := <-hup
+		_ = cmd.Process.Signal(s)
+	}()
+
+	old, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return 1, err
+	}
+	defer term.Restore(int(os.Stdin.Fd()), old)
+
+	go p.input(os.Stdin, ptmx)
+
+	outDone := make(chan struct{})
+	go func() {
+		defer close(outDone)
+		p.pump(ptmx)
+	}()
+
+	waitErr := cmd.Wait()
+	// Drain whatever bash wrote last; the PTY reports EIO once it is gone.
+	select {
+	case <-outDone:
+	case <-time.After(200 * time.Millisecond):
+	}
+	var exitErr *exec.ExitError
+	if errors.As(waitErr, &exitErr) {
+		return exitErr.ExitCode(), nil
+	}
+	return 0, waitErr
+}
+
+func makeRunDir(reg *tools.Registry, self string) (string, error) {
+	base := os.Getenv("XDG_RUNTIME_DIR")
+	if base == "" {
+		base = os.TempDir()
+	}
+	run, err := os.MkdirTemp(base, "aish-")
+	if err != nil {
+		return "", err
+	}
+	bin := filepath.Join(run, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		return "", err
+	}
+	for _, t := range reg.All() {
+		if t.Run == nil {
+			continue // bash is bash; external tools are already on PATH
+		}
+		script := fmt.Sprintf("#!/bin/sh\nexec %q tool %s \"$@\"\n", self, t.Name)
+		if err := os.WriteFile(filepath.Join(bin, t.Name), []byte(script), 0o755); err != nil {
+			return "", err
+		}
+	}
+	for _, f := range []string{"next.cmd", "next.id"} {
+		if err := os.WriteFile(filepath.Join(run, f), nil, 0o600); err != nil {
+			return "", err
+		}
+	}
+	return run, os.WriteFile(filepath.Join(run, "rc"), []byte(shellinit.RCFile()), 0o600)
+}
+
+// input copies the keyboard to bash. Ctrl+O while the assistant works or
+// at the prompt toggles the viewer of folded outputs instead.
+func (p *Proxy) input(r io.Reader, w io.Writer) {
+	buf := make([]byte, 4<<10)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			if b := p.key(buf[:n]); len(b) > 0 {
+				if _, err := w.Write(b); err != nil {
+					return
+				}
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+const ctrlO = 0x0f
+
+// key handles the viewer and returns the input meant for bash.
+func (p *Proxy) key(b []byte) []byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.view != nil {
+		if p.view.key(b) {
+			p.closeView()
+		} else {
+			_, _ = p.out.Write(p.view.render())
+		}
+		return nil
+	}
+	i := bytes.IndexByte(b, ctrlO)
+	// A user's command (an editor, say) gets Ctrl+O as usual.
+	if i < 0 || p.user != nil {
+		return b
+	}
+	folds := p.viewFolds()
+	if len(folds) == 0 {
+		if p.asking {
+			return append(b[:i:i], b[i+1:]...) // would only be echoed as ^O
+		}
+		return b // readline's own Ctrl+O
+	}
+	w, h := p.size()
+	p.view = newViewer(folds, w, h)
+	_, _ = p.out.Write(p.view.open())
+	return b[:i]
+}
+
+// viewFolds are the outputs of the current or last request, including the
+// one being printed.
+func (p *Proxy) viewFolds() []Fold {
+	folds := append([]Fold{}, p.folds...)
+	if f := p.liveFold(); f != nil && !f.open {
+		if raw := f.raw.Bytes(); len(raw) > 0 {
+			folds = append(folds, Fold{Title: f.title + "  (running)", Text: string(raw)})
+		}
+	}
+	return folds
+}
+
+func (p *Proxy) closeView() {
+	_, _ = p.out.Write(p.view.close())
+	_, _ = p.out.Write(p.held)
+	p.view, p.held = nil, nil
+}
+
+func (p *Proxy) resized() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.view != nil {
+		p.view.resize(p.size())
+		_, _ = p.out.Write(append([]byte("\x1b[2J"), p.view.render()...))
+	}
+}
+
+// emit writes to the terminal, or holds the output while the viewer is open.
+func (p *Proxy) emit(b []byte) {
+	if p.view != nil {
+		p.held = append(p.held, b...)
+		return
+	}
+	_, _ = p.out.Write(b)
+}
+
+// liveFold is the fold of the output being printed right now, if any.
+func (p *Proxy) liveFold() *fold {
+	if p.tool != nil {
+		return p.tool
+	}
+	for _, s := range p.agent {
+		if s.fold != nil {
+			return s.fold
+		}
+	}
+	return nil
+}
+
+// pump copies PTY output to the terminal, stripping markers and feeding
+// the recorder.
+func (p *Proxy) pump(r io.Reader) {
+	var f Filter
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			f.Feed(buf[:n], p.output, p.marker)
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// output records b and shows it, folded if it belongs to a long agent output.
+// The terminal is written under the lock so Ctrl+O cannot interleave.
+func (p *Proxy) output(b []byte) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	show := b
+	if cleared, from := p.screen.Feed(b); cleared && !p.asking {
+		p.cleared()
+		if p.user != nil {
+			p.user.buf.Write(b[from:])
+		}
+	} else if p.user != nil {
+		p.user.buf.Write(b)
+	}
+	for _, s := range p.agent {
+		s.buf.Write(b)
+		if s.fold != nil {
+			show = s.fold.write(b)
+		}
+	}
+	if p.tool != nil {
+		show = p.tool.write(b)
+	}
+	p.emit(show)
+}
+
+// cleared starts the session over when the user erases the screen: the
+// assistant sees only what is on it.
+func (p *Proxy) cleared() {
+	p.sess.Clear()
+	p.folds = nil
+	if p.user != nil {
+		p.user.buf = capture.NewBuffer(headCap, tailCap)
+		p.user.cleared = true
+	}
+}
+
+func (p *Proxy) marker(m Marker) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch m.Kind {
+	case "cmd-start":
+		p.user = &segment{cmd: m.Payload, buf: capture.NewBuffer(headCap, tailCap)}
+	case "ask-start":
+		p.asking = true
+		p.folds = nil
+	case "fold-start":
+		if p.foldLines >= 0 {
+			p.tool = newFold(m.Payload, p.foldLines)
+		}
+	case "fold-end":
+		if p.tool != nil {
+			p.finishFold(p.tool, -1)
+			p.tool = nil
+		}
+	case "cmd-end":
+		defer p.drawStatus() // once the command is in the journal
+		p.at = nil
+		p.asking = false
+		if p.tool != nil {
+			p.finishFold(p.tool, 130)
+			p.tool = nil
+		}
+		// Back at the prompt: an agent command interrupted with Ctrl+C never
+		// sent agent-end. Keep what it printed for the next `agent start`.
+		for id, seg := range p.agent {
+			out, tui := render(seg.buf)
+			p.done[id] = rpc.Output{Output: out, Exit: 130, TUI: tui}
+			if seg.fold != nil {
+				p.finishFold(seg.fold, 130)
+			}
+		}
+		clear(p.agent)
+		if p.user == nil {
+			return
+		}
+		seg := p.user
+		p.user = nil
+		rc, cwd, _ := strings.Cut(m.Payload, ";")
+		if strings.TrimSpace(seg.cmd) == "" {
+			return
+		}
+		exit, _ := strconv.Atoi(rc)
+		out, tui := render(seg.buf)
+		if seg.cleared && strings.TrimSpace(out) == "" {
+			return // `clear` itself: nothing left on the screen
+		}
+		_ = p.sess.Append(session.Entry{Kind: session.KindShell, Cmd: seg.cmd, Output: out, Exit: exit, Cwd: cwd, TUI: tui})
+	case "agent-start":
+		id, cmd, _ := strings.Cut(m.Payload, ";")
+		seg := &segment{cmd: cmd, buf: capture.NewBuffer(headCap, tailCap)}
+		if p.foldLines >= 0 {
+			seg.fold = newFold("❯ "+cmd, p.foldLines)
+			if p.foldLines == 0 {
+				seg.fold.at = p.at
+			}
+		}
+		p.at = nil
+		p.agent[id] = seg
+	case "agent-col":
+		// The agent printed its command without a newline: "<col>;<long>".
+		c, long, _ := strings.Cut(m.Payload, ";")
+		col, err := strconv.Atoi(c)
+		if w, _ := p.size(); err == nil && col >= 0 && w > 0 {
+			p.at = &statusAt{col: min(col, w), cols: w, long: long == "1"}
+		}
+	case "agent-end":
+		f := strings.SplitN(m.Payload, ";", 3)
+		if len(f) < 3 {
+			return
+		}
+		id := f[0]
+		seg, ok := p.agent[id]
+		if !ok {
+			return
+		}
+		delete(p.agent, id)
+		exit, _ := strconv.Atoi(f[1])
+		if seg.fold != nil {
+			p.finishFold(seg.fold, exit)
+		}
+		out, tui := render(seg.buf)
+		p.done[id] = rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui}
+		if ch, ok := p.waiters[id]; ok {
+			close(ch)
+			delete(p.waiters, id)
+		}
+	}
+}
+
+// finishFold prints the final status line and keeps the output for Ctrl+O.
+func (p *Proxy) finishFold(f *fold, exit int) {
+	p.emit(f.finish(exit))
+	if f.folded() {
+		p.folds = append(p.folds, Fold{Title: f.title, Text: string(f.raw.Bytes())})
+	}
+}
+
+func render(b *capture.Buffer) (string, bool) {
+	if b.AltScreen() {
+		return "[full-screen interactive program; output not captured]", true
+	}
+	return capture.Clean(b.Bytes()), false
+}
+
+func (p *Proxy) handle(method string, params json.RawMessage) (any, error) {
+	switch method {
+	case rpc.MethodInfo:
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return rpc.Info{SessionID: p.sess.ID, Model: p.model, Window: p.window}, nil
+	case rpc.MethodModel:
+		var mp rpc.ModelParams
+		if err := json.Unmarshal(params, &mp); err != nil {
+			return nil, err
+		}
+		if mp.Model == "" {
+			return nil, errors.New("no model given")
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.model = mp.Model
+		if !p.fixedWindow {
+			p.window = mp.Window
+			if p.window == 0 {
+				go p.lookupWindow(mp.Model)
+			}
+		}
+		return rpc.Info{SessionID: p.sess.ID, Model: p.model, Window: p.window}, nil
+	case rpc.MethodHistory:
+		return p.sess.Entries(), nil
+	case rpc.MethodAppend:
+		var ap rpc.AppendParams
+		if err := json.Unmarshal(params, &ap); err != nil {
+			return nil, err
+		}
+		return nil, p.sess.Append(ap.Entries...)
+	case rpc.MethodFold:
+		var f Fold
+		if err := json.Unmarshal(params, &f); err != nil {
+			return nil, err
+		}
+		p.mu.Lock()
+		p.folds = append(p.folds, f)
+		p.mu.Unlock()
+		return nil, nil
+	case rpc.MethodFolds:
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return append([]Fold{}, p.folds...), nil
+	case rpc.MethodClear:
+		p.sess.Clear()
+		return rpc.Info{SessionID: p.sess.ID}, nil
+	case rpc.MethodWaitOutput:
+		var wp rpc.WaitParams
+		if err := json.Unmarshal(params, &wp); err != nil {
+			return nil, err
+		}
+		return p.wait(wp.ID, time.Duration(wp.TimeoutMS)*time.Millisecond)
+	case rpc.MethodMCPList:
+		var lp mcp.ListParams
+		if err := json.Unmarshal(params, &lp); err != nil {
+			return nil, err
+		}
+		return p.mcp.List(context.Background(), lp.Wait), nil
+	case rpc.MethodMCPCall:
+		var cp mcp.CallParams
+		if err := json.Unmarshal(params, &cp); err != nil {
+			return nil, err
+		}
+		return p.mcp.Call(context.Background(), cp.Name, cp.Args)
+	}
+	return nil, fmt.Errorf("unknown method %q", method)
+}
+
+func (p *Proxy) wait(id string, timeout time.Duration) (rpc.Output, error) {
+	p.mu.Lock()
+	if out, ok := p.done[id]; ok {
+		delete(p.done, id)
+		p.mu.Unlock()
+		return out, nil
+	}
+	ch, ok := p.waiters[id]
+	if !ok {
+		ch = make(chan struct{})
+		p.waiters[id] = ch
+	}
+	p.mu.Unlock()
+
+	select {
+	case <-ch:
+	case <-time.After(timeout):
+		p.mu.Lock()
+		delete(p.waiters, id)
+		p.mu.Unlock()
+		return rpc.Output{}, fmt.Errorf("no output recorded for %s", id)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := p.done[id]
+	delete(p.done, id)
+	return out, nil
+}

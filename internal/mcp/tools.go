@@ -1,0 +1,216 @@
+package mcp
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"mime"
+	"os"
+	"strings"
+
+	"github.com/inebotov/aish/internal/rpc"
+	"github.com/inebotov/aish/internal/tools"
+)
+
+// Remote returns the MCP tools the proxy knows as tools that call it, and
+// the problems it reported. Wait starts servers whose tools are unknown.
+func Remote(c *rpc.Client, wait bool) ([]tools.Tool, []string) {
+	var res ListResult
+	if err := c.Call(rpc.MethodMCPList, ListParams{Wait: wait}, &res); err != nil {
+		return nil, []string{"mcp: " + err.Error()}
+	}
+	var out []tools.Tool
+	for _, info := range res.Tools {
+		args, err := Args(info.Schema)
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", info.Name, err))
+			continue
+		}
+		name := info.Name
+		out = append(out, tools.Tool{
+			Name: name, Desc: info.Description, Args: args, Server: info.Server,
+			RawSchema: info.Schema, Hidden: info.Expose != "tools",
+			Run: func(ctx context.Context, args map[string]any) (string, error) {
+				return call(ctx, c, name, args)
+			},
+		})
+	}
+	return out, res.Errors
+}
+
+func call(ctx context.Context, c *rpc.Client, name string, args map[string]any) (string, error) {
+	type reply struct {
+		raw json.RawMessage
+		err error
+	}
+	ch := make(chan reply, 1)
+	go func() {
+		var raw json.RawMessage
+		err := c.Call(rpc.MethodMCPCall, CallParams{Name: name, Args: args}, &raw)
+		ch <- reply{raw, err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			return "", r.err
+		}
+		return Format(r.raw)
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// Format turns a CallToolResult into command output: text as is, binary
+// content saved to a temporary file whose path is printed. A result the
+// server marks as an error is an error, so the command exits non-zero.
+func Format(raw json.RawMessage) (string, error) {
+	var r struct {
+		Content []struct {
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Data     string `json:"data"`
+			MimeType string `json:"mimeType"`
+			URI      string `json:"uri"`
+			Resource *struct {
+				URI      string `json:"uri"`
+				Text     string `json:"text"`
+				Blob     string `json:"blob"`
+				MimeType string `json:"mimeType"`
+			} `json:"resource"`
+		} `json:"content"`
+		Structured json.RawMessage `json:"structuredContent"`
+		IsError    bool            `json:"isError"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return "", fmt.Errorf("bad tool result: %w", err)
+	}
+	var parts []string
+	for _, c := range r.Content {
+		switch {
+		case c.Type == "text":
+			parts = append(parts, c.Text)
+		case c.Data != "":
+			parts = append(parts, saveBlob(c.Data, c.MimeType))
+		case c.Resource != nil && c.Resource.Blob != "":
+			parts = append(parts, saveBlob(c.Resource.Blob, c.Resource.MimeType))
+		case c.Resource != nil:
+			parts = append(parts, c.Resource.Text)
+		case c.URI != "":
+			parts = append(parts, c.URI)
+		}
+	}
+	if len(parts) == 0 && len(r.Structured) > 0 {
+		var b bytes.Buffer
+		json.Indent(&b, r.Structured, "", "  ")
+		parts = append(parts, b.String())
+	}
+	out := strings.Join(parts, "\n")
+	if r.IsError {
+		return out, errors.New("the tool reported an error")
+	}
+	return out, nil
+}
+
+func saveBlob(data, mimeType string) string {
+	b, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return "[undecodable " + mimeType + " content]"
+	}
+	ext := ""
+	if exts, _ := mime.ExtensionsByType(mimeType); len(exts) > 0 {
+		ext = exts[len(exts)-1]
+	}
+	f, err := os.CreateTemp("", "aish-mcp-*"+ext)
+	if err != nil {
+		return "[" + mimeType + " content not saved: " + err.Error() + "]"
+	}
+	defer f.Close()
+	f.Write(b)
+	return f.Name()
+}
+
+// Args derives the CLI form from an input schema: required scalars are
+// positional, in the schema's order; everything else is a --flag, with
+// objects and arrays given as JSON.
+func Args(schema json.RawMessage) ([]tools.Arg, error) {
+	if len(schema) == 0 {
+		return nil, nil
+	}
+	var s struct {
+		Properties json.RawMessage `json:"properties"`
+		Required   []string        `json:"required"`
+	}
+	if err := json.Unmarshal(schema, &s); err != nil {
+		return nil, fmt.Errorf("bad input schema: %w", err)
+	}
+	names, err := keys(s.Properties)
+	if err != nil {
+		return nil, fmt.Errorf("bad input schema: %w", err)
+	}
+	var props map[string]struct {
+		Type        json.RawMessage `json:"type"`
+		Description string          `json:"description"`
+	}
+	json.Unmarshal(s.Properties, &props)
+	required := map[string]bool{}
+	for _, r := range s.Required {
+		required[r] = true
+	}
+	var args []tools.Arg
+	for _, n := range names {
+		p := props[n]
+		a := tools.Arg{Name: n, Type: typeOf(p.Type), Desc: p.Description, Required: required[n]}
+		switch a.Type {
+		case "string", "integer", "number", "boolean":
+			a.Flag = !a.Required
+		default:
+			a.Flag = true
+		}
+		args = append(args, a)
+	}
+	return args, nil
+}
+
+// keys lists an object's keys in their order in the JSON text, which a map
+// would lose.
+func keys(obj json.RawMessage) ([]string, error) {
+	if len(obj) == 0 {
+		return nil, nil
+	}
+	d := json.NewDecoder(bytes.NewReader(obj))
+	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+		return nil, errors.New("properties is not an object")
+	}
+	var out []string
+	for d.More() {
+		t, err := d.Token()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t.(string))
+		var skip json.RawMessage
+		if err := d.Decode(&skip); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// typeOf reads a schema "type", which may be a list such as ["string", "null"].
+func typeOf(raw json.RawMessage) string {
+	var one string
+	if json.Unmarshal(raw, &one) == nil && one != "" && one != "null" {
+		return one
+	}
+	var many []string
+	json.Unmarshal(raw, &many)
+	for _, t := range many {
+		if t != "null" {
+			return t
+		}
+	}
+	return "any"
+}

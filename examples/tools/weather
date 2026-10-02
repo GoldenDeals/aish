@@ -1,0 +1,4 @@
+#!/bin/sh
+# aish:desc Show the weather forecast for a city (wttr.in).
+# aish:arg city string City name, e.g. Berlin
+exec curl -fsS "https://wttr.in/$(printf %s "$1" | sed 's/ /+/g')?format=3"
