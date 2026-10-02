@@ -2,9 +2,6 @@ package proxy
 
 import "bytes"
 
-// markerPrefix starts an aish marker: OSC 6973 ; <kind> ; <payload> BEL.
-var markerPrefix = []byte("\x1b]6973;")
-
 const maxMarker = 64 << 10
 
 // Marker is one decoded aish OSC sequence.
@@ -16,7 +13,15 @@ type Marker struct {
 // Filter removes aish markers from a byte stream. Markers may be split
 // across reads, so incomplete tails are held back until the next call.
 type Filter struct {
+	prefix  []byte // OSC 6973 ; <nonce> ;
 	pending []byte
+}
+
+// NewFilter takes the markers OSC 6973 ; <nonce> ; <kind> ; <payload> BEL.
+// The nonce keeps a marker inside a file being cat'ed or a program's output
+// from passing for the shell's own: with any other nonce it stays text.
+func NewFilter(nonce string) *Filter {
+	return &Filter{prefix: []byte("\x1b]6973;" + nonce + ";")}
 }
 
 // Feed returns the bytes to pass through and the markers found, in order.
@@ -35,15 +40,15 @@ func (f *Filter) Feed(p []byte, onText func([]byte), onMarker func(Marker)) {
 			return
 		}
 		rest := data[i:]
-		if len(rest) < len(markerPrefix) {
-			if bytes.HasPrefix(markerPrefix, rest) {
+		if len(rest) < len(f.prefix) {
+			if bytes.HasPrefix(f.prefix, rest) {
 				if i > 0 {
 					onText(data[:i])
 				}
 				f.pending = append([]byte{}, rest...)
 				return
 			}
-		} else if bytes.HasPrefix(rest, markerPrefix) {
+		} else if bytes.HasPrefix(rest, f.prefix) {
 			end := bytes.IndexByte(rest, 0x07)
 			if end < 0 {
 				if len(rest) > maxMarker {
@@ -60,7 +65,7 @@ func (f *Filter) Feed(p []byte, onText func([]byte), onMarker func(Marker)) {
 			if i > 0 {
 				onText(data[:i])
 			}
-			onMarker(parseMarker(rest[len(markerPrefix):end]))
+			onMarker(parseMarker(rest[len(f.prefix):end]))
 			data = rest[end+1:]
 			continue
 		}

@@ -47,6 +47,7 @@ type Agent struct {
 
 	entries []session.Entry
 	env     string // see environment; built once per process
+	nonce   string // see mark
 }
 
 // Start records a new request and works on it.
@@ -278,9 +279,9 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	}
 
 	// External tools print live; the proxy folds that output like a command's.
-	fmt.Fprintf(a.Out, "\x1b]6973;fold-start;%s\a", title)
+	a.mark("fold-start;" + title)
 	res, err := t.Execute(ctx, args, a.Out)
-	fmt.Fprint(a.Out, "\x1b]6973;fold-end\a")
+	a.mark("fold-end")
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return false, ctx.Err()
@@ -362,7 +363,17 @@ func (a *Agent) showBash(args map[string]any, nl bool) {
 	if len(lines) > 1 || w > cols {
 		long = 1
 	}
-	fmt.Fprintf(a.Out, "\x1b]6973;agent-col;%d;%d\a", col, long)
+	a.mark(fmt.Sprintf("agent-col;%d;%d", col, long))
+}
+
+// mark prints a marker for the proxy, which takes only the ones carrying
+// the nonce it has left in $AISH_RUN.
+func (a *Agent) mark(body string) {
+	if a.nonce == "" {
+		b, _ := os.ReadFile(filepath.Join(a.RunDir, "nonce"))
+		a.nonce = strings.TrimSpace(string(b))
+	}
+	fmt.Fprintf(a.Out, "\x1b]6973;%s;%s\a", a.nonce, body)
 }
 
 // ask lets the user decide an "ask" verdict on the terminal.

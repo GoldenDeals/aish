@@ -69,4 +69,48 @@ func TestRoute(t *testing.T) {
 	}
 }
 
+// TestMarkerNonce checks that every marker init.bash prints carries the
+// nonce from $AISH_RUN/nonce, the only ones the proxy takes.
+func TestMarkerNonce(t *testing.T) {
+	run := t.TempDir()
+	init := filepath.Join(run, "init.bash")
+	stub := filepath.Join(run, "aish")
+	files := map[string]string{
+		init:                          Bash,
+		filepath.Join(run, "nonce"):   "N0NCE\n",
+		filepath.Join(run, "next.id"): "",
+		// `agent start` hands one command to the shell, `agent resume` ends.
+		stub: "#!/bin/sh\n[ \"$2\" = start ] && echo id1 >\"$AISH_RUN/next.id\" && printf true >\"$AISH_RUN/next.cmd\"\nexit 0\n",
+	}
+	for p, s := range files {
+		if err := os.WriteFile(p, []byte(s), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// No PROMPT_COMMAND: each prompt would add a cmd-end.
+	script := "source " + init + "; PROMPT_COMMAND=\n" +
+		"__aish_buf=ls; __aish_mark; printf %s \"$__aish_ps0\"\n" +
+		"__aish_precmd\n" +
+		"__aish_ask 'Hi'\n"
+	cmd := exec.Command("bash", "--norc", "--noprofile", "-i")
+	cmd.Stdin = strings.NewReader(script)
+	cmd.Env = append(os.Environ(), "PS1=", "HISTFILE=/dev/null", "AISH_RUN="+run, "AISH_BIN="+stub)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, m := range regexp.MustCompile("\x1b]6973;([^\a]*)\a").FindAllStringSubmatch(string(out), -1) {
+		nonce, rest, _ := strings.Cut(m[1], ";")
+		if nonce != "N0NCE" {
+			t.Errorf("marker %q without the nonce", m[0])
+		}
+		kind, _, _ := strings.Cut(rest, ";")
+		kinds = append(kinds, kind)
+	}
+	if want := "cmd-start cmd-end ask-start agent-start agent-end"; strings.Join(kinds, " ") != want {
+		t.Errorf("markers %v, want %s", kinds, want)
+	}
+}
+
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

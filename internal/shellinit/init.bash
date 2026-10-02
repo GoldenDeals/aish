@@ -4,7 +4,9 @@
 # Text that is not a command becomes `__aish_ask '<text>'`, so bash never
 # parses the natural language itself.
 #
-# Markers (OSC 6973, stripped by the proxy before they reach the terminal):
+# Markers, OSC 6973;<nonce>;<kind>[;<payload>] BEL, are stripped by the proxy
+# before they reach the terminal. The nonce is the session's, from
+# $AISH_RUN/nonce: a sequence with any other one is output like any text.
 #   cmd-start;<command>          PS0, right before a user command runs
 #   cmd-end;<rc>;<cwd>           PROMPT_COMMAND, before each primary prompt;
 #                                $AISH_RUN/state holds the shell's state by then
@@ -20,6 +22,10 @@
 [[ $- == *i* ]] || return 0
 [[ -n ${__aish_loaded-} ]] && return 0
 __aish_loaded=1
+
+# A file, not the environment: every command would inherit that.
+__aish_nonce=
+[[ -n ${AISH_RUN-} ]] && IFS= read -r __aish_nonce <"$AISH_RUN/nonce"
 
 [[ -n ${AISH_TOOLS_PATH-} ]] && PATH="$AISH_TOOLS_PATH:$PATH"
 type -P aish >/dev/null 2>&1 || aish() { "$AISH_BIN" "$@"; }
@@ -103,7 +109,7 @@ __aish_to_llm() {
 }
 
 __aish_mark() {
-	__aish_ps0=$'\e]6973;cmd-start;'"${__aish_buf//[$'\a\e']/}"$'\a'
+	__aish_ps0=$'\e]6973;'"$__aish_nonce;cmd-start;${__aish_buf//[$'\a\e']/}"$'\a'
 }
 
 # __aish_dump prints the shell's state for the proxy to save with the
@@ -136,7 +142,7 @@ __aish_precmd() {
 		# Written before cmd-end: the proxy reads it when the marker arrives.
 		__aish_dump >|"$AISH_RUN/state"
 	fi
-	printf '\e]6973;cmd-end;%s;%s\a' "$__aish_rc" "$PWD"
+	printf '\e]6973;%s;cmd-end;%s;%s\a' "$__aish_nonce" "$__aish_rc" "$PWD"
 	__aish_fresh=1
 	__aish_ps0=
 	return $__aish_rc
@@ -176,17 +182,17 @@ __aish_ask() {
 	[[ -o history ]] && builtin history -s -- "${__aish_typed:-$__aish_q}"
 	__aish_typed=
 
-	printf '\e]6973;ask-start\a'
+	printf '\e]6973;%s;ask-start\a' "$__aish_nonce"
 	"$AISH_BIN" agent start -- "$__aish_q" || return
 	while [[ -s $AISH_RUN/next.cmd ]]; do
 		IFS= read -r __aish_id <"$AISH_RUN/next.id"
 		IFS= read -r -d '' __aish_cmd <"$AISH_RUN/next.cmd"
 		: >|"$AISH_RUN/next.cmd"
 		__aish_rc=${__aish_cmd//[$'\a\e']/}
-		printf '\e]6973;agent-start;%s;%s\a' "$__aish_id" "${__aish_rc:0:1000}"
+		printf '\e]6973;%s;agent-start;%s;%s\a' "$__aish_nonce" "$__aish_id" "${__aish_rc:0:1000}"
 		eval "$__aish_cmd" </dev/null
 		__aish_rc=$?
-		printf '\e]6973;agent-end;%s;%s;%s\a' "$__aish_id" "$__aish_rc" "$PWD"
+		printf '\e]6973;%s;agent-end;%s;%s;%s\a' "$__aish_nonce" "$__aish_id" "$__aish_rc" "$PWD"
 		"$AISH_BIN" agent resume "$__aish_id" "$__aish_rc" || break
 	done
 }

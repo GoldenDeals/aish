@@ -6,6 +6,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,7 +138,8 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 		return 1, err
 	}
 	defer func() { p.session().Unlock() }()
-	run, err := makeRunDir(reg, self)
+	nonce := rand.Text()
+	run, err := makeRunDir(reg, self, nonce)
 	if err != nil {
 		return 1, err
 	}
@@ -215,7 +217,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	outDone := make(chan struct{})
 	go func() {
 		defer close(outDone)
-		p.pump(ptmx)
+		p.pump(ptmx, NewFilter(nonce))
 	}()
 
 	waitErr := cmd.Wait()
@@ -231,7 +233,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	return 0, waitErr
 }
 
-func makeRunDir(reg *tools.Registry, self string) (string, error) {
+func makeRunDir(reg *tools.Registry, self, nonce string) (string, error) {
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
 		base = os.TempDir()
@@ -260,6 +262,11 @@ func makeRunDir(reg *tools.Registry, self string) (string, error) {
 		if err := os.WriteFile(filepath.Join(run, f), nil, 0o600); err != nil {
 			return "", err
 		}
+	}
+	// The shell and the agent read the nonce from here: in the environment
+	// every command would inherit it.
+	if err := os.WriteFile(filepath.Join(run, "nonce"), []byte(nonce+"\n"), 0o600); err != nil {
+		return "", err
 	}
 	return run, os.WriteFile(filepath.Join(run, "rc"), []byte(shellinit.RCFile()), 0o600)
 }
@@ -366,8 +373,7 @@ func (p *Proxy) liveFold() *fold {
 
 // pump copies PTY output to the terminal, stripping markers and feeding
 // the recorder.
-func (p *Proxy) pump(r io.Reader) {
-	var f Filter
+func (p *Proxy) pump(r io.Reader, f *Filter) {
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := r.Read(buf)

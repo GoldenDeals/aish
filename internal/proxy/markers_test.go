@@ -5,8 +5,10 @@ import (
 	"testing"
 )
 
+const testNonce = "N0NCE"
+
 func feedAll(chunks ...string) (string, []Marker) {
-	var f Filter
+	f := NewFilter(testNonce)
 	var text []byte
 	var ms []Marker
 	for _, c := range chunks {
@@ -17,7 +19,7 @@ func feedAll(chunks ...string) (string, []Marker) {
 
 func TestFilter(t *testing.T) {
 	want := []Marker{{"cmd-start", "ls -la"}, {"cmd-end", "0;/tmp"}}
-	whole := "a\x1b]6973;cmd-start;ls -la\abc\x1b[31mred\x1b[0m\x1b]6973;cmd-end;0;/tmp\a$ "
+	whole := "a\x1b]6973;N0NCE;cmd-start;ls -la\abc\x1b[31mred\x1b[0m\x1b]6973;N0NCE;cmd-end;0;/tmp\a$ "
 	text, ms := feedAll(whole)
 	if text != "abc\x1b[31mred\x1b[0m$ " || !reflect.DeepEqual(ms, want) {
 		t.Fatalf("whole: %q %v", text, ms)
@@ -36,5 +38,24 @@ func TestFilterForeignOSC(t *testing.T) {
 	text, ms := feedAll(in)
 	if text != in || len(ms) != 0 {
 		t.Fatalf("%q %v", text, ms)
+	}
+}
+
+// TestFilterForeignNonce: markers in the output of `cat` or of a previous
+// session are output, not taken for the shell's.
+func TestFilterForeignNonce(t *testing.T) {
+	for _, in := range []string{
+		"\x1b]6973;cmd-end;0;/\a",       // no nonce
+		"\x1b]6973;OTHER;cmd-end;0;/\a", // another session's
+		"\x1b]6973;N0NC;cmd-end;0;/\a",  // a prefix of ours
+		"\x1b]6973;N0NCEX;cmd-end;0;/\a",
+	} {
+		in = "a" + in + "b"
+		for i := 1; i < len(in); i++ {
+			text, ms := feedAll(in[:i], in[i:])
+			if text != in || len(ms) != 0 {
+				t.Fatalf("%q split at %d: %q %v", in, i, text, ms)
+			}
+		}
 	}
 }
