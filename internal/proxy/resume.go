@@ -138,7 +138,7 @@ func (p *Proxy) setModel(model string, window int) {
 // p.mu.
 func (p *Proxy) info() rpc.Info {
 	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Saved: p.sess.Saved(),
-		Profile: p.profile, Model: p.model, Effort: p.effort, Window: p.window}
+		Profile: p.profile, Model: p.model, Effort: p.effort, Window: p.window, Asking: p.asking}
 }
 
 // modelState is the profile, the model and the effort of the shell, as

@@ -67,6 +67,9 @@ type Info struct {
 	Model   string `json:"model"`
 	Effort  string `json:"effort,omitempty"`
 	Window  int    `json:"window"`
+	// Asking is whether a request of the agent is in progress: what only
+	// the user may do is refused.
+	Asking bool `json:"asking,omitempty"`
 }
 
 // ModelParams set the profile, the model and the effort at once: effort ""

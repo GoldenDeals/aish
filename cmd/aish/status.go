@@ -274,6 +274,12 @@ func modelCmd(conf config.Config, args []string) int {
 	if client.Call(rpc.MethodInfo, nil, &info) != nil {
 		info = rpc.Info{}
 	}
+	// The proxy refuses the switch anyway, but only after the API was asked
+	// for the models and warnings that read as a switch were printed. The
+	// list is the assistant's to see.
+	if info.Asking && len(args) > 0 {
+		return fail(errors.New("the model is switched by the user, not by the assistant"))
+	}
 	// Another profile comes with its own model and effort, unless given;
 	// the shell's comes with the shell's.
 	profile, args, switching := profileArg(conf, args)
