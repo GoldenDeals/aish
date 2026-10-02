@@ -15,8 +15,9 @@ import (
 // is the top level itself. The API key is the exception, lest it go to
 // another endpoint: a table setting api_key or api_key_env has both of its
 // own, and one naming provider or base_url but no key has none, so the
-// provider's variable gives it. Pointers tell a key that is set from one
-// that is not.
+// provider's variable gives it. So is effort, lest a level go to a provider
+// that has none such: a table naming provider but no effort has the
+// provider's default. Pointers tell a key that is set from one that is not.
 type Profile struct {
 	Provider      *string `toml:"provider"`
 	BaseURL       *string `toml:"base_url"`
@@ -53,6 +54,9 @@ func (c Config) pick(name *string) (Config, error) {
 // withProfile lays profile name over the top level of c; from tells where
 // the name came from, for the error.
 func (c Config) withProfile(name, from string) (Config, error) {
+	if name == Root {
+		name = ""
+	}
 	c.Profile = name
 	if name == "" {
 		return c, nil
@@ -86,6 +90,9 @@ func (c Config) withProfile(name, from string) (Config, error) {
 	case pr.Provider != nil || pr.BaseURL != nil:
 		c.APIKey, c.APIKeyEnv = "", ""
 	}
+	if pr.Provider != nil && pr.Effort == nil {
+		c.Effort = ""
+	}
 	return c, nil
 }
 
@@ -96,8 +103,8 @@ func lay[T any](dst, v *T) {
 }
 
 // Root is how `aish model` and the status name the top level of
-// config.toml, the profile "": a table of that name could not be told
-// from it.
+// config.toml, the profile "", and so may the profile key and
+// $AISH_PROFILE: a table of that name could not be told from it.
 const Root = "root"
 
 // checkProfiles rejects what check would at the top level, and names that

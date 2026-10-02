@@ -186,7 +186,8 @@ aish подскажет префикс `?`. Свой `command_not_found_handle` 
   с именем `root` завести нельзя. Профиль, как модель и
   effort, — на этот shell, хранится в `<id>.state` и возвращается с `aish resume`. Статус справа от
   промпта называет профиль, если он не тот, что выбирает `config.toml`. Насовсем — `profile` в
-  `config.toml` или `$AISH_PROFILE`.
+  `config.toml` или `$AISH_PROFILE`. `root` — имя верхнего уровня и в `profile`/`$AISH_PROFILE`;
+  профиль со своим `provider` без `effort` берёт уровень по умолчанию, а не верхнего уровня.
 
 Внутри aish эти команды работают и без префикса: `status`, `model claude-sonnet-5 xhigh`, `compact`,
 `session show`, `resume ИМЯ`, `mcp`, `skills`, `agents`. Это обёртки в `$AISH_RUN/bin`, как у
