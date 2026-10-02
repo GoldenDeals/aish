@@ -59,6 +59,7 @@ type Proxy struct {
 	sess         *session.Session
 	foldLines    int
 	maxOutput    int
+	overhead     int // the agent's Overhead after the last request, under p.mu
 	promptStatus bool
 	compactAt    float64      // compact_at: the status says when the next request compacts
 	ignore       []string     // journal_ignore: commands recorded without their output

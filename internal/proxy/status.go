@@ -40,7 +40,7 @@ func (p *Proxy) lookupWindow(prov llm.Provider, profile, model string) {
 // config.toml selects (config.Root for its top level), the model and its
 // effort, colored by how full the context is.
 func (p *Proxy) statusText() (text, color string) {
-	tokens := session.Tokens(p.sess.Entries(), p.maxOutput)
+	tokens, _ := p.contextTokens(p.sess.Entries())
 	text, color = p.model, "\x1b[2m"
 	if p.profile != p.defProfile {
 		prof := p.profile

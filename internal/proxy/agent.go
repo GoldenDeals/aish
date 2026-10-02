@@ -60,7 +60,12 @@ func (p *Proxy) request(ctx context.Context, ex tools.Exec, fresh bool, fn func(
 	if err != nil {
 		return err
 	}
-	return fn(ctx, a)
+	err = fn(ctx, a)
+	o := a.Overhead()
+	p.mu.Lock()
+	p.overhead = o
+	p.mu.Unlock()
+	return err
 }
 
 // takeTurn waits for the request before this one to end and makes this
@@ -656,7 +661,8 @@ func (of *openForm) erase(cols int) string {
 func (p *Proxy) status() rpc.Status {
 	all := p.sess.Entries()
 	es := session.Current(all)
-	st := rpc.Status{Info: p.info(), ProjectConfig: p.project, Tokens: session.Tokens(es, p.maxOutput)}
+	st := rpc.Status{Info: p.info(), ProjectConfig: p.project}
+	st.Tokens, _ = p.contextTokens(es)
 	for _, e := range all {
 		switch e.Kind {
 		case session.KindSummary:
