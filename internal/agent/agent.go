@@ -271,16 +271,27 @@ func (a *Agent) turn(ctx context.Context) error {
 	cols, _ := a.UI.Size()
 	sp := startSpinner(a.UI, cols > 0)
 	md := newMarkdown(sp, a.UI.Size, a.Cfg)
-	resp, err := a.Provider.Complete(ctx, req, func(s string) {
+	resp, err := a.complete(ctx, req, func(s string) {
 		io.WriteString(md, s)
 		streamed.WriteString(s)
+	}, func(note string) {
+		md.Flush()
+		sp.Stop()
+		fmt.Fprintf(a.UI, "%s%s%s\n", dim, note, reset)
+		streamed.Reset()
+		sp = startSpinner(a.UI, cols > 0)
+		md = newMarkdown(sp, a.UI.Size, a.Cfg)
 	})
 	md.Flush()
 	sp.Stop()
 	if err != nil {
-		if ctx.Err() != nil && streamed.Len() > 0 {
+		if streamed.Len() > 0 {
 			// Keep what the user saw, so the model knows it was cut off.
-			_ = a.append(session.Entry{Kind: session.KindAssistant, Text: streamed.String() + "\n[interrupted by the user]"})
+			why := "interrupted by the user"
+			if ctx.Err() == nil {
+				why = "cut off by an API error: " + err.Error()
+			}
+			_ = a.append(session.Entry{Kind: session.KindAssistant, Text: streamed.String() + "\n[" + why + "]"})
 		}
 		return err
 	}
