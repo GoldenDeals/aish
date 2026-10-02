@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/inebotov/aish/internal/agent"
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/mcp"
@@ -89,6 +90,8 @@ func statusCmd(cfg config.Config) int {
 	head("settings")
 	row("max_steps", fmt.Sprint(cfg.MaxSteps))
 	row("max_output", fmt.Sprintf("%d bytes", cfg.MaxOutputBytes))
+	mask, _ := agent.NewMasker(cfg.MaskDefaults, cfg.Mask)
+	row("mask", fmt.Sprintf("%d patterns (%d built-in, %d from mask)", mask.Len(), mask.Len()-len(cfg.Mask), len(cfg.Mask)))
 	row("fold_lines", fmt.Sprint(cfg.FoldLines))
 	row("markdown", fmt.Sprint(cfg.Markdown))
 	row("prompt_status", fmt.Sprint(cfg.PromptStatus))

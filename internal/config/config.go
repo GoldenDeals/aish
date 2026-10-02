@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,6 +34,11 @@ type Config struct {
 	MaxSteps int `toml:"max_steps"`
 	// MaxOutputBytes is how much of each command's output the LLM sees.
 	MaxOutputBytes int `toml:"max_output_bytes"`
+	// Mask lists regexps for secrets to hide in what the LLM sees (command
+	// output, files, tool results); MaskDefaults adds the built-in ones.
+	// A capturing group hides only its value.
+	Mask         []string `toml:"mask"`
+	MaskDefaults bool     `toml:"mask_defaults"`
 	// FoldLines is how many lines of an agent command's output are shown
 	// before the rest is folded (Ctrl+O expands). 0 shows only the command
 	// and a status line; negative disables folding.
@@ -92,6 +98,7 @@ func Default() Config {
 		Model:          "claude-opus-5",
 		MaxSteps:       50,
 		MaxOutputBytes: 16000,
+		MaskDefaults:   true,
 		FoldLines:      0,
 		Markdown:       true,
 		CodeStyle:      "monokai",
@@ -159,9 +166,15 @@ func unknown(md toml.MetaData) error {
 	return fmt.Errorf("unknown keys %s", strings.Join(names, ", "))
 }
 
-// check rejects negative limits, which the code would quietly take for 0.
-// fold_lines is not here: negative there means "do not fold".
+// check rejects negative limits, which the code would quietly take for 0,
+// and mask patterns that do not compile. fold_lines is not here: negative
+// there means "do not fold".
 func (c Config) check() error {
+	for _, p := range c.Mask {
+		if _, err := regexp.Compile(p); err != nil {
+			return fmt.Errorf("mask %q: %w", p, err)
+		}
+	}
 	for _, f := range []struct {
 		key string
 		n   int64

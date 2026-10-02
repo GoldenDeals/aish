@@ -22,7 +22,7 @@ func TestMessages(t *testing.T) {
 		{Kind: session.KindShell, Cmd: "true", Cwd: "/p"},
 		{Kind: session.KindUser, Text: "спасибо", Cwd: "/p"},
 	}
-	ms := Messages(es, 1000)
+	ms := Messages(es, 1000, nil)
 	roles := []string{}
 	for _, m := range ms {
 		roles = append(roles, m.Role)
@@ -69,7 +69,7 @@ func TestMessagesFromSummary(t *testing.T) {
 		{Kind: session.KindShell, Cmd: "ls"},
 		{Kind: session.KindUser, Text: "next"},
 	}
-	ms := Messages(es, 1000)
+	ms := Messages(es, 1000, nil)
 	if len(ms) != 1 || ms[0].Role != llm.RoleUser {
 		t.Fatalf("messages %+v", ms)
 	}

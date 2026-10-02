@@ -68,8 +68,10 @@ func requestCwd(entries []session.Entry, cwd string) string {
 }
 
 // Messages converts the session journal into a conversation. User commands
-// and requests between two assistant turns become one user message.
-func Messages(entries []session.Entry, maxOutput int) []llm.Message {
+// and requests between two assistant turns become one user message. What
+// the user did not type themselves (command output, files, instructions,
+// tool results) goes through mask; the journal keeps the original.
+func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Message {
 	entries = session.Current(entries)
 	var out []llm.Message
 	var user llm.Message
@@ -100,18 +102,21 @@ func Messages(entries []session.Entry, maxOutput int) []llm.Message {
 		}
 		switch e.Kind {
 		case session.KindInstructions:
+			e.Text = mask.Mask(e.Text)
 			inst = append(inst, e)
 		case session.KindFile:
+			e.Text = mask.Mask(e.Text)
 			files = append(files, e)
 		case session.KindSummary:
 			parts = append(parts, summaryBlock(e))
 		case session.KindShell:
+			e.Output = mask.Mask(e.Output)
 			parts = append(parts, shellBlock(e, maxOutput))
 		case session.KindUser:
 			parts = append(parts, fmt.Sprintf("[%s, cwd %s]\n%s", e.Time.Format("2006-01-02 15:04"), e.Cwd, e.Text))
 		case session.KindToolResult:
 			user.ToolResults = append(user.ToolResults, llm.ToolResult{
-				CallID: e.ToolCallID, Name: e.ToolName, Content: e.Output, IsError: e.IsError,
+				CallID: e.ToolCallID, Name: e.ToolName, Content: mask.Mask(e.Output), IsError: e.IsError,
 			})
 		case session.KindAssistant:
 			flush()

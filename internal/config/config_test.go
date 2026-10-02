@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -51,6 +52,7 @@ func TestLoadErrors(t *testing.T) {
 		{"max_steps = -1\n", "max_steps = -1: must not be negative"},
 		{"max_output_bytes = -5\n", "max_output_bytes = -5: must not be negative"},
 		{"max_tokens = \"1000\"\n", "max_tokens"},
+		{"mask = [\"ok\", \"(\"]\n", `mask "("`},
 	} {
 		_, err := load(t, tc.toml)
 		if err == nil {
@@ -69,7 +71,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg != Default() {
+	if !reflect.DeepEqual(cfg, Default()) {
 		t.Errorf("an empty file:\n%+v\nwant the defaults:\n%+v", cfg, Default())
 	}
 }

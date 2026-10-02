@@ -48,7 +48,7 @@ func TestInstructions(t *testing.T) {
 	}
 
 	es = append(es, session.Entry{Kind: session.KindUser, Text: "hi", Cwd: sub})
-	msgs := Messages(es, 1000)
+	msgs := Messages(es, 1000, nil)
 	if len(msgs) != 1 || !strings.Contains(msgs[0].Text, "Contents of "+filepath.Join(proj, "CLAUDE.md")) ||
 		!strings.HasSuffix(msgs[0].Text, "\nhi") {
 		t.Fatalf("messages: %q", msgs[0].Text)

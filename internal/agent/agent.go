@@ -99,6 +99,8 @@ type Agent struct {
 	sess    string // Journal.ID() the entries were read from
 	seen    int    // Journal.Len() after the agent last read or wrote it
 	env     string // see environment; built once per request
+	mask    *Masker
+	maskKey string // the config the mask was built from: it is reloaded per request
 	exec    tools.Exec
 }
 
@@ -277,9 +279,17 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 		// and must send the system prompt the previous turns were cached with.
 		a.env = environment(requestCwd(a.entries, a.exec.Dir))
 	}
+	if key := fmt.Sprint(a.Cfg.MaskDefaults, a.Cfg.Mask); a.mask == nil || key != a.maskKey {
+		m, err := NewMasker(a.Cfg.MaskDefaults, a.Cfg.Mask)
+		if err != nil { // config.Load rejects these; keep the built-in ones
+			fmt.Fprintf(a.UI, "%s[aish: %v]%s\n", dim, err, reset)
+			m, _ = NewMasker(true, nil)
+		}
+		a.mask, a.maskKey = m, key
+	}
 	req := llm.Request{
 		System:   system(a.env, extra),
-		Messages: Messages(entries, a.Cfg.MaxOutputBytes),
+		Messages: Messages(entries, a.Cfg.MaxOutputBytes, a.mask),
 	}
 	for _, t := range a.Tools.All() {
 		if t.Hidden {
