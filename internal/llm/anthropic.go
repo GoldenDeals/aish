@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -116,11 +118,13 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 	stream := p.client.Messages.NewStreaming(ctx, params)
 	defer stream.Close()
 	var msg anthropic.Message
+	stopped := false
 	for stream.Next() {
 		ev := stream.Current()
 		if err := msg.Accumulate(ev); err != nil {
 			return nil, err
 		}
+		stopped = stopped || ev.Type == "message_stop"
 		if d, ok := ev.AsAny().(anthropic.ContentBlockDeltaEvent); ok {
 			if t, ok := d.Delta.AsAny().(anthropic.TextDelta); ok && onText != nil {
 				onText(t.Text)
@@ -129,6 +133,12 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 	}
 	if err := stream.Err(); err != nil {
 		return nil, err
+	}
+	// A connection the server closes in the middle of a reply may end the
+	// stream with no error at all. Only the end of the message tells that
+	// the reply is whole: message_stop, or the stop reason before it.
+	if !stopped && msg.StopReason == "" {
+		return nil, fmt.Errorf("anthropic: stream ended early: %w", io.ErrUnexpectedEOF)
 	}
 
 	u := msg.Usage

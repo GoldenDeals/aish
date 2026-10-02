@@ -289,7 +289,7 @@ func (a *Agent) turn(ctx context.Context) error {
 			// Keep what the user saw, so the model knows it was cut off.
 			why := "interrupted by the user"
 			if ctx.Err() == nil {
-				why = "cut off by an API error: " + err.Error()
+				why = "cut off by an API error: " + llm.Short(err)
 			}
 			_ = a.append(session.Entry{Kind: session.KindAssistant, Text: streamed.String() + "\n[" + why + "]"})
 		}

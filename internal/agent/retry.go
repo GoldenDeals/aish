@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/inebotov/aish/internal/llm"
@@ -24,7 +23,7 @@ func (a *Agent) complete(ctx context.Context, req llm.Request, onText func(strin
 			return resp, err
 		}
 		wait := retryWaits[i]
-		restart(fmt.Sprintf("[aish: %s; retrying in %s (%d/%d)]", firstLine(err.Error()), wait, i+1, len(retryWaits)))
+		restart(fmt.Sprintf("[aish: %s; retrying in %s (%d/%d)]", llm.Short(err), wait, i+1, len(retryWaits)))
 		t := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
@@ -33,9 +32,4 @@ func (a *Agent) complete(ctx context.Context, req llm.Request, onText func(strin
 		case <-t.C:
 		}
 	}
-}
-
-func firstLine(s string) string {
-	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
-	return s
 }
