@@ -176,10 +176,14 @@ type modelArgs struct {
 }
 
 // profileArg cuts the profile off aish model [PROFILE] [NAME] [EFFORT]:
-// the first word, if cfg has a profile of that name. It goes before a
-// model or an effort of the same name, which are then given after it.
+// the first word, if cfg has a profile of that name or it is config.Root,
+// the top level, "". It goes before a model or an effort of the same
+// name, which are then given after it.
 func profileArg(cfg config.Config, args []string) (string, []string, bool) {
 	if len(args) > 0 {
+		if args[0] == config.Root {
+			return "", args[1:], true
+		}
 		if _, ok := cfg.Profiles[args[0]]; ok {
 			return args[0], args[1:], true
 		}
@@ -191,7 +195,7 @@ func profileArg(cfg config.Config, args []string) (string, []string, bool) {
 // config.toml has it, the shell's model and effort not laid over. On an
 // error, such as a profile config.toml has no more, cfg is kept.
 func profileOf(cfg config.Config, info rpc.Info) (config.Config, error) {
-	if info.Model == "" || info.Profile == cfg.Profile { // "": a proxy that knows no profiles
+	if info.Model == "" || info.Profile == cfg.Profile { // "": a proxy older than aish model
 		return cfg, nil
 	}
 	pc, err := config.LoadProfile(info.Profile)
@@ -203,7 +207,7 @@ func profileOf(cfg config.Config, info rpc.Info) (config.Config, error) {
 
 func profileName(p string) string {
 	if p == "" {
-		return "none"
+		return config.Root
 	}
 	return p
 }
@@ -240,24 +244,29 @@ func modelCmd(conf config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	// As in shellConfig, a proxy that does not answer leaves config.toml's
+	// list to show; a switch fails on its own.
 	var info rpc.Info
-	if err := client.Call(rpc.MethodInfo, nil, &info); err != nil {
-		return fail(err)
+	if client.Call(rpc.MethodInfo, nil, &info) != nil {
+		info = rpc.Info{}
 	}
 	// Another profile comes with its own model and effort, unless given;
 	// the shell's comes with the shell's.
 	profile, args, switching := profileArg(conf, args)
 	var cfg config.Config
+	shell := !switching && info.Model != ""
 	if switching {
-		cfg, err = config.LoadProfile(profile)
-	} else {
-		cfg, err = profileOf(conf, info)
-	}
-	if err != nil {
-		return fail(err)
+		if cfg, err = config.LoadProfile(profile); err != nil {
+			return fail(err)
+		}
+	} else if cfg, err = profileOf(conf, info); err != nil {
+		// cfg is conf, what config.toml has, still worth showing; the
+		// shell's model is of the profile gone and does not go over it.
+		fmt.Printf("\x1b[33mprofile %s is not in config.toml: %v\x1b[0m\n", info.Profile, err)
+		shell = false
 	}
 	file := cfg // config.toml's, for how to keep the switch
-	if !switching && info.Model != "" {
+	if shell {
 		cfg.Model, cfg.Effort = info.Model, info.Effort
 	}
 	// The list is asked without the effort: a wrong one is what may need fixing.
@@ -279,10 +288,11 @@ func modelCmd(conf config.Config, args []string) int {
 
 	if len(args) == 0 && !switching {
 		usage := "aish model [NAME] [EFFORT|default]"
-		if names := conf.ProfileNames(); len(names) > 0 {
+		if len(conf.Profiles) > 0 {
 			usage = "aish model [PROFILE] [NAME] [EFFORT|default]"
+			names := append([]string{config.Root}, conf.ProfileNames()...)
 			for i, n := range names {
-				if n == cfg.Profile {
+				if n == profileName(cfg.Profile) {
 					names[i] = "\x1b[0;1m*" + n + "\x1b[0;2m"
 				}
 			}
@@ -321,6 +331,10 @@ func modelCmd(conf config.Config, args []string) int {
 	if setEffort {
 		effort = want.effort
 	}
+	if e, dropped := fitEffort(prov, effort, setEffort); dropped {
+		fmt.Printf("\x1b[33m%s takes no effort %s: back to its default\x1b[0m\n", prov.Name(), effort)
+		effort = e
+	}
 	var model *llm.ModelInfo
 	if listErr == nil {
 		if i := slices.IndexFunc(ms, func(m llm.ModelInfo) bool { return m.ID == name }); i >= 0 {
@@ -358,8 +372,10 @@ func modelCmd(conf config.Config, args []string) int {
 	if effort != file.Effort {
 		keep = append(keep, "effort")
 	}
-	if cfg.Profile != "" {
-		fmt.Printf("profile %s, ", cfg.Profile)
+	// The top level is named too when the shell comes to it, or config.toml
+	// selects another.
+	if cfg.Profile != "" || switching || cfg.Profile != conf.Profile || cfg.Profile != info.Profile {
+		fmt.Printf("profile %s, ", profileName(cfg.Profile))
 	}
 	fmt.Printf("model %s, effort %s for this shell", name, effortName(effort))
 	if len(keep) > 0 {
@@ -374,6 +390,16 @@ func effortName(e string) string {
 		return "default"
 	}
 	return e
+}
+
+// fitEffort is effort, or "" when it was not given and prov has no
+// such level: the effort a profile does not set is the top level's,
+// which may be of another provider. It tells whether it dropped one.
+func fitEffort(prov llm.Provider, effort string, given bool) (string, bool) {
+	if given || llm.CheckEffort(prov, effort) == nil {
+		return effort, false
+	}
+	return "", true
 }
 
 // effortLevels shows what effort a model takes, the one in use bright.

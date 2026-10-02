@@ -95,12 +95,20 @@ func lay[T any](dst, v *T) {
 	}
 }
 
+// Root is how `aish model` and the status name the top level of
+// config.toml, the profile "": a table of that name could not be told
+// from it.
+const Root = "root"
+
 // checkProfiles rejects what check would at the top level, and names that
 // cannot be given to `aish model` as one word.
 func checkProfiles(ps map[string]Profile) error {
 	for _, name := range slices.Sorted(maps.Keys(ps)) {
 		if name == "" || strings.ContainsFunc(name, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) {
 			return fmt.Errorf("profiles.%q: a profile is named by one word", name)
+		}
+		if name == Root {
+			return fmt.Errorf("profiles.%s: the name is the top level's (aish model %s)", Root, Root)
 		}
 		pr := ps[name]
 		if pr.MaxTokens != nil && *pr.MaxTokens < 0 {

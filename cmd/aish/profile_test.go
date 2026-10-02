@@ -25,6 +25,9 @@ func TestProfileArg(t *testing.T) {
 		{[]string{"high"}, []string{}, "high", true},
 		{[]string{"local", "local"}, []string{"local"}, "local", true},
 		{[]string{"claude-x", "local"}, []string{"claude-x", "local"}, "", false},
+		// The top level, which no profile can be named.
+		{[]string{"root"}, []string{}, "", true},
+		{[]string{"root", "qwen3:8b"}, []string{"qwen3:8b"}, "", true},
 	} {
 		profile, rest, ok := profileArg(cfg, tc.args)
 		if profile != tc.profile || ok != tc.ok || !slices.Equal(rest, tc.rest) {
@@ -54,7 +57,7 @@ func TestProfileOf(t *testing.T) {
 		{rpc.Info{Profile: "work", Model: "x"}, "work", "w", false},
 		{rpc.Info{Profile: "local", Model: "x"}, "local", "l", false},
 		{rpc.Info{Model: "x"}, "", "top", false},
-		{rpc.Info{}, "work", "w", false}, // a proxy that knows no profiles
+		{rpc.Info{}, "work", "w", false}, // a proxy older than aish model
 		{rpc.Info{Profile: "gone", Model: "x"}, "work", "w", true},
 	} {
 		got, err := profileOf(cfg, tc.info)

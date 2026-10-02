@@ -7,6 +7,7 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
+	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/session"
 )
@@ -36,13 +37,17 @@ func (p *Proxy) lookupWindow(prov llm.Provider, profile, model string) {
 }
 
 // statusText is the context size, the profile when it is not the one
-// config.toml selects, the model and its effort, colored by how full the
-// context is.
+// config.toml selects (config.Root for its top level), the model and its
+// effort, colored by how full the context is.
 func (p *Proxy) statusText() (text, color string) {
 	tokens := session.Tokens(p.sess.Entries(), p.maxOutput)
 	text, color = p.model, "\x1b[2m"
-	if p.profile != "" && p.profile != p.defProfile {
-		text = p.profile + " · " + text
+	if p.profile != p.defProfile {
+		prof := p.profile
+		if prof == "" {
+			prof = config.Root
+		}
+		text = prof + " · " + text
 	}
 	if p.effort != "" {
 		text += " · " + p.effort

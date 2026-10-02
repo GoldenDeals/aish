@@ -108,6 +108,7 @@ func TestProfileErrors(t *testing.T) {
 		{"", "[profiles.work]\nmodel = \"x\"\n[profiles.local.policy]\ndeny = []\n", `unknown key "profiles.local.policy"`},
 		{"", "[profiles.work]\nmax_tokens = -1\n", "profiles.work.max_tokens = -1: must not be negative"},
 		{"", "[profiles.\"my work\"]\n", `profiles."my work": a profile is named by one word`},
+		{"", "[profiles.root]\n", "profiles.root: the name is the top level's"},
 	} {
 		t.Setenv("AISH_PROFILE", tc.env)
 		_, err := load(t, tc.toml)
