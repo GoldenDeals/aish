@@ -14,6 +14,7 @@ import (
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/mcp"
+	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 )
@@ -34,6 +35,8 @@ func statusCmd(cfg config.Config) int {
 	cfg, profErr := profileOf(cfg, info)
 	// The settings of this directory: what the next request would take.
 	cwd, _ := os.Getwd()
+	// Past config.Project the project's rules are in the same list.
+	global := rulesOf(cfg).Len()
 	cfg, project, err := config.Project(cfg, cwd)
 	if err != nil {
 		return fail(err)
@@ -132,12 +135,12 @@ func statusCmd(cfg config.Config) int {
 	row("prompt_status", fmt.Sprint(cfg.PromptStatus))
 	row("config", configFiles(project, st.ProjectConfig))
 	dirs := func(list string) string { return strings.Join(filepath.SplitList(list), ", ") }
-	var rego []string
-	for _, d := range filepath.SplitList(cfg.PolicyDir) {
-		fs, _ := filepath.Glob(filepath.Join(d, "*.rego"))
-		rego = append(rego, fs...)
+	// Loaded as the agent would: an error shows here, not on the next request.
+	if eng, err := policy.Load(context.Background(), cfg.PolicyDir, rulesOf(cfg)); err != nil {
+		row("policy", "\x1b[31m"+dirs(cfg.PolicyDir)+": "+err.Error()+"\x1b[0m")
+	} else {
+		row("policy", policyLine(eng, cfg.PolicyDir, global, rulesOf(cfg).Len(), project))
 	}
-	row("policy", fmt.Sprintf("%s (%d files)", dirs(cfg.PolicyDir), len(rego)))
 	row("tools", dirs(cfg.ToolsDir))
 	remote, _ := mcp.Remote(client, false)
 	row("mcp", fmt.Sprintf("%s (%d tools)", cfg.MCPConfig, len(remote)))

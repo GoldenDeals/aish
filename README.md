@@ -407,7 +407,8 @@ Cedar — default deny: без `permit` запрещено всё, поэтом�
 
 `aish policy` загружает политики и печатает их число (или ошибку валидации);
 `aish policy bash 'sudo ls'`, `aish policy write_file /etc/hosts` — спросить их об одном вызове без
-модели, аргументы как у `aish tool`.
+модели, аргументы как у `aish tool`. Та же строка о политиках, с правилами `[policy]` или ошибкой
+загрузки, стоит в `aish status`.
 
 Пример `examples/policy/default.cedar` запрещает `sudo`, `rm -rf /` и `$HOME`, `git push --force`,
 `exit`/`exec`, запись вне `$HOME` и спрашивает перед установкой пакетов.

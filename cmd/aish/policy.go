@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/inebotov/aish/internal/config"
@@ -31,28 +32,7 @@ func policyCmd(cfg config.Config, args []string) int {
 		return fail(err)
 	}
 	if len(args) == 0 {
-		n := 0
-		var files []string
-		for _, s := range eng.Summary() {
-			n += s.Policies
-			files = append(files, fmt.Sprintf("%s (%d)", s.File, s.Policies))
-		}
-		line := "no policies in " + cfg.PolicyDir
-		if n > 0 {
-			line = fmt.Sprintf("%d policies in %s: %s", n, cfg.PolicyDir, strings.Join(files, ", "))
-		}
-		for _, r := range []struct {
-			n    int
-			from string
-		}{{global, "config.toml"}, {rules.Len() - global, project}} {
-			switch {
-			case r.n == 1:
-				line += " + 1 rule from " + r.from
-			case r.n > 1:
-				line += fmt.Sprintf(" + %d rules from %s", r.n, r.from)
-			}
-		}
-		fmt.Println(line)
+		fmt.Println(policyLine(eng, cfg.PolicyDir, global, rules.Len(), project))
 		return 0
 	}
 	reg := loadTools(cfg, nil)
@@ -80,6 +60,35 @@ func policyCmd(cfg config.Config, args []string) int {
 	}
 	fmt.Printf("%s: %s\n", d.Action, d.Reason)
 	return 1
+}
+
+// policyLine says what policies are in force: the Cedar files of dir with
+// their policy counts and the [policy] rules, global from config.toml and
+// the rest from the project's file. `aish policy` and `aish status` print it.
+func policyLine(eng *policy.Engine, dir string, global, total int, project string) string {
+	dirs := strings.Join(filepath.SplitList(dir), ", ")
+	n := 0
+	var files []string
+	for _, s := range eng.Summary() {
+		n += s.Policies
+		files = append(files, fmt.Sprintf("%s (%d)", s.File, s.Policies))
+	}
+	line := "no policies in " + dirs
+	if n > 0 {
+		line = fmt.Sprintf("%d policies in %s: %s", n, dirs, strings.Join(files, ", "))
+	}
+	for _, r := range []struct {
+		n    int
+		from string
+	}{{global, "config.toml"}, {total - global, home(project)}} {
+		switch {
+		case r.n == 1:
+			line += " + 1 rule from " + r.from
+		case r.n > 1:
+			line += fmt.Sprintf(" + %d rules from %s", r.n, r.from)
+		}
+	}
+	return line
 }
 
 // rulesOf is the [policy] table of cfg as the policy package takes it.
