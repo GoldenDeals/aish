@@ -119,7 +119,7 @@ func (u *fakeUI) Live(title string) Live {
 	u.lives = append(u.lives, title)
 	return &fakeLive{u: u}
 }
-func (u *fakeUI) CommandAt(col int, long bool) { u.at = append(u.at, col) }
+func (u *fakeUI) CommandAt(col int, long bool, hidden int) { u.at = append(u.at, col) }
 
 type fakeLive struct{ u *fakeUI }
 

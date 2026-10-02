@@ -28,9 +28,18 @@ func newViewer(folds []Fold, w, h int) *viewer {
 			v.lines = append(v.lines, "")
 		}
 		last = len(v.lines)
-		v.titles[len(v.lines)] = true
-		v.lines = append(v.lines, f.Title)
+		// A command's lines after the first are indented, as on the screen.
+		for j, l := range strings.Split(f.Title, "\n") {
+			if j > 0 {
+				l = "  " + l
+			}
+			v.titles[len(v.lines)] = true
+			v.lines = append(v.lines, strings.ReplaceAll(l, "\t", "        "))
+		}
 		text := strings.TrimRight(capture.Clean([]byte(f.Text)), "\n")
+		if text == "" {
+			continue // a command cut short on the screen, with no output
+		}
 		for _, l := range strings.Split(text, "\n") {
 			v.lines = append(v.lines, strings.ReplaceAll(l, "\t", "        "))
 		}

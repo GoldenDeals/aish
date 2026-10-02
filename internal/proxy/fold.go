@@ -46,6 +46,7 @@ type fold struct {
 type statusAt struct {
 	col, cols int
 	long      bool // the command takes several lines: the status is short
+	hidden    int  // lines of the command the agent did not print
 }
 
 func newFold(title string, limit int) *fold {
@@ -95,6 +96,13 @@ func (f *fold) write(b []byte) []byte {
 
 // folded reports whether anything was hidden.
 func (f *fold) folded() bool { return f.hiddenLines > 0 || f.partial }
+
+// cut reports whether the agent printed the command cut short: only the
+// title, in Ctrl+O, shows it whole.
+func (f *fold) cut() bool { return f.at != nil && f.at.hidden > 0 }
+
+// keep reports whether the fold is worth keeping for Ctrl+O.
+func (f *fold) keep() bool { return f.folded() || f.cut() }
 
 // statusExit draws the status; exit < 0 while the command runs.
 func (f *fold) statusExit(exit int) string {

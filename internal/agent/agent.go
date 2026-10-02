@@ -71,8 +71,9 @@ type UI interface {
 	Live(title string) Live
 	// CommandAt says the bash command was printed without a newline and
 	// ends at column col, so the status can go to its right; long when it
-	// took several lines.
-	CommandAt(col int, long bool)
+	// took several lines. hidden is how many lines of the command were not
+	// printed: the UI keeps the command for Ctrl+O even without output.
+	CommandAt(col int, long bool, hidden int)
 }
 
 // Live is a tool's output being shown; Finish ends it with the tool's exit
@@ -427,23 +428,51 @@ func handsOff(t tools.Tool) bool {
 // output will be folded from its first line, and the UI is told where the
 // command ends so the status can go to its right.
 func (a *Agent) showBash(cmd string, nl bool) {
-	lines := strings.Split(cmd, "\n")
-	fmt.Fprintf(a.UI, "%s❯%s %s%s%s", cyan, reset, bold, strings.Join(lines, "\n  "), reset)
 	cols, _ := a.UI.Size()
-	if nl || a.Cfg.FoldLines != 0 || cols <= 0 {
-		fmt.Fprintln(a.UI)
-		return
+	open := !nl && a.Cfg.FoldLines == 0 && cols > 0
+	text, col, long, hidden := renderBash(cmd, cols, open)
+	fmt.Fprint(a.UI, text)
+	if col >= 0 {
+		a.UI.CommandAt(col, long, hidden)
 	}
-	last := "  " + lines[len(lines)-1]
-	if len(lines) == 1 {
-		last = "❯ " + cmd
+}
+
+// cmdLines is how many lines of a bash command are shown; the rest is
+// summed up in one line and kept for Ctrl+O by the proxy.
+const cmdLines = 3
+
+// renderBash is what showBash prints for cmd and, when the line is left
+// open for the status, where it ends: col, long and how many lines are hidden.
+// A closed line (col -1) shows the whole command: the user may be asked
+// about it, and without CommandAt the proxy would not keep the rest for
+// Ctrl+O.
+func renderBash(cmd string, cols int, open bool) (text string, col int, long bool, hidden int) {
+	lines := strings.Split(strings.TrimRight(cmd, "\n"), "\n")
+	if !open || cols <= 0 {
+		return fmt.Sprintf("%s❯%s %s%s%s\n", cyan, reset, bold, strings.Join(lines, "\n  "), reset), -1, false, 0
+	}
+	shown := lines
+	if len(lines) > cmdLines {
+		shown, hidden = lines[:cmdLines], len(lines)-cmdLines
+	}
+	text = fmt.Sprintf("%s❯%s %s%s%s", cyan, reset, bold, strings.Join(shown, "\n  "), reset)
+	last := "  " + shown[len(shown)-1]
+	if len(shown) == 1 {
+		last = "❯ " + shown[0]
+	}
+	if hidden > 0 {
+		last = fmt.Sprintf("  … (+%d lines)", hidden)
+		if hidden == 1 {
+			last = "  … (+1 line)"
+		}
+		text += "\n" + dim + last + reset
 	}
 	w := runewidth.StringWidth(last)
-	col := w % cols
+	col = w % cols
 	if w > 0 && col == 0 {
 		col = cols // the cursor waits at the right edge
 	}
-	a.UI.CommandAt(col, len(lines) > 1 || w > cols)
+	return text, col, len(lines) > 1 || w > cols, hidden
 }
 
 // ask lets the user decide an "ask" verdict on the terminal.

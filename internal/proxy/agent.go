@@ -257,14 +257,14 @@ func (u *ui) Live(title string) agent.Live {
 	return l
 }
 
-func (u *ui) CommandAt(col int, long bool) {
+func (u *ui) CommandAt(col int, long bool, hidden int) {
 	u.p.mu.Lock()
 	defer u.p.mu.Unlock()
 	if u.p.size == nil {
 		return
 	}
 	if w, _ := u.p.size(); col >= 0 && w > 0 {
-		u.p.at = &statusAt{col: min(col, w), cols: w, long: long}
+		u.p.at = &statusAt{col: min(col, w), cols: w, long: long, hidden: hidden}
 	}
 }
 

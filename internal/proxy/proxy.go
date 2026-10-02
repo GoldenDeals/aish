@@ -396,7 +396,8 @@ func (p *Proxy) key(b []byte) []byte {
 func (p *Proxy) viewFolds() []Fold {
 	folds := append([]Fold{}, p.folds...)
 	if f := p.liveFold(); f != nil && !f.open {
-		if raw := f.raw.Bytes(); len(raw) > 0 {
+		// A command cut short on the screen is there before it prints anything.
+		if raw := f.raw.Bytes(); len(raw) > 0 || f.cut() {
 			folds = append(folds, Fold{Title: f.title + "  (running)", Text: string(raw)})
 		}
 	}
@@ -589,7 +590,7 @@ func (p *Proxy) finish(id string, out rpc.Output) {
 // finishFold prints the final status line and keeps the output for Ctrl+O.
 func (p *Proxy) finishFold(f *fold, exit int) {
 	p.emit(f.finish(exit))
-	if f.folded() {
+	if f.keep() {
 		p.folds = append(p.folds, Fold{Title: f.title, Text: string(f.raw.Bytes())})
 	}
 }
