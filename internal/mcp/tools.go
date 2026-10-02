@@ -121,11 +121,18 @@ func saveBlob(data, mimeType string) string {
 		ext = exts[len(exts)-1]
 	}
 	f, err := os.CreateTemp("", "aish-mcp-*"+ext)
+	if err == nil {
+		_, err = f.Write(b)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			os.Remove(f.Name())
+		}
+	}
 	if err != nil {
 		return "[" + mimeType + " content not saved: " + err.Error() + "]"
 	}
-	defer f.Close()
-	f.Write(b)
 	return f.Name()
 }
 
