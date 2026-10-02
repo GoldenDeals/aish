@@ -592,7 +592,7 @@ func (a *Agent) ask(ctx context.Context, d policy.Decision) policy.Decision {
 	if d.Reason != "" {
 		q = d.Reason + " — allow?"
 	}
-	ans, err := a.UI.Ask(ctx, fmt.Sprintf("%s%s [y/N] %s", bold, q, reset))
+	ans, err := a.UI.Ask(ctx, fmt.Sprintf("%s%s%s", bold, q, reset))
 	if err != nil {
 		return policy.Decision{Action: policy.Deny, Reason: "needs confirmation, no terminal: " + d.Reason}
 	}

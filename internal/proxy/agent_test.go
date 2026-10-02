@@ -204,9 +204,17 @@ func TestAgentCancel(t *testing.T) {
 	}
 }
 
-// The agent's question is answered on the keyboard the proxy reads: the
-// answer is echoed, not sent to the shell; Ctrl+C is.
+// The agent's question is answered on the keyboard the proxy reads: Yes
+// or No on the line of the question, Yes at first, chosen with the arrows
+// or a letter. None of it goes to the shell; Ctrl+C does, and so does what
+// was typed after the answer.
 func TestAskKey(t *testing.T) {
+	const (
+		yes   = "\x1b[7m[ Yes ]\x1b[27m   No  "
+		no    = "  Yes   \x1b[7m[ No ]\x1b[27m"
+		plain = "  Yes     No  "
+		back  = "\x1b[14D" // to the start of the choices, as wide whichever is chosen
+	)
 	sess, err := session.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -214,63 +222,147 @@ func TestAskKey(t *testing.T) {
 	p := New(sess)
 	out := &terminal{}
 	p.out = out
+	cols := 80
+	p.size = func() (int, int) { return cols, 24 }
 	type answer struct {
 		s   string
 		err error
 	}
-	res := make(chan answer, 1)
-	go func() {
-		s, err := p.askUser(context.Background(), "allow? ")
-		res <- answer{s, err}
-	}()
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
-		p.mu.Lock()
-		open := p.ask != nil
-		p.mu.Unlock()
-		if open {
-			break
+	ask := func(ctx context.Context) chan answer {
+		t.Helper()
+		out.mu.Lock()
+		out.b.Reset()
+		out.mu.Unlock()
+		res := make(chan answer, 1)
+		go func() {
+			s, err := p.askUser(ctx, "allow?")
+			res <- answer{s, err}
+		}()
+		for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
+			p.mu.Lock()
+			open := p.ask != nil
+			p.mu.Unlock()
+			if open {
+				return res
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the question never opened")
+			}
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("the question never opened")
+	}
+	answered := func(res chan answer) answer {
+		t.Helper()
+		select {
+		case a := <-res:
+			if p.ask != nil {
+				t.Error("the question stayed open")
+			}
+			return a
+		case <-time.After(5 * time.Second):
+			t.Fatal("no answer")
 		}
+		return answer{}
 	}
-	if got := p.key([]byte("yx")); got != nil {
-		t.Errorf("typed answer went to the shell: %q", got)
-	}
-	if got := p.key([]byte{0x7f}); got != nil {
-		t.Errorf("backspace went to the shell: %q", got)
-	}
-	if got := p.key([]byte("\x1b[A")); got != nil {
-		t.Errorf("an arrow went to the shell: %q", got)
+
+	res := ask(context.Background())
+	want := "\x1b[?25lallow? " + yes
+	for _, k := range []struct{ key, draw string }{
+		{"\x1b[C", no},
+		{"\x1b[C", ""}, // No already
+		{"\x1b[D", yes},
+		{"\t", no},
+		{"\x1bOD", yes},
+		{"l", no},
+		{"h", yes},
+		{"\x1b[A", no},
+		{"\x1bOB", yes},
+		{"x", ""},
+		{"\x7f", ""},
+		{"\x1b[1;5C", no},
+		{"\x1b[Z", yes},
+	} {
+		if got := p.key([]byte(k.key)); got != nil {
+			t.Errorf("%q went to the shell: %q", k.key, got)
+		}
+		if k.draw != "" {
+			want += back + k.draw
+		}
+		if s := out.String(); s != want {
+			t.Fatalf("after %q:\n got %q\nwant %q", k.key, s, want)
+		}
 	}
 	if got := p.key([]byte{0x03}); !bytes.Equal(got, []byte{0x03}) {
 		t.Errorf("Ctrl+C did not reach the shell: %q", got)
 	}
+	want += back + plain // interrupted, not answered
 	if got := p.key([]byte("\rls\n")); string(got) != "ls\n" {
 		t.Errorf("what followed the answer was lost: %q", got)
 	}
-	select {
-	case a := <-res:
-		if a.err != nil || a.s != "y" {
-			t.Errorf("answer %q, %v", a.s, a.err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("no answer")
+	if a := answered(res); a.err != nil || a.s != "y" {
+		t.Errorf("Enter at once: %q, %v", a.s, a.err)
 	}
-	if s := out.String(); s != "allow? yx\b \b\r\n" {
-		t.Errorf("echo %q", s)
-	}
-	if p.ask != nil {
-		t.Error("the question stayed open")
+	want += back + "Yes\x1b[K\r\n\x1b[?25h"
+	if s := out.String(); s != want {
+		t.Errorf("terminal\n got %q\nwant %q", s, want)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := p.askUser(ctx, "again? "); !errors.Is(err, context.Canceled) {
-		t.Errorf("interrupted question: %v", err)
+	res = ask(context.Background())
+	if got := p.key([]byte("\x1b[C\r")); got != nil {
+		t.Errorf("went to the shell: %q", got)
 	}
-	if p.ask != nil {
-		t.Error("an interrupted question stayed open")
+	if a := answered(res); a.s != "n" {
+		t.Errorf("No and Enter: %q", a.s)
+	}
+	if s := out.String(); !strings.HasSuffix(s, back+"No\x1b[K\r\n\x1b[?25h") {
+		t.Errorf("No not left on the screen: %q", s)
+	}
+
+	// A letter answers without Enter.
+	res = ask(context.Background())
+	if got := p.key([]byte("Nls\r")); string(got) != "ls\r" {
+		t.Errorf("what followed n was lost: %q", got)
+	}
+	if a := answered(res); a.s != "n" {
+		t.Errorf("n: %q", a.s)
+	}
+	res = ask(context.Background())
+	if got := p.key([]byte("\x1b[Cy")); got != nil {
+		t.Errorf("went to the shell: %q", got)
+	}
+	if a := answered(res); a.s != "y" {
+		t.Errorf("y: %q", a.s)
+	}
+	if s := out.String(); !strings.HasSuffix(s, back+"Yes\x1b[K\r\n\x1b[?25h") {
+		t.Errorf("Yes not left on the screen: %q", s)
+	}
+
+	// Where the choices do not fit after the question they go below it,
+	// short of the last column: a redraw steps back from the cursor.
+	cols = 21
+	res = ask(context.Background())
+	p.key([]byte("\x1b[C\r"))
+	if a := answered(res); a.s != "n" {
+		t.Errorf("narrow: %q", a.s)
+	}
+	if s, want := out.String(), "\x1b[?25lallow?\r\n"+yes+back+no+back+"No\x1b[K\r\n\x1b[?25h"; s != want {
+		t.Errorf("narrow terminal\n got %q\nwant %q", s, want)
+	}
+	cols = 80
+
+	ctx, cancel := context.WithCancel(context.Background())
+	res = ask(ctx)
+	cancel()
+	if a := answered(res); !errors.Is(a.err, context.Canceled) {
+		t.Errorf("interrupted question: %v", a.err)
+	}
+	if s := out.String(); !strings.HasSuffix(s, "\x1b[?25h") {
+		t.Errorf("the cursor stayed hidden: %q", s)
+	}
+
+	// Nothing to draw the choices on: no one to answer.
+	p.size = nil
+	if _, err := p.askUser(context.Background(), "allow?"); err == nil || p.ask != nil {
+		t.Errorf("asked with no terminal: %v", err)
 	}
 }
 

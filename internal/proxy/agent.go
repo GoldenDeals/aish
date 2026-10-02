@@ -10,7 +10,6 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/inebotov/aish/internal/agent"
 	"github.com/inebotov/aish/internal/config"
@@ -390,24 +389,65 @@ func (c *crlf) fix(b []byte) []byte {
 	return out
 }
 
-// prompt is a question the agent has open on the terminal; the proxy reads
-// the answer from the keyboard, as it does the viewer's keys.
+// prompt is a question the agent has open on the terminal, Yes or No; the
+// proxy reads the answer from the keyboard, as it does the viewer's keys.
 type prompt struct {
-	line []byte
+	yes  bool
 	done chan string
 }
 
-// askUser prints q and waits for a line, or for ctx: Ctrl+C goes to the
-// shell, which stops the request.
+// choices is the block of answers drawn after the question: the one chosen
+// in reverse and in brackets, which show without colours too. It is as
+// wide whichever is chosen, or none, so a redraw steps back choicesWidth
+// columns and draws it anew. Not with \e7 and \e8: the status of the
+// prompt keeps the one saved cursor, and a scroll would move it elsewhere.
+func choices(chosen string) string {
+	var b strings.Builder
+	for i, s := range []string{"Yes", "No"} {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		if s == chosen {
+			b.WriteString("\x1b[7m[ " + s + " ]\x1b[27m")
+		} else {
+			b.WriteString("  " + s + "  ")
+		}
+	}
+	return b.String()
+}
+
+var choicesWidth = frameWidth(choices(""))
+
+func (pr *prompt) chosen() string {
+	if pr.yes {
+		return "Yes"
+	}
+	return "No"
+}
+
+// askUser prints q with Yes and No after it and waits for the user to pick
+// one, or for ctx: Ctrl+C goes to the shell, which stops the request.
+// Without a terminal there is nothing to draw the choices on.
 func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	p.mu.Lock()
+	if p.size == nil {
+		p.mu.Unlock()
+		return "", errors.New("no terminal")
+	}
 	if p.ask != nil || p.form != nil {
 		p.mu.Unlock()
 		return "", errors.New("a question is open already")
 	}
-	pr := &prompt{done: make(chan string, 1)}
+	pr := &prompt{yes: true, done: make(chan string, 1)}
 	p.ask = pr
-	p.emit([]byte(q))
+	// The choices end short of the last column: there the cursor would
+	// stay on it, and stepping back from it would miss by one.
+	cols, _ := p.size()
+	sep := " "
+	if frameWidth(q[strings.LastIndexByte(q, '\n')+1:])+len(sep)+choicesWidth >= cols {
+		sep = "\r\n"
+	}
+	p.emit([]byte("\x1b[?25l" + q + sep + choices(pr.chosen())))
 	p.mu.Unlock()
 	select {
 	case ans := <-pr.done:
@@ -416,6 +456,7 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 		p.mu.Lock()
 		if p.ask == pr {
 			p.ask = nil
+			p.emit([]byte("\x1b[?25h"))
 		}
 		p.mu.Unlock()
 		return "", ctx.Err()
@@ -423,45 +464,74 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 }
 
 // askKey reads the answer to the open question from what the user typed
-// and echoes it: the shell is not reading, so nothing else would. Returns
+// and draws the choice anew: the shell is not reading, so nothing else
+// would. y and n answer at once, Enter answers with the choice. Returns
 // what goes on to the shell anyway. Called under p.mu.
 func (p *Proxy) askKey(b []byte) []byte {
+	back := fmt.Sprintf("\x1b[%dD", choicesWidth)
+	choose := func(yes bool) {
+		if p.ask.yes != yes {
+			p.ask.yes = yes
+			p.emit([]byte(back + choices(p.ask.chosen())))
+		}
+	}
 	var pass []byte
 	for i := 0; i < len(b); i++ {
 		c := b[i]
-		switch {
-		case c == '\r' || c == '\n':
-			p.emit([]byte("\r\n"))
-			p.ask.done <- string(p.ask.line)
+		if c == 0x1b {
+			// An escape sequence: an arrow is told by its last byte, and
+			// Alt with a key is no answer.
+			if i++; i >= len(b) || b[i] != '[' && b[i] != 'O' {
+				continue
+			}
+			csi := b[i] == '['
+			for i++; csi && i < len(b) && (b[i] < 0x40 || b[i] > 0x7e); i++ {
+			}
+			if i >= len(b) {
+				break
+			}
+			switch b[i] {
+			case 'D':
+				c = 'h'
+			case 'C':
+				c = 'l'
+			case 'A', 'B', 'Z':
+				c = '\t' // up, down, Shift+Tab: in one row either way is the other
+			default:
+				continue
+			}
+		}
+		switch c {
+		case 'h':
+			choose(true)
+		case 'l':
+			choose(false)
+		case '\t':
+			choose(!p.ask.yes)
+		case 'y', 'Y', 'n', 'N':
+			p.ask.yes = c == 'y' || c == 'Y'
+			fallthrough
+		case '\r', '\n':
+			// The line keeps what was chosen.
+			p.emit([]byte(back + p.ask.chosen() + "\x1b[K\r\n\x1b[?25h"))
+			ans := "n"
+			if p.ask.yes {
+				ans = "y"
+			}
+			p.ask.done <- ans
 			p.ask = nil
 			return append(pass, b[i+1:]...)
-		case c == 0x7f || c == 0x08:
-			if n := len(p.ask.line); n > 0 {
-				_, size := utf8.DecodeLastRune(p.ask.line)
-				p.ask.line = p.ask.line[:n-size]
-				p.emit([]byte("\b \b"))
-			}
-		case c == 0x03:
-			pass = append(pass, c) // interrupts the request, like anywhere else
-		case c == ctrlO:
-			if folds := p.viewFolds(); len(folds) > 0 && p.size != nil {
+		case 0x03:
+			// Interrupts the request, like anywhere else: nothing is chosen.
+			p.emit([]byte(back + choices("")))
+			pass = append(pass, c)
+		case ctrlO:
+			if folds := p.viewFolds(); len(folds) > 0 {
 				w, h := p.size()
 				p.view = newViewer(folds, w, h)
 				_, _ = p.out.Write(p.view.open())
 				return pass // the rest would be the viewer's
 			}
-		case c == 0x1b:
-			// An escape sequence, an arrow key say: skip it.
-			i++
-			if i < len(b) && b[i] == '[' {
-				for i++; i < len(b) && (b[i] < 0x40 || b[i] > 0x7e); i++ {
-				}
-			} else if i < len(b) && b[i] == 'O' {
-				i++
-			}
-		case c >= 0x20:
-			p.ask.line = append(p.ask.line, c)
-			p.emit([]byte{c})
 		}
 	}
 	return pass

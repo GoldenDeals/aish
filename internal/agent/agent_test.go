@@ -317,7 +317,8 @@ func TestAsk(t *testing.T) {
 		if err := a.Start(context.Background(), "remove x", tools.Exec{Dir: cwd}); err != nil {
 			t.Fatal(err)
 		}
-		if len(ui.asked) != 1 || !strings.Contains(ui.asked[0], "sure? — allow? [y/N]") {
+		// The choices are the terminal's to draw.
+		if len(ui.asked) != 1 || ui.asked[0] != bold+"sure? — allow?"+reset {
 			t.Errorf("%q: asked %q", tc.answer, ui.asked)
 		}
 		if len(sh.handed) != tc.handed {
