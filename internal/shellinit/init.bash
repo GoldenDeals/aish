@@ -72,9 +72,15 @@ __aish_route() {
 	esac
 
 	# A request to the assistant starts with a capital letter. Anything else,
-	# typos included, is bash's.
+	# typos included, is bash's — except a skill: typed as a command or as
+	# /name, it goes to the assistant as `/name args` (agent/skillmention.go).
+	local w=${trimmed%%[[:space:]]*}
 	if [[ ${trimmed:0:1} == [[:upper:]] ]] && ! __aish_is_command "$trimmed"; then
 		__aish_to_llm "$trimmed"
+	elif [[ $w == /* ]] && __aish_is_skill "${w#/}"; then
+		__aish_to_llm "$trimmed"
+	elif ! __aish_is_command "$trimmed" && __aish_is_skill "$w"; then
+		__aish_to_llm "/$trimmed"
 	else
 		__aish_mark
 	fi
@@ -91,6 +97,23 @@ __aish_is_command() {
 	'$'* | '`'* | '"'* | "'"* | '#'* | '{' | '[[' | '((' | '!') return 0 ;;
 	esac
 	type -t -- "$w" >/dev/null 2>&1
+}
+
+# __aish_is_skill: is there a skill named $1 here? The roots are those of
+# skills.Find (internal/skills), by directory name; builtins only, since it
+# runs on every Enter with an unknown first word.
+__aish_is_skill() {
+	local n=$1 d
+	[[ $n =~ ^[A-Za-z0-9_-]{1,64}$ ]] || return 1
+	for d in "$HOME/.claude" "${XDG_CONFIG_HOME:-$HOME/.config}/aish"; do
+		[[ -f $d/skills/$n/SKILL.md ]] && return 0
+	done
+	d=$PWD
+	while [[ -n $d ]]; do
+		[[ -f $d/.claude/skills/$n/SKILL.md ]] && return 0
+		d=${d%/*}
+	done
+	[[ -f /.claude/skills/$n/SKILL.md ]]
 }
 
 __aish_to_llm() {
