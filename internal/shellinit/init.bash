@@ -29,10 +29,11 @@ __aish_nonce=
 # The config's [route], key=value lines from the proxy. Without the file,
 # the rule from before it: a capital letter, nothing else.
 __aish_route_capital=true __aish_route_not_found=false __aish_route_suffix= __aish_route_min_words=2
+__aish_route_expand=true
 if [[ -n ${AISH_RUN-} && -f $AISH_RUN/route ]]; then
 	while IFS= read -r __aish_l; do
 		case ${__aish_l%%=*} in
-		capital | not_found | suffix | min_words) printf -v "__aish_route_${__aish_l%%=*}" %s "${__aish_l#*=}" ;;
+		capital | not_found | suffix | min_words | expand) printf -v "__aish_route_${__aish_l%%=*}" %s "${__aish_l#*=}" ;;
 		esac
 	done <"$AISH_RUN/route"
 	unset __aish_l
@@ -45,36 +46,38 @@ __aish_fresh=1   # 1 while readline is at the primary prompt (not PS2)
 __aish_buf=      # full text of the command being entered (multi-line aware)
 __aish_ps0=      # marker emitted by PS0, set only for user commands
 
+# The locals here and in __aish_to_llm are __aish_ names: the request
+# __aish_expand expands sees them, and $line means the user's.
 __aish_route() {
-	local line=$READLINE_LINE
+	local __aish_line=$READLINE_LINE
 	if [[ $__aish_fresh != 1 ]]; then
 		# Continuation line (PS2): part of a command already routed to bash.
-		__aish_buf+=$'\n'$line
+		__aish_buf+=$'\n'$__aish_line
 		__aish_mark
 		return
 	fi
 	__aish_fresh=0
-	__aish_buf=$line
+	__aish_buf=$__aish_line
 	__aish_ps0=
 	__aish_hint=
 
-	local trimmed=${line#"${line%%[![:space:]]*}"}
-	[[ -z $trimmed ]] && return
+	local __aish_trim=${__aish_line#"${__aish_line%%[![:space:]]*}"}
+	[[ -z $__aish_trim ]] && return
 
-	case $trimmed in
+	case $__aish_trim in
 	'?'*)
-		__aish_to_llm "${trimmed#\?}"
+		__aish_to_llm "${__aish_trim#\?}" raw
 		return
 		;;
 	'@'*)
 		# Starts with a file mention: "@main.go what is this?"
-		__aish_to_llm "$trimmed"
+		__aish_to_llm "$__aish_trim"
 		return
 		;;
 	'!'*)
 		# Forced bash. A bare `!` keeps bash history expansion (`!!`, `!$`).
-		case $trimmed in '!!'* | '!$'* | '!-'* | '!'[0-9]*) ;; *)
-			READLINE_LINE=${trimmed#!}
+		case $__aish_trim in '!!'* | '!$'* | '!-'* | '!'[0-9]*) ;; *)
+			READLINE_LINE=${__aish_trim#!}
 			READLINE_POINT=${#READLINE_LINE}
 			__aish_buf=$READLINE_LINE
 			;;
@@ -89,21 +92,21 @@ __aish_route() {
 	# A line that is no command is a request by [route]: it starts with a
 	# capital letter, ends with the suffix, or is words, not shell, that
 	# bash would only answer with "command not found".
-	local w=${trimmed%%[[:space:]]*} end=${trimmed%"${trimmed##*[![:space:]]}"}
-	if [[ $w == /* ]] && __aish_is_skill "${w#/}"; then
-		__aish_to_llm "$trimmed"
-	elif __aish_is_command "$trimmed"; then
+	local __aish_w=${__aish_trim%%[[:space:]]*} __aish_end=${__aish_trim%"${__aish_trim##*[![:space:]]}"}
+	if [[ $__aish_w == /* ]] && __aish_is_skill "${__aish_w#/}"; then
+		__aish_to_llm "$__aish_trim"
+	elif __aish_is_command "$__aish_trim"; then
 		__aish_mark
-	elif __aish_is_skill "$w"; then
-		__aish_to_llm "/$trimmed"
-	elif [[ $__aish_route_capital == true && ${trimmed:0:1} == [[:upper:]] ]] ||
-		[[ -n $__aish_route_suffix && $end == *"$__aish_route_suffix" ]]; then
-		__aish_to_llm "$trimmed"
-	elif [[ $__aish_route_not_found == true ]] && __aish_is_prose "$trimmed"; then
-		__aish_to_llm "$trimmed"
+	elif __aish_is_skill "$__aish_w"; then
+		__aish_to_llm "/$__aish_trim"
+	elif [[ $__aish_route_capital == true && ${__aish_trim:0:1} == [[:upper:]] ]] ||
+		[[ -n $__aish_route_suffix && $__aish_end == *"$__aish_route_suffix" ]]; then
+		__aish_to_llm "$__aish_trim"
+	elif [[ $__aish_route_not_found == true ]] && __aish_is_prose "$__aish_trim"; then
+		__aish_to_llm "$__aish_trim"
 	else
 		__aish_mark
-		if [[ -z ${__aish_hinted-} ]] && __aish_is_prose "$trimmed"; then
+		if [[ -z ${__aish_hinted-} ]] && __aish_is_prose "$__aish_trim"; then
 			__aish_hint=1 __aish_hinted=1 # for command_not_found_handle, once
 		fi
 	fi
@@ -172,13 +175,47 @@ if [[ $__aish_route_not_found != true ]]; then
 	}
 fi
 
+# __aish_expand prints $1 with $VAR, ${...} and $(...) expanded as in a
+# here-document: quotes are text there and work inside $(...). Backticks
+# stay text, the backslashes before them too, and "\$" is a dollar. It
+# fails when the text does not parse, and the caller keeps it as typed. Call
+# it in a subshell: ${V:=x} and $((n++)) assign.
+__aish_expand() {
+	local __aish_r=$1 __aish_t= __aish_s __aish_o=
+	# A line of the text that is the delimiter would end the here-document,
+	# and the lines after it would run.
+	[[ $__aish_r == *__aish_eof* ]] && return 1
+	while [[ $__aish_r == *'`'* ]]; do
+		__aish_s=${__aish_r%%'`'*}
+		# Doubled, a backslash before the backtick cannot take the one
+		# that escapes it.
+		__aish_t+=$__aish_s${__aish_s##*[!\\]}'\`'
+		__aish_r=${__aish_r#*'`'}
+	done
+	set -- # $1 is the text here, not the user's
+	# The dot: a backslash at the end would join the delimiter's line to it.
+	eval "IFS= read -r -d '' __aish_o <<__aish_eof || :
+$__aish_t$__aish_r.
+__aish_eof
+" 2>/dev/null
+	[[ $__aish_o == *.$'\n' ]] || return 1
+	printf '%s' "${__aish_o%.$'\n'}"
+}
+
+# __aish_to_llm rewrites the line into a request. The text is expanded
+# here, before READLINE_LINE, for the screen, the journal and the model to
+# get the same one; history gets what was typed (__aish_typed). A second
+# argument, from the ? prefix: the text goes as typed.
 __aish_to_llm() {
-	local q=$1
-	q=${q#"${q%%[![:space:]]*}"}
-	if [[ -z $q ]]; then
+	local __aish_t=$1 __aish_x
+	__aish_t=${__aish_t#"${__aish_t%%[![:space:]]*}"}
+	if [[ -z ${2-} && $__aish_route_expand == true && $__aish_t == *'$'* ]]; then
+		__aish_x=$(__aish_expand "$__aish_t" </dev/null) && __aish_t=$__aish_x
+	fi
+	if [[ -z $__aish_t ]]; then
 		READLINE_LINE=
 	else
-		READLINE_LINE="__aish_ask ${q@Q}"
+		READLINE_LINE="__aish_ask ${__aish_t@Q}"
 		__aish_redraw=1
 		__aish_typed=${__aish_buf#"${__aish_buf%%[![:space:]]*}"}
 	fi

@@ -14,4 +14,7 @@ type Route struct {
 	// Suffix takes a line that ends with it; "" takes none.
 	Suffix   string `toml:"suffix"`
 	MinWords int    `toml:"min_words"`
+	// Expand lets the shell expand $VAR, ${...} and $(...) in a request
+	// before it is sent; the ? prefix sends the line as typed.
+	Expand bool `toml:"expand"`
 }

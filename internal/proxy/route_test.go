@@ -19,7 +19,7 @@ func TestRouteFile(t *testing.T) {
 	}
 	defer os.RemoveAll(run)
 	b, err := os.ReadFile(filepath.Join(run, "route"))
-	if want := "capital=true\nnot_found=true\nsuffix=?\nmin_words=2\n"; err != nil || string(b) != want {
+	if want := "capital=true\nnot_found=true\nsuffix=?\nmin_words=2\nexpand=true\n"; err != nil || string(b) != want {
 		t.Errorf("route: %q, %v; want %q", b, err, want)
 	}
 }

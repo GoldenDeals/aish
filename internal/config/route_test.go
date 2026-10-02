@@ -12,7 +12,7 @@ func TestLoadRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The keys left out keep their defaults.
-	if want := (Route{Capital: true, MinWords: 2}); cfg.Route != want {
+	if want := (Route{Capital: true, MinWords: 2, Expand: true}); cfg.Route != want {
 		t.Errorf("route %+v, want %+v", cfg.Route, want)
 	}
 	for _, tc := range []struct{ toml, want string }{
