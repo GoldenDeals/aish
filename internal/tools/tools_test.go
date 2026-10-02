@@ -11,9 +11,9 @@ import (
 	"testing"
 )
 
-// external loads a tool that prints its argv one word per line, then
+// echoTool loads a tool that prints its argv one word per line, then
 // AISH_ARG_B and its standard input.
-func external(t *testing.T) Tool {
+func echoTool(t *testing.T) external {
 	t.Helper()
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
@@ -37,8 +37,8 @@ func external(t *testing.T) Tool {
 }
 
 func TestExternalArgs(t *testing.T) {
-	tool := external(t)
-	if u := tool.Usage(); u != "echo A [--b B] C [--v] [BODY|-]" {
+	tool := echoTool(t)
+	if u := Usage(tool.name, tool.args); u != "echo A [--b B] C [--v] [BODY|-]" {
 		t.Errorf("usage %q", u)
 	}
 	for _, tc := range []struct {
@@ -52,7 +52,7 @@ func TestExternalArgs(t *testing.T) {
 			"x\ny z\n--b\n3\n--v\nB=3\ntext\n"},
 		{map[string]any{"a": "--b", "b": -1.0, "c": "--", "v": "true"}, "--b\n--\n--b\n-1\n--v\nB=-1\n"},
 	} {
-		out, err := tool.Execute(context.Background(), tc.args, nil)
+		out, err := tool.Execute(context.Background(), Exec{}, tc.args, nil)
 		if err != nil {
 			t.Errorf("%v: %v", tc.args, err)
 		}
@@ -60,7 +60,7 @@ func TestExternalArgs(t *testing.T) {
 			t.Errorf("%v: got %q, want %q", tc.args, out, tc.want)
 		}
 	}
-	if _, err := tool.Execute(context.Background(), map[string]any{"a": "x", "b": 1.0}, nil); err == nil ||
+	if _, err := tool.Execute(context.Background(), Exec{}, map[string]any{"a": "x", "b": 1.0}, nil); err == nil ||
 		!strings.Contains(err.Error(), "missing argument c") {
 		t.Errorf("missing c: %v", err)
 	}
@@ -69,23 +69,23 @@ func TestExternalArgs(t *testing.T) {
 // The tool gets the command line `aish tool` reads, so parsing what it got
 // gives back the arguments typed.
 func TestExternalRoundTrip(t *testing.T) {
-	tool := external(t)
+	tool := echoTool(t)
 	for _, argv := range [][]string{
 		{"x", "y"},
 		{"--b", "7", "x", "y"},
 		{"x", "--v", "y", "--b=7", "body"},
 	} {
-		args, err := tool.ParseCLI(argv, strings.NewReader("stdin"))
+		args, err := ParseCLI(tool.name, tool.args, argv, strings.NewReader("stdin"))
 		if err != nil {
 			t.Fatalf("%q: %v", argv, err)
 		}
-		out, err := tool.Execute(context.Background(), args, nil)
+		out, err := tool.Execute(context.Background(), Exec{}, args, nil)
 		if err != nil {
 			t.Fatalf("%q: %v", argv, err)
 		}
 		got := strings.Split(out, "\n")
 		got = got[:len(got)-2] // B=…, then stdin with no newline
-		back, err := tool.ParseCLI(got, strings.NewReader(args["body"].(string)))
+		back, err := ParseCLI(tool.name, tool.args, got, strings.NewReader(args["body"].(string)))
 		if err != nil {
 			t.Fatalf("%q: parsing %q: %v", argv, got, err)
 		}
@@ -96,7 +96,7 @@ func TestExternalRoundTrip(t *testing.T) {
 }
 
 // search has every kind of argument the CLI form knows.
-var search = Tool{Name: "search", Args: []Arg{
+var search = external{name: "search", args: []Arg{
 	{Name: "query", Type: "string", Required: true},
 	{Name: "limit", Type: "integer", Flag: true},
 	{Name: "all", Type: "boolean", Flag: true},
@@ -105,25 +105,25 @@ var search = Tool{Name: "search", Args: []Arg{
 }}
 
 func TestParseCLI(t *testing.T) {
-	positional := Tool{Name: "read", Args: []Arg{
+	positional := external{name: "read", args: []Arg{
 		{Name: "path", Type: "string", Required: true},
 		{Name: "offset", Type: "integer"},
 		{Name: "ratio", Type: "number"},
 		{Name: "force", Type: "boolean"},
 	}}
-	typed := Tool{Name: "typed", Args: []Arg{
+	typed := external{name: "typed", args: []Arg{
 		{Name: "list", Type: "array"},
 		{Name: "v", Type: "any"},
 	}}
-	rest := Tool{Name: "skill", Args: []Arg{
+	rest := external{name: "skill", args: []Arg{
 		{Name: "first", Type: "string", Required: true},
 		{Name: "arguments", Type: "string", Rest: true},
 	}}
-	required := Tool{Name: "need", Args: []Arg{{Name: "token", Type: "string", Flag: true, Required: true}}}
+	required := external{name: "need", args: []Arg{{Name: "token", Type: "string", Flag: true, Required: true}}}
 
 	for _, tc := range []struct {
 		name  string
-		tool  Tool
+		tool  external
 		argv  []string
 		stdin string
 		want  map[string]any
@@ -162,7 +162,7 @@ func TestParseCLI(t *testing.T) {
 		{"rest empty", rest, []string{"a"}, "", map[string]any{"first": "a"}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := tc.tool.ParseCLI(tc.argv, strings.NewReader(tc.stdin))
+			got, err := ParseCLI(tc.tool.name, tc.tool.args, tc.argv, strings.NewReader(tc.stdin))
 			if tc.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.err) {
 					t.Fatalf("error %v, want %q", err, tc.err)
@@ -180,7 +180,7 @@ func TestParseCLI(t *testing.T) {
 }
 
 func TestParseCLIStdinError(t *testing.T) {
-	_, err := search.ParseCLI([]string{"q"}, errReader{})
+	_, err := ParseCLI(search.name, search.args, []string{"q"}, errReader{})
 	if err == nil || err.Error() != "broken" {
 		t.Errorf("error %v, want the reader's", err)
 	}
@@ -192,19 +192,19 @@ func (errReader) Read([]byte) (int, error) { return 0, errors.New("broken") }
 
 func TestUsage(t *testing.T) {
 	tool := search
-	tool.Args = append(tool.Args, Arg{Name: "rest", Rest: true})
+	tool.args = append(tool.args, Arg{Name: "rest", Rest: true})
 	want := "search QUERY [--limit LIMIT] [--all] [--filter JSON] [BODY|-] [REST...]"
-	if got := tool.Usage(); got != want {
+	if got := Usage(tool.name, tool.args); got != want {
 		t.Errorf("got  %s\nwant %s", got, want)
 	}
 }
 
 func TestSchema(t *testing.T) {
-	tool := Tool{Args: []Arg{
+	form := []Arg{
 		{Name: "path", Type: "string", Desc: "File path", Required: true},
 		{Name: "n", Type: "integer", Desc: "Count"},
 		{Name: "untyped"},
-	}}
+	}
 	want := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -214,27 +214,73 @@ func TestSchema(t *testing.T) {
 		},
 		"required": []string{"path"},
 	}
-	if got := tool.Schema(); !reflect.DeepEqual(got, want) {
+	if got := Schema(form); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %#v\nwant %#v", got, want)
+	}
+	if got := (external{args: form}).Schema(); !reflect.DeepEqual(got, want) {
+		t.Errorf("an external tool's: got %#v", got)
 	}
 
 	// The API takes "required": [] but not null.
-	b, _ := json.Marshal(Tool{}.Schema())
+	b, _ := json.Marshal(Schema(nil))
 	if !strings.Contains(string(b), `"required":[]`) {
 		t.Errorf("no arguments: %s", b)
 	}
+}
 
-	tool.RawSchema = json.RawMessage(`{"type":"object","properties":{"q":{"type":"string","enum":["a","b"]}}}`)
-	want = map[string]any{"type": "object", "properties": map[string]any{
-		"q": map[string]any{"type": "string", "enum": []any{"a", "b"}},
-	}}
-	if got := tool.Schema(); !reflect.DeepEqual(got, want) {
-		t.Errorf("raw schema: got %#v", got)
+// The kinds differ to the agent only by what they can do.
+func TestAbilities(t *testing.T) {
+	r := Load("")
+	bash, _ := r.Get(Bash)
+	read, _ := r.Get("read_file")
+	ext := Tool(external{name: "x"})
+	for _, tc := range []struct {
+		tool                    Tool
+		handsOff, wraps, stream bool
+	}{
+		{bash, true, false, false},
+		{read, false, true, false},
+		{ext, false, false, true},
+	} {
+		_, handsOff := tc.tool.(HandsOff)
+		if handsOff != tc.handsOff || Wraps(tc.tool) != tc.wraps || Streams(tc.tool) != tc.stream ||
+			IsHidden(tc.tool) || ServerOf(tc.tool) != "" {
+			t.Errorf("%s: hands off %v, wrapper %v, streams %v, hidden %v, server %q", tc.tool.Name(),
+				handsOff, Wraps(tc.tool), Streams(tc.tool), IsHidden(tc.tool), ServerOf(tc.tool))
+		}
 	}
 
-	tool.RawSchema = json.RawMessage(`not json`)
-	if got := tool.Schema(); got["required"] == nil {
-		t.Errorf("a broken raw schema should fall back to Args: %#v", got)
+	h := bash.(HandsOff)
+	if cmd, ok := h.Command(map[string]any{"command": "ls -l"}); cmd != "ls -l" || !ok {
+		t.Errorf("command %q, %v", cmd, ok)
+	}
+	if _, ok := h.Command(map[string]any{"command": " \n"}); ok {
+		t.Error("a blank command is no command")
+	}
+	if _, ok := h.Command(map[string]any{}); ok {
+		t.Error("no command argument is no command")
+	}
+}
+
+func TestTitle(t *testing.T) {
+	bash, _ := Load("").Get(Bash)
+	write, _ := Load("").Get("write_file")
+	read, _ := Load("").Get("read_file")
+	for _, tc := range []struct {
+		tool Tool
+		args map[string]any
+		want string
+	}{
+		{bash, map[string]any{"command": "ls\npwd"}, "ls\npwd"},
+		{read, map[string]any{"path": "f", "limit": 3.0}, "read_file f 3"},
+		{read, map[string]any{"path": strings.Repeat("x", 81)}, "read_file <81 bytes>"},
+		{read, map[string]any{"path": "a\nb"}, "read_file <3 bytes>"},
+		{write, map[string]any{"path": "f", "content": "x"}, "write_file f <1 bytes>"},
+		{external{name: "probe"}, nil, "probe"},
+	} {
+		if got := Title(tc.tool, tc.args); got != tc.want {
+			t.Errorf("%s %v: %q, want %q", tc.tool.Name(), tc.args, got, tc.want)
+		}
 	}
 }
 
@@ -295,11 +341,11 @@ func TestParseHeader(t *testing.T) {
 		"# aish:other ignored\n"+
 		"#aish:arg nospace string\n"+
 		"exit 0\n", 0o755)
-	tool := Tool{Name: "issues", Path: path}
+	tool := external{name: "issues", path: path}
 	if !parseHeader(path, &tool) {
 		t.Fatal("header not found")
 	}
-	want := Tool{Name: "issues", Path: path, Desc: "Search the issue tracker", Args: []Arg{
+	want := external{name: "issues", path: path, desc: "Search the issue tracker", args: []Arg{
 		{Name: "query", Type: "string", Desc: "Text to search for", Required: true},
 		{Name: "limit", Type: "integer", Desc: "Maximum number of results", Flag: true},
 		{Name: "body", Type: "string", Desc: "Text passed on standard input", Required: true, Stdin: true},
@@ -310,7 +356,7 @@ func TestParseHeader(t *testing.T) {
 	}
 
 	writeExec(t, path, "#!/bin/sh\n# aish:arg query string Text\n", 0o755)
-	if parseHeader(path, &Tool{}) {
+	if parseHeader(path, &external{}) {
 		t.Error("a file without # aish:desc is not a tool")
 	}
 
@@ -318,16 +364,16 @@ func TestParseHeader(t *testing.T) {
 	// scanned to the end.
 	head := "#!/bin/sh\n" + strings.Repeat("echo\n", 62)
 	writeExec(t, path, head+"# aish:desc Within the head\n# aish:arg late string Past the head\n", 0o755)
-	tool = Tool{}
-	if !parseHeader(path, &tool) || tool.Desc != "Within the head" || len(tool.Args) != 0 {
+	tool = external{}
+	if !parseHeader(path, &tool) || tool.desc != "Within the head" || len(tool.args) != 0 {
 		t.Errorf("line 64 is read, line 65 is not: %+v", tool)
 	}
 	writeExec(t, path, head+"echo\n# aish:desc Too late\n", 0o755)
-	if parseHeader(path, &Tool{}) {
+	if parseHeader(path, &external{}) {
 		t.Error("# aish:desc on line 65 should not count")
 	}
 
-	if parseHeader(filepath.Join(dir, "missing"), &Tool{}) {
+	if parseHeader(filepath.Join(dir, "missing"), &external{}) {
 		t.Error("a missing file has no header")
 	}
 }
@@ -350,20 +396,20 @@ func TestLoad(t *testing.T) {
 	r := Load(dir)
 	var names []string
 	for _, tool := range r.All() {
-		names = append(names, tool.Name)
+		names = append(names, tool.Name())
 	}
 	builtins := []string{Bash, "read_file", "write_file", "edit_file"}
 	want := append(builtins, "alpha", "link", "zeta")
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("got %v, want %v", names, want)
 	}
-	if rf, _ := r.Get("read_file"); rf.Run == nil || rf.Path != "" {
+	if rf, _ := r.Get("read_file"); reflect.TypeOf(rf) != reflect.TypeOf(builtin{}) {
 		t.Errorf("an external tool replaced a built-in: %+v", rf)
 	}
-	if z, ok := r.Get("zeta"); !ok || z.Path != filepath.Join(dir, "zeta") || z.Desc != "A tool" {
+	if z, ok := r.Get("zeta"); !ok || !reflect.DeepEqual(z, external{name: "zeta", path: filepath.Join(dir, "zeta"), desc: "A tool"}) {
 		t.Errorf("zeta: %+v", z)
 	}
-	if r.Add(Tool{Name: "alpha"}) {
+	if r.Add(external{name: "alpha"}) {
 		t.Error("Add took a duplicate")
 	}
 	if _, ok := r.Get("nope"); ok {
@@ -384,14 +430,14 @@ echo "env=$AISH_ARG_CITY|$AISH_ARG_DAYS|$AISH_ARG_BODY"
 printf 'stdin=%s\n' "$(cat)"
 echo "to stderr" >&2
 `, 0o755)
-	tool := Tool{Name: "probe", Path: path, Args: []Arg{
+	tool := external{name: "probe", path: path, args: []Arg{
 		{Name: "city", Type: "string", Required: true},
 		{Name: "days", Type: "integer", Flag: true},
 		{Name: "body", Type: "string", Stdin: true},
 	}}
 
 	var live strings.Builder
-	out, err := tool.Execute(context.Background(), map[string]any{"city": "New York", "days": 3, "body": "line 1\nline 2"}, &live)
+	out, err := tool.Execute(context.Background(), Exec{}, map[string]any{"city": "New York", "days": 3, "body": "line 1\nline 2"}, &live)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +450,7 @@ echo "to stderr" >&2
 	}
 
 	// From the model, numbers arrive as float64.
-	out, err = tool.Execute(context.Background(), map[string]any{"city": "Oslo", "days": 2.0}, nil)
+	out, err = tool.Execute(context.Background(), Exec{}, map[string]any{"city": "Oslo", "days": 2.0}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,8 +462,8 @@ echo "to stderr" >&2
 func TestRunExternalFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fail")
 	writeExec(t, path, "#!/bin/sh\necho partial\nexit 3\n", 0o755)
-	tool := Tool{Name: "fail", Path: path}
-	out, err := tool.Execute(context.Background(), nil, nil)
+	tool := external{name: "fail", path: path}
+	out, err := tool.Execute(context.Background(), Exec{}, nil, nil)
 	if out != "partial\n" {
 		t.Errorf("output %q should be kept", out)
 	}
@@ -427,7 +473,7 @@ func TestRunExternalFails(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := tool.Execute(ctx, nil, nil); err == nil {
+	if _, err := tool.Execute(ctx, Exec{}, nil, nil); err == nil {
 		t.Error("a cancelled context should not run the tool")
 	}
 }
@@ -442,21 +488,21 @@ func TestExecuteIn(t *testing.T) {
 	read, _ := Load("").Get("read_file")
 	ex := Exec{Dir: dir, Env: []string{"AISH_PROBE=yes", "PATH=" + os.Getenv("PATH")}}
 	args := map[string]any{"path": "f.txt"}
-	out, err := read.ExecuteIn(context.Background(), ex, args, nil)
+	out, err := read.Execute(context.Background(), ex, args, nil)
 	if err != nil || !strings.Contains(out, "hello") {
 		t.Errorf("relative path from Exec.Dir: %q, %v", out, err)
 	}
 	if args["path"] != "f.txt" {
 		t.Errorf("the caller's args were changed: %v", args)
 	}
-	if _, err := read.Execute(context.Background(), args, nil); err == nil {
+	if _, err := read.Execute(context.Background(), Exec{}, args, nil); err == nil {
 		t.Error("without Exec the path is relative to the process")
 	}
 
 	path := filepath.Join(dir, "probe")
 	writeExec(t, path, "#!/bin/sh\npwd\necho \"$AISH_PROBE\"\n", 0o755)
-	tool := Tool{Name: "probe", Path: path}
-	out, err = tool.ExecuteIn(context.Background(), ex, nil, nil)
+	tool := external{name: "probe", path: path}
+	out, err = tool.Execute(context.Background(), ex, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +520,7 @@ func TestExecuteIn(t *testing.T) {
 
 func TestExecuteBash(t *testing.T) {
 	bash, _ := Load("").Get(Bash)
-	if _, err := bash.Execute(context.Background(), map[string]any{"command": "true"}, nil); err == nil {
+	if _, err := bash.Execute(context.Background(), Exec{}, map[string]any{"command": "true"}, nil); err == nil {
 		t.Error("bash runs in the user's shell, not in the agent")
 	}
 }

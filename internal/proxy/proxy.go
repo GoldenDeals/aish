@@ -259,7 +259,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 }
 
 // makeRunDir creates the session's directory with the command wrappers in
-// bin: one per name in cmds (`exec self NAME`) and one per tool with a Run
+// bin: one per name in cmds (`exec self NAME`) and one per Wrappable tool
 // (`exec self tool NAME`). A name that is a command already gets no
 // wrapper: bin comes first in PATH and would hide it for the whole shell.
 // The subcommands go first, so a tool with such a name is left to `aish
@@ -287,17 +287,18 @@ func makeRunDir(reg *tools.Registry, cmds []string, self, nonce string, route co
 		}
 	}
 	for _, t := range reg.All() {
-		if t.Run == nil {
-			continue // bash is bash; external tools are already on PATH
-		}
-		if _, err := exec.LookPath(t.Name); err == nil {
-			continue // the wrapper would shadow it for the whole shell
-		}
-		if slices.Contains(cmds, t.Name) {
+		if !tools.Wraps(t) {
 			continue
 		}
-		script := fmt.Sprintf("#!/bin/sh\nexec %q tool %s \"$@\"\n", self, t.Name)
-		if err := os.WriteFile(filepath.Join(bin, t.Name), []byte(script), 0o755); err != nil {
+		name := t.Name()
+		if _, err := exec.LookPath(name); err == nil {
+			continue // the wrapper would shadow it for the whole shell
+		}
+		if slices.Contains(cmds, name) {
+			continue
+		}
+		script := fmt.Sprintf("#!/bin/sh\nexec %q tool %s \"$@\"\n", self, name)
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
 			return "", err
 		}
 	}

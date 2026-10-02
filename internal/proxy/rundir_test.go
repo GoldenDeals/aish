@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,19 @@ import (
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/tools"
 )
+
+// wrapped is a tool of a kind makeRunDir does not know, which asks for a
+// wrapper.
+type wrapped string
+
+func (w wrapped) Name() string         { return string(w) }
+func (wrapped) Desc() string           { return "" }
+func (wrapped) Args() []tools.Arg      { return nil }
+func (wrapped) Schema() map[string]any { return tools.Schema(nil) }
+func (wrapped) Wrapper() bool          { return true }
+func (wrapped) Execute(context.Context, tools.Exec, map[string]any, io.Writer) (string, error) {
+	return "", nil
+}
 
 func TestMakeRunDir(t *testing.T) {
 	dir := t.TempDir()
@@ -20,13 +34,10 @@ func TestMakeRunDir(t *testing.T) {
 	t.Setenv("PATH", path)
 	t.Setenv("XDG_RUNTIME_DIR", dir)
 
-	run := func(name string) tools.Tool {
-		return tools.Tool{Name: name, Run: func(context.Context, map[string]any) (string, error) { return "", nil }}
-	}
 	reg := tools.Load(filepath.Join(dir, "none"))
-	reg.Add(run("status"))  // a skill named like a subcommand
-	reg.Add(run("weather")) // an ordinary one
-	reg.Add(run("expand"))
+	reg.Add(wrapped("status"))  // a tool named like a subcommand
+	reg.Add(wrapped("weather")) // an ordinary one
+	reg.Add(wrapped("expand"))
 
 	got, err := makeRunDir(reg, []string{"status", "model", "expand"}, "/opt/aish", "n", config.Route{})
 	if err != nil {
@@ -38,6 +49,8 @@ func TestMakeRunDir(t *testing.T) {
 		"status":  `exec "/opt/aish" status "$@"`, // the subcommand, not the tool
 		"model":   `exec "/opt/aish" model "$@"`,
 		"weather": `exec "/opt/aish" tool weather "$@"`,
+		// A built-in: the user may type it, too.
+		"read_file": `exec "/opt/aish" tool read_file "$@"`,
 	} {
 		b, err := os.ReadFile(filepath.Join(bin, name))
 		if err != nil {
@@ -54,7 +67,7 @@ func TestMakeRunDir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(bin, "expand")); err == nil {
 		t.Error("expand: a wrapper over the command on PATH")
 	}
-	if _, err := os.Stat(filepath.Join(bin, tools.Bash)); err == nil {
+	if _, err := os.Stat(filepath.Join(bin, "bash")); err == nil {
 		t.Error("bash: a wrapper")
 	}
 	if b, err := os.ReadFile(filepath.Join(got, "nonce")); err != nil || string(b) != "n\n" {

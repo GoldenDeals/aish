@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"os"
 	"strings"
@@ -57,15 +58,38 @@ func convert(res ListResult, run func(context.Context, ToolInfo, map[string]any)
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", info.Name, err))
 			continue
 		}
-		out = append(out, tools.Tool{
-			Name: info.Name, Desc: info.Description, Args: args, Server: info.Server,
-			RawSchema: info.Schema, Hidden: info.Expose != "tools",
-			Run: func(ctx context.Context, args map[string]any) (string, error) {
-				return run(ctx, info, args)
-			},
-		})
+		out = append(out, remote{info: info, args: args, run: run})
 	}
 	return out, res.Errors
+}
+
+// remote is an MCP tool: a call goes to its server through the manager.
+type remote struct {
+	info ToolInfo
+	args []tools.Arg
+	run  func(context.Context, ToolInfo, map[string]any) (string, error)
+}
+
+func (t remote) Name() string      { return t.info.Name }
+func (t remote) Desc() string      { return t.info.Description }
+func (t remote) Args() []tools.Arg { return t.args }
+func (t remote) Server() string    { return t.info.Server }
+func (t remote) Hidden() bool      { return t.info.Expose != "tools" }
+
+// Schema is the server's own, with what Args lose (enums, nesting); a tool
+// without one takes no arguments.
+func (t remote) Schema() map[string]any {
+	var m map[string]any
+	if len(t.info.Schema) > 0 && json.Unmarshal(t.info.Schema, &m) == nil {
+		return m
+	}
+	return tools.Schema(t.args)
+}
+
+// Execute runs the tool in its server, whose directory and environment are
+// its own.
+func (t remote) Execute(ctx context.Context, _ tools.Exec, args map[string]any, _ io.Writer) (string, error) {
+	return t.run(ctx, t.info, args)
 }
 
 func call(ctx context.Context, c *rpc.Client, info ToolInfo, args map[string]any) (string, error) {

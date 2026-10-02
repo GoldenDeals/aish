@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -127,15 +128,24 @@ func (s Skill) Tool() tools.Tool {
 	if s.Hint != "" {
 		desc += ". Expected: " + s.Hint
 	}
-	return tools.Tool{
-		Name: s.Name,
-		Desc: s.Desc + "\n\n" + note,
-		Args: []tools.Arg{{Name: "arguments", Type: "string", Desc: desc, Rest: true}},
-		Run: func(_ context.Context, args map[string]any) (string, error) {
-			a, _ := args["arguments"].(string)
-			return s.Instructions(a)
-		},
-	}
+	return tool{s: s, args: []tools.Arg{{Name: "arguments", Type: "string", Desc: desc, Rest: true}}}
+}
+
+// tool is a skill as the agent and `aish tool` take it. It gets no wrapper
+// in $AISH_RUN/bin: a skill is typed as /name.
+type tool struct {
+	s    Skill
+	args []tools.Arg
+}
+
+func (t tool) Name() string           { return t.s.Name }
+func (t tool) Desc() string           { return t.s.Desc + "\n\n" + note }
+func (t tool) Args() []tools.Arg      { return t.args }
+func (t tool) Schema() map[string]any { return tools.Schema(t.args) }
+
+func (t tool) Execute(_ context.Context, _ tools.Exec, args map[string]any, _ io.Writer) (string, error) {
+	a, _ := args["arguments"].(string)
+	return t.s.Instructions(a)
 }
 
 // Instructions is the body of SKILL.md, read anew, with args put in, and

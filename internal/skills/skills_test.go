@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/inebotov/aish/internal/tools"
 )
 
 func write(t *testing.T, p, s string) {
@@ -117,10 +119,10 @@ func TestInstructions(t *testing.T) {
 		t.Fatalf("%+v %+v", got, problems)
 	}
 	tool := got[0].Tool()
-	if tool.Name != "pdf" || !strings.HasPrefix(tool.Desc, "Extract text from PDF files.") || tool.Run == nil || tool.Hidden {
+	if tool.Name() != "pdf" || !strings.HasPrefix(tool.Desc(), "Extract text from PDF files.") || tools.IsHidden(tool) || tools.Wraps(tool) {
 		t.Errorf("tool: %+v", tool)
 	}
-	out, err := tool.Execute(context.Background(), nil, nil)
+	out, err := tool.Execute(context.Background(), tools.Exec{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,14 +166,14 @@ func TestArguments(t *testing.T) {
 		t.Fatalf("frontmatter: %+v", m)
 	}
 	tool := m.Tool()
-	if u := tool.Usage(); u != "migrate [ARGUMENTS...]" {
+	if u := tools.Usage(tool.Name(), tool.Args()); u != "migrate [ARGUMENTS...]" {
 		t.Errorf("usage: %s", u)
 	}
-	args, err := tool.ParseCLI([]string{"Search Bar", "JS", "it's"}, nil)
+	args, err := tools.ParseCLI(tool.Name(), tool.Args(), []string{"Search Bar", "JS", "it's"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := tool.Execute(context.Background(), args, nil)
+	out, err := tool.Execute(context.Background(), tools.Exec{}, args, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

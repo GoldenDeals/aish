@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,11 +14,72 @@ import (
 	"unicode/utf8"
 )
 
+// builtin is a tool aish does itself, in its own process.
+type builtin struct {
+	name, desc string
+	args       []Arg
+	run        func(ctx context.Context, args map[string]any) (string, error)
+}
+
+func (t builtin) Name() string           { return t.name }
+func (t builtin) Desc() string           { return t.desc }
+func (t builtin) Args() []Arg            { return t.args }
+func (t builtin) Schema() map[string]any { return Schema(t.args) }
+func (t builtin) Wrapper() bool          { return true }
+
+// Execute takes a relative path from ex.Dir: the agent runs in the proxy,
+// whose directory is not the shell's.
+func (t builtin) Execute(ctx context.Context, ex Exec, args map[string]any, _ io.Writer) (string, error) {
+	if p, ok := args["path"].(string); ok && ex.Dir != "" && p != "" && !filepath.IsAbs(p) {
+		args = maps.Clone(args)
+		args["path"] = filepath.Join(ex.Dir, p)
+	}
+	return t.run(ctx, args)
+}
+
+// shell is bash: the agent does not run it, it hands the command to the
+// user's live shell.
+type shell struct {
+	desc string
+	args []Arg
+}
+
+func (shell) Name() string                  { return Bash }
+func (t shell) Desc() string                { return t.desc }
+func (t shell) Args() []Arg                 { return t.args }
+func (t shell) Schema() map[string]any      { return Schema(t.args) }
+func (shell) Title(a map[string]any) string { return str(a, "command") }
+
+func (shell) Command(args map[string]any) (string, bool) {
+	cmd := str(args, "command")
+	return cmd, strings.TrimSpace(cmd) != ""
+}
+
+func (shell) Execute(context.Context, Exec, map[string]any, io.Writer) (string, error) {
+	return "", fmt.Errorf("tool %s runs in the user's shell, not here", Bash)
+}
+
+// external is a user's tool: an executable whose header describes it.
+type external struct {
+	name, desc, path string
+	args             []Arg
+}
+
+func (t external) Name() string           { return t.name }
+func (t external) Desc() string           { return t.desc }
+func (t external) Args() []Arg            { return t.args }
+func (t external) Schema() map[string]any { return Schema(t.args) }
+func (t external) Streaming() bool        { return true }
+
+// Execute runs the tool in ex.Dir with ex.Env.
+func (t external) Execute(ctx context.Context, ex Exec, args map[string]any, live io.Writer) (string, error) {
+	return runExternal(ctx, t, ex, args, live)
+}
+
 func Builtins() []Tool {
 	return []Tool{
-		{
-			Name: Bash,
-			Desc: "Executes a given bash command in the user's interactive bash session and returns its output.\n\n" +
+		shell{
+			desc: "Executes a given bash command in the user's interactive bash session and returns its output.\n\n" +
 				"The session is the user's own shell: state persists between calls (cwd, exported variables, functions), " +
 				"the user's aliases and functions are available, the user sees the command, its output is folded on their screen.\n\n" +
 				"IMPORTANT: Avoid using this tool to run cat, head, tail, sed, awk or echo to read, edit or write files. " +
@@ -30,41 +92,41 @@ func Builtins() []Tool {
 				"- Do not run long-running servers or watchers in the foreground; start them in the background with output redirected to a file.\n" +
 				"- Do not sleep between commands that can run immediately — just run them.\n" +
 				"- When issuing multiple commands that depend on each other, chain them with '&&'; use ';' only when you don't care if earlier commands fail.",
-			Args: []Arg{{Name: "command", Type: "string", Desc: "Bash command line to execute", Required: true}},
+			args: []Arg{{Name: "command", Type: "string", Desc: "Bash command line to execute", Required: true}},
 		},
-		{
-			Name: "read_file",
-			Desc: "Reads a file from the local filesystem. You can access any file directly by using this tool. " +
+		builtin{
+			name: "read_file",
+			desc: "Reads a file from the local filesystem. You can access any file directly by using this tool. " +
 				"It is okay to read a file that does not exist; an error will be returned.\n\n" +
 				"Usage:\n" +
 				"- By default, it reads up to 2000 lines starting from the beginning of the file. " +
 				"For large files, read the part you need with offset and limit.\n" +
 				"- Results are returned with line numbers: spaces, the line number, a tab, then the line content.\n" +
 				"- This tool can only read text files, not directories. To list files in a directory, use bash.",
-			Args: []Arg{
+			args: []Arg{
 				{Name: "path", Type: "string", Desc: "File path, absolute or relative to the shell's cwd", Required: true},
 				{Name: "offset", Type: "integer", Desc: "First line to read, 1-based (default 1)"},
 				{Name: "limit", Type: "integer", Desc: "Maximum number of lines (default 2000)"},
 			},
-			Run: readFile,
+			run: readFile,
 		},
-		{
-			Name: "write_file",
-			Desc: "Writes a file to the local filesystem, overwriting if one exists. Parent directories are created.\n\n" +
+		builtin{
+			name: "write_file",
+			desc: "Writes a file to the local filesystem, overwriting if one exists. Parent directories are created.\n\n" +
 				"Usage:\n" +
 				"- If this is an existing file, you MUST use read_file first to read its contents.\n" +
 				"- Prefer edit_file for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.\n" +
 				"- NEVER create documentation files (*.md) or README files unless explicitly requested by the user.\n" +
 				"- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.",
-			Args: []Arg{
+			args: []Arg{
 				{Name: "path", Type: "string", Desc: "File path", Required: true},
 				{Name: "content", Type: "string", Desc: "Full new content of the file", Required: true, Stdin: true},
 			},
-			Run: writeFile,
+			run: writeFile,
 		},
-		{
-			Name: "edit_file",
-			Desc: "Performs exact string replacements in files.\n\n" +
+		builtin{
+			name: "edit_file",
+			desc: "Performs exact string replacements in files.\n\n" +
 				"Usage:\n" +
 				"- You must use read_file at least once before editing a file.\n" +
 				"- When editing text from read_file output, preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix " +
@@ -74,13 +136,13 @@ func Builtins() []Tool {
 				"- The edit will FAIL if old_string is not unique in the file. In that case, add the minimum extra context needed for uniqueness, " +
 				"or use replace_all to change every instance.\n" +
 				"- Use replace_all for replacing and renaming strings across the file.",
-			Args: []Arg{
+			args: []Arg{
 				{Name: "path", Type: "string", Desc: "File path", Required: true},
 				{Name: "old_string", Type: "string", Desc: "Exact text to replace, including whitespace", Required: true},
 				{Name: "new_string", Type: "string", Desc: "Replacement text", Required: true},
 				{Name: "replace_all", Type: "boolean", Desc: "Replace every occurrence"},
 			},
-			Run: editFile,
+			run: editFile,
 		},
 	}
 }
@@ -177,20 +239,20 @@ func editFile(_ context.Context, args map[string]any) (string, error) {
 // --name VALUE (a true boolean as --name); a Stdin argument on standard
 // input. Every argument given is also in AISH_ARG_<NAME>. Output is shown
 // live and returned.
-func runExternal(ctx context.Context, t Tool, ex Exec, args map[string]any, live io.Writer) (string, error) {
+func runExternal(ctx context.Context, t external, ex Exec, args map[string]any, live io.Writer) (string, error) {
 	var pos, flags []string
-	cmd := exec.CommandContext(ctx, t.Path)
+	cmd := exec.CommandContext(ctx, t.path)
 	cmd.Dir = ex.Dir
 	cmd.Env = ex.Env
 	if cmd.Env == nil {
 		cmd.Env = os.Environ()
 	}
-	for _, a := range t.Args {
+	for _, a := range t.args {
 		v := args[a.Name]
 		if v == nil {
 			// A missing positional argument would shift the rest.
 			if a.Required {
-				return "", fmt.Errorf("%s: missing argument %s", t.Name, a.Name)
+				return "", fmt.Errorf("%s: missing argument %s", t.name, a.Name)
 			}
 			continue
 		}
@@ -218,7 +280,7 @@ func runExternal(ctx context.Context, t Tool, ex Exec, args map[string]any, live
 	cmd.Stdout, cmd.Stderr = w, w
 	err := cmd.Run()
 	if err != nil {
-		return buf.String(), fmt.Errorf("%s: %w", t.Name, err)
+		return buf.String(), fmt.Errorf("%s: %w", t.name, err)
 	}
 	return buf.String(), nil
 }

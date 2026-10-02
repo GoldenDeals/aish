@@ -9,6 +9,7 @@ import (
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
+	"github.com/inebotov/aish/internal/tools"
 )
 
 // policyCmd loads the policies, so that a validation error shows up right
@@ -59,12 +60,12 @@ func policyCmd(cfg config.Config, args []string) int {
 	if !ok {
 		return fail(fmt.Errorf("no tool %q", args[0]))
 	}
-	targs, err := t.ParseCLI(args[1:], os.Stdin)
+	targs, err := tools.ParseCLI(t.Name(), t.Args(), args[1:], os.Stdin)
 	if err != nil {
 		return fail(err)
 	}
-	in := policy.NewInput(t.Name, targs, cwd)
-	in.Server = t.Server
+	in := policy.NewInput(t.Name(), targs, cwd)
+	in.Server = tools.ServerOf(t)
 	in.Model = cfg.Model
 	if client, err := rpc.FromEnv(); err == nil {
 		in.Model = shellConfig(cfg, client).Model

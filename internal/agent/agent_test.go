@@ -366,13 +366,13 @@ func TestToolOutputs(t *testing.T) {
 	}}
 	a, j, _, ui, cwd := newAgent(t, prov)
 	probe := filepath.Join(cwd, "probe")
-	if err := os.WriteFile(probe, []byte("#!/bin/sh\necho live-from-$PWD\n"), 0o755); err != nil {
+	if err := os.WriteFile(probe, []byte("#!/bin/sh\n# aish:desc Probe\necho live-from-$PWD\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(cwd, "long.txt"), []byte("1\n2\n3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	a.Tools.Add(tools.Tool{Name: "probe", Path: probe})
+	a.Tools = tools.Load(cwd)
 	if err := a.Start(context.Background(), "probe", tools.Exec{Dir: cwd}); err != nil {
 		t.Fatal(err)
 	}

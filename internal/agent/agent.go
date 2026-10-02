@@ -169,7 +169,7 @@ func (a *Agent) Resume(ctx context.Context, id string, rc int, ex tools.Exec) er
 func (a *Agent) closePending(ctx context.Context) error {
 	for _, c := range pending(a.entries) {
 		msg := "interrupted by the user"
-		if c.Name == tools.Bash {
+		if t, ok := a.Tools.Get(c.Name); ok && handsOff(t) {
 			if out, err := a.Shell.Wait(ctx, c.ID, 0); err == nil && out.Output != "" {
 				msg = capture.Truncate(out.Output, a.Cfg.MaxOutputBytes) + "\n[" + msg + "]"
 			}
@@ -279,7 +279,7 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 	extra := a.Cfg.SystemPrompt
 	hidden := false
 	for _, t := range a.Tools.All() {
-		hidden = hidden || t.Hidden
+		hidden = hidden || tools.IsHidden(t)
 	}
 	if hidden {
 		extra = strings.TrimSpace(mcpNote + "\n\n" + extra)
@@ -302,16 +302,17 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 		Messages: Messages(entries, a.Cfg.MaxOutputBytes, a.mask),
 	}
 	for _, t := range a.Tools.All() {
-		if t.Hidden {
+		if tools.IsHidden(t) {
 			continue
 		}
-		req.Tools = append(req.Tools, llm.ToolDef{Name: t.Name, Description: t.Desc, Schema: t.Schema()})
+		req.Tools = append(req.Tools, llm.ToolDef{Name: t.Name(), Description: t.Desc(), Schema: t.Schema()})
 	}
 	return req
 }
 
-// call executes one tool call. For bash it leaves the command for the shell
-// and reports handedOff; the result arrives with Resume.
+// call executes one tool call. For a tool that hands its command off
+// (bash) it leaves the command for the shell and reports handedOff; the
+// result arrives with Resume.
 func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, err error) {
 	t, ok := a.Tools.Get(c.Name)
 	if !ok {
@@ -323,17 +324,23 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	}
 	title := a.show(t, args)
 
-	in := policy.NewInput(t.Name, args, a.exec.Dir)
-	in.Server = t.Server
+	in := policy.NewInput(t.Name(), args, a.exec.Dir)
+	in.Server = tools.ServerOf(t)
 	in.Model = a.Cfg.Model
 	d, err := a.Policy.Check(ctx, in)
 	if err != nil {
 		return false, err
 	}
+	h, toShell := t.(tools.HandsOff)
+	var cmd string
+	var hasCmd bool
+	if toShell {
+		cmd, hasCmd = h.Command(args)
+	}
 	asked := d.Action == policy.Ask
 	if asked {
-		if t.Name == tools.Bash {
-			a.showBash(args, true)
+		if toShell {
+			a.showBash(cmd, true)
 		}
 		d = a.ask(ctx, d)
 		if ctx.Err() != nil {
@@ -345,33 +352,33 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		if d.Reason != "" {
 			msg += ": " + d.Reason
 		}
-		if t.Name == tools.Bash && !asked {
-			a.showBash(args, true)
+		if toShell && !asked {
+			a.showBash(cmd, true)
 		}
 		fmt.Fprintf(a.UI, "%s  ✗ %s%s\n", red, msg, reset)
 		return false, a.append(toolResult(c, msg, true))
 	}
 
-	if t.Name == tools.Bash {
-		cmd, _ := args["command"].(string)
-		if strings.TrimSpace(cmd) == "" {
+	if toShell {
+		if !hasCmd {
 			return false, a.append(toolResult(c, "empty command", true))
 		}
 		if !asked {
-			a.showBash(args, false)
+			a.showBash(cmd, false)
 		}
 		return true, a.Shell.HandOff(c.ID, cmd)
 	}
 
-	// External tools print live, folded like a command's output; built-ins
-	// print nothing until they are done.
+	// Streaming tools (external ones) print live, folded like a command's
+	// output; the others print nothing until they are done.
+	streams := tools.Streams(t)
 	var out io.Writer
 	var live Live
-	if t.Path != "" {
+	if streams {
 		live = a.UI.Live(title)
 		out = live
 	}
-	res, err := t.ExecuteIn(ctx, a.exec, args, out)
+	res, err := t.Execute(ctx, a.exec, args, out)
 	if live != nil {
 		exit := -1
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -386,7 +393,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		fmt.Fprintf(a.UI, "%s  ✗ %v%s\n", red, err, reset)
 		return false, a.append(toolResult(c, strings.TrimSpace(res+"\n"+err.Error()), true))
 	}
-	if t.Run != nil {
+	if !streams {
 		// A one-line result is shown as is, a longer one is kept for Ctrl+O.
 		line := summary(res)
 		if strings.Contains(strings.TrimSpace(res), "\n") {
@@ -398,34 +405,28 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	return false, a.append(toolResult(c, capture.Truncate(res, a.Cfg.MaxOutputBytes*4), false))
 }
 
-// show prints the call and returns it as a plain title. A bash command is
-// printed later, by showBash, once the policy has decided.
+// show prints the call and returns it as a plain title. A command for the
+// shell is printed later, by showBash, once the policy has decided.
 func (a *Agent) show(t tools.Tool, args map[string]any) string {
-	if t.Name == tools.Bash {
-		cmd, _ := args["command"].(string)
-		return "❯ " + cmd
+	title := tools.Title(t, args)
+	if handsOff(t) {
+		return "❯ " + title
 	}
-	var parts []string
-	for _, arg := range t.Args {
-		v, ok := args[arg.Name]
-		if !ok {
-			continue
-		}
-		s := fmt.Sprint(v)
-		if arg.Stdin || len(s) > 80 || strings.Contains(s, "\n") {
-			s = fmt.Sprintf("<%d bytes>", len(s))
-		}
-		parts = append(parts, s)
-	}
-	fmt.Fprintf(a.UI, "%s⚙%s %s %s\n", cyan, reset, t.Name, strings.Join(parts, " "))
-	return strings.TrimSpace("⚙ " + t.Name + " " + strings.Join(parts, " "))
+	fmt.Fprintf(a.UI, "%s⚙%s %s\n", cyan, reset, title)
+	return "⚙ " + title
 }
 
-// showBash prints a bash command. Unless nl, the line is left open when the
+// handsOff tells whether a call of t is a command for the shell.
+func handsOff(t tools.Tool) bool {
+	_, ok := t.(tools.HandsOff)
+	return ok
+}
+
+// showBash prints a command for the shell: exactly what will run, which the
+// user may be asked about. Unless nl, the line is left open when the
 // output will be folded from its first line, and the UI is told where the
 // command ends so the status can go to its right.
-func (a *Agent) showBash(args map[string]any, nl bool) {
-	cmd, _ := args["command"].(string)
+func (a *Agent) showBash(cmd string, nl bool) {
 	lines := strings.Split(cmd, "\n")
 	fmt.Fprintf(a.UI, "%s❯%s %s%s%s", cyan, reset, bold, strings.Join(lines, "\n  "), reset)
 	cols, _ := a.UI.Size()

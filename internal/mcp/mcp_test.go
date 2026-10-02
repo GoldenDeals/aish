@@ -214,10 +214,13 @@ func TestLocal(t *testing.T) {
 		t.Fatalf("%d tools, problems %q", len(ts), problems)
 	}
 	search := ts[0]
-	if search.Name != "stub_search" || search.Server != "stub" || !search.Hidden || len(search.Args) != 6 {
+	if search.Name() != "stub_search" || tools.ServerOf(search) != "stub" || !tools.IsHidden(search) || len(search.Args()) != 6 {
 		t.Errorf("tool %+v", search)
 	}
-	out, err := search.Execute(ctx, map[string]any{"query": "x"}, nil)
+	if tools.Wraps(search) || tools.Streams(search) {
+		t.Error("the manager writes the wrappers of MCP tools; their output comes at the end")
+	}
+	out, err := search.Execute(ctx, tools.Exec{}, map[string]any{"query": "x"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,8 +229,31 @@ func TestLocal(t *testing.T) {
 	} else {
 		os.Remove(lines[1])
 	}
-	if out, err := ts[1].Execute(ctx, nil, nil); out != "no such thing" || err == nil {
+	if out, err := ts[1].Execute(ctx, tools.Exec{}, nil, nil); out != "no such thing" || err == nil {
 		t.Errorf("isError: %q, %v", out, err)
+	}
+}
+
+// The model gets a tool's schema as its server gave it, with what the
+// CLI form drops.
+func TestRemoteSchema(t *testing.T) {
+	raw := `{"type":"object","properties":{"q":{"type":"string","enum":["a","b"]}}}`
+	ts, problems := convert(ListResult{Tools: []ToolInfo{
+		{Name: "s_enum", Schema: json.RawMessage(raw)},
+		{Name: "s_none"},
+	}}, nil)
+	if len(ts) != 2 || len(problems) != 0 {
+		t.Fatalf("%d tools, problems %q", len(ts), problems)
+	}
+	want := map[string]any{"type": "object", "properties": map[string]any{
+		"q": map[string]any{"type": "string", "enum": []any{"a", "b"}},
+	}}
+	if got := ts[0].Schema(); !reflect.DeepEqual(got, want) {
+		t.Errorf("raw schema: got %#v", got)
+	}
+	// The API takes an object schema, "required": [] included.
+	if b, _ := json.Marshal(ts[1].Schema()); string(b) != `{"properties":{},"required":[],"type":"object"}` {
+		t.Errorf("no schema: %s", b)
 	}
 }
 
@@ -312,11 +338,11 @@ func TestArgs(t *testing.T) {
 
 func TestCLI(t *testing.T) {
 	args, _ := Args(json.RawMessage(stubSchema))
-	tool := tools.Tool{Name: "stub_search", Args: args}
-	if u, want := tool.Usage(), "stub_search QUERY [--limit LIMIT] [--exact] [--filter JSON] [--tags JSON] AUTHOR"; u != want {
+	parse := func(argv []string) (map[string]any, error) { return tools.ParseCLI("stub_search", args, argv, nil) }
+	if u, want := tools.Usage("stub_search", args), "stub_search QUERY [--limit LIMIT] [--exact] [--filter JSON] [--tags JSON] AUTHOR"; u != want {
 		t.Errorf("usage %q\nwant  %q", u, want)
 	}
-	got, err := tool.ParseCLI([]string{"--limit", "5", "cats", "--exact", `--filter={"a":1}`, "--tags", `["x"]`, "me"}, nil)
+	got, err := parse([]string{"--limit", "5", "cats", "--exact", `--filter={"a":1}`, "--tags", `["x"]`, "me"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,11 +350,11 @@ func TestCLI(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("parsed %v\nwant   %v", got, want)
 	}
-	if got, err := tool.ParseCLI([]string{"--", "--limit", "me"}, nil); err != nil || got["query"] != "--limit" {
+	if got, err := parse([]string{"--", "--limit", "me"}); err != nil || got["query"] != "--limit" {
 		t.Errorf("after --: %v %v", got, err)
 	}
 	for _, bad := range [][]string{{"cats"}, {"cats", "me", "extra"}, {"cats", "me", "--limit"}, {"cats", "me", "--tags", "[x"}} {
-		if _, err := tool.ParseCLI(bad, nil); err == nil {
+		if _, err := parse(bad); err == nil {
 			t.Errorf("%q: no error", bad)
 		}
 	}

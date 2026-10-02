@@ -1,6 +1,10 @@
 // Package tools defines what the agent can do. Every tool is also a command
 // the user can type: built-ins via `aish tool <name>` wrappers on PATH,
-// user tools are plain executables in the tools directory.
+// user tools are plain executables in the tools directory. A tool is a
+// Tool; what sets a kind of tools apart for the agent (a command handed to
+// the shell, output shown as it comes, a schema kept from the model) it
+// tells by an optional interface, so that a new kind needs no case in the
+// agent, the proxy or the commands.
 package tools
 
 import (
@@ -9,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,7 +20,8 @@ import (
 	"strings"
 )
 
-// Bash is special: it runs in the user's live shell, driven by the agent.
+// Bash is the tool whose commands run in the user's live shell, driven by
+// the agent.
 const Bash = "bash"
 
 type Arg struct {
@@ -38,35 +42,98 @@ type Arg struct {
 	Rest bool
 }
 
-type Tool struct {
-	Name string
-	Desc string
-	Args []Arg
-	// Run executes a built-in tool. Nil for bash and external tools.
-	Run func(ctx context.Context, args map[string]any) (string, error)
-	// Path of an external tool's executable.
-	Path string
-
-	// Server is the MCP server that provides the tool.
-	Server string
-	// RawSchema is the input schema as the tool's provider gave it.
-	RawSchema json.RawMessage
-	// Hidden tools are not offered to the model as tools; it runs them as
-	// commands, which keeps their schemas out of every request.
-	Hidden bool
+// Tool is something the agent can call. The user can call it, too, as
+// `aish tool NAME`, unless it hands its calls off to the shell.
+type Tool interface {
+	Name() string
+	Desc() string
+	// Args are the input as a command takes it: see ParseCLI.
+	Args() []Arg
+	// Schema is the JSON schema of the input, as the model is given it.
+	Schema() map[string]any
+	// Execute runs the tool in ex and returns its textual result. Live,
+	// when not nil, takes the output as it comes, if the tool is Streaming.
+	Execute(ctx context.Context, ex Exec, args map[string]any, live io.Writer) (string, error)
 }
 
-// Schema is the JSON schema of the tool's input.
-func (t Tool) Schema() map[string]any {
-	if t.RawSchema != nil {
-		var m map[string]any
-		if json.Unmarshal(t.RawSchema, &m) == nil {
-			return m
-		}
+// HandsOff tools are not executed by the agent: a call is a command for the
+// user's live shell, which runs it as if typed (bash).
+type HandsOff interface {
+	// Command is the command line for args; false when there is none.
+	Command(args map[string]any) (string, bool)
+}
+
+// Hidden tools are not offered to the model as tools; it runs them as
+// commands, which keeps their schemas out of every request.
+type Hidden interface{ Hidden() bool }
+
+// Wrappable tools get a wrapper in $AISH_RUN/bin running `aish tool NAME`,
+// so that the user can type them. A tool without the ability gets none:
+// bash is bash, an external tool is on PATH already, the MCP manager
+// writes its own.
+type Wrappable interface{ Wrapper() bool }
+
+// Origin is where a tool comes from, for the policy: its MCP server.
+type Origin interface{ Server() string }
+
+// Streaming tools write their output to Execute's live writer as they
+// run, like a command; the agent shows it folded instead of a summary.
+type Streaming interface{ Streaming() bool }
+
+// Titled tools show their calls their own way: see Title.
+type Titled interface {
+	Title(args map[string]any) string
+}
+
+func IsHidden(t Tool) bool {
+	h, ok := t.(Hidden)
+	return ok && h.Hidden()
+}
+
+func Wraps(t Tool) bool {
+	w, ok := t.(Wrappable)
+	return ok && w.Wrapper()
+}
+
+func Streams(t Tool) bool {
+	s, ok := t.(Streaming)
+	return ok && s.Streaming()
+}
+
+// ServerOf is the MCP server of t, "" for a tool of aish or the user.
+func ServerOf(t Tool) string {
+	if o, ok := t.(Origin); ok {
+		return o.Server()
 	}
+	return ""
+}
+
+// Title is a call as shown to the user: the tool's own title, or its name
+// and the arguments given, a long one as its size.
+func Title(t Tool, args map[string]any) string {
+	if tt, ok := t.(Titled); ok {
+		return tt.Title(args)
+	}
+	parts := []string{t.Name()}
+	for _, a := range t.Args() {
+		v, ok := args[a.Name]
+		if !ok {
+			continue
+		}
+		s := fmt.Sprint(v)
+		if a.Stdin || len(s) > 80 || strings.Contains(s, "\n") {
+			s = fmt.Sprintf("<%d bytes>", len(s))
+		}
+		parts = append(parts, s)
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+// Schema is the JSON schema of an input of form.
+func Schema(form []Arg) map[string]any {
 	props := map[string]any{}
 	required := []string{}
-	for _, a := range t.Args {
+	for _, a := range form {
 		typ := a.Type
 		if typ == "" {
 			typ = "string"
@@ -87,11 +154,14 @@ type Registry struct {
 
 // Add registers t unless a tool with its name exists.
 func (r *Registry) Add(t Tool) bool {
-	if _, dup := r.byID[t.Name]; dup {
+	if _, dup := r.byID[t.Name()]; dup {
 		return false
 	}
+	if r.byID == nil {
+		r.byID = map[string]Tool{}
+	}
 	r.list = append(r.list, t)
-	r.byID[t.Name] = t
+	r.byID[t.Name()] = t
 	return true
 }
 
@@ -140,36 +210,15 @@ func (e Exec) Getenv(name string) string {
 	return ""
 }
 
-// Execute runs a non-bash tool in this process's directory and environment
-// and returns its textual result.
-func (t Tool) Execute(ctx context.Context, args map[string]any, out io.Writer) (string, error) {
-	return t.ExecuteIn(ctx, Exec{}, args, out)
-}
-
-// ExecuteIn is Execute in ex: a built-in's relative path is taken from
-// ex.Dir, an external tool runs there with ex.Env.
-func (t Tool) ExecuteIn(ctx context.Context, ex Exec, args map[string]any, out io.Writer) (string, error) {
-	if t.Run != nil {
-		if p, ok := args["path"].(string); ok && ex.Dir != "" && t.Server == "" && p != "" && !filepath.IsAbs(p) {
-			args = maps.Clone(args)
-			args["path"] = filepath.Join(ex.Dir, p)
-		}
-		return t.Run(ctx, args)
-	}
-	if t.Path != "" {
-		return runExternal(ctx, t, ex, args, out)
-	}
-	return "", fmt.Errorf("tool %s cannot be executed directly", t.Name)
-}
-
 // ParseCLI maps command-line arguments to tool arguments: positional ones in
 // declaration order, a Rest one taking what is left, flags as --name VALUE or
-// --name=VALUE; a Stdin argument that is not given is read from stdin.
-func (t Tool) ParseCLI(argv []string, stdin io.Reader) (map[string]any, error) {
+// --name=VALUE; a Stdin argument that is not given is read from stdin. Name
+// and form are the tool's, as for Usage.
+func ParseCLI(name string, form []Arg, argv []string, stdin io.Reader) (map[string]any, error) {
 	args := map[string]any{}
-	usage := fmt.Errorf("usage: %s", t.Usage())
+	usage := fmt.Errorf("usage: %s", Usage(name, form))
 	flags := map[string]Arg{}
-	for _, a := range t.Args {
+	for _, a := range form {
 		if a.Flag {
 			flags[a.Name] = a
 		}
@@ -203,7 +252,7 @@ func (t Tool) ParseCLI(argv []string, stdin io.Reader) (map[string]any, error) {
 		args[a.Name] = v
 	}
 	n := 0
-	for _, a := range t.Args {
+	for _, a := range form {
 		if a.Flag {
 			if _, ok := args[a.Name]; !ok && a.Required {
 				return nil, usage
@@ -240,10 +289,11 @@ func (t Tool) ParseCLI(argv []string, stdin io.Reader) (map[string]any, error) {
 	return args, nil
 }
 
-func (t Tool) Usage() string {
+// Usage is the command line of a tool called name whose input is form.
+func Usage(name string, form []Arg) string {
 	var b strings.Builder
-	b.WriteString(t.Name)
-	for _, a := range t.Args {
+	b.WriteString(name)
+	for _, a := range form {
 		n := strings.ToUpper(a.Name)
 		switch {
 		case a.Flag && a.Type == "boolean":
@@ -360,29 +410,29 @@ func boolean(args map[string]any, k string) bool {
 //	# aish:arg query string Text to search for
 //	# aish:arg limit? integer Maximum number of results
 //	# aish:arg body stdin Text passed on standard input
-func loadExternal(dir string) []Tool {
+func loadExternal(dir string) []external {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	var out []Tool
+	var out []external
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
 		st, err := os.Stat(path)
 		if err != nil || st.IsDir() || st.Mode()&0o111 == 0 {
 			continue
 		}
-		t := Tool{Name: e.Name(), Path: path}
+		t := external{name: e.Name(), path: path}
 		if !parseHeader(path, &t) {
 			continue
 		}
 		out = append(out, t)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out
 }
 
-func parseHeader(path string, t *Tool) bool {
+func parseHeader(path string, t *external) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
@@ -399,7 +449,7 @@ func parseHeader(path string, t *Tool) bool {
 		key, val, _ := strings.Cut(rest, " ")
 		switch key {
 		case "desc":
-			t.Desc = strings.TrimSpace(val)
+			t.desc = strings.TrimSpace(val)
 			found = true
 		case "arg":
 			f := strings.SplitN(strings.TrimSpace(val), " ", 3)
@@ -419,7 +469,7 @@ func parseHeader(path string, t *Tool) bool {
 			// As for MCP commands, only required arguments are positional:
 			// an optional one left out would shift those after it.
 			a.Flag = !a.Required && !a.Stdin
-			t.Args = append(t.Args, a)
+			t.args = append(t.args, a)
 		}
 	}
 	return found

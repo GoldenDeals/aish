@@ -180,7 +180,7 @@ func loadTools(cfg config.Config, warn func(string)) *tools.Registry {
 	remote, problems := mcp.Remote(client, true)
 	for _, t := range remote {
 		if !reg.Add(t) {
-			problems = append(problems, t.Name+": skipped, another tool has this name")
+			problems = append(problems, t.Name()+": skipped, another tool has this name")
 		}
 	}
 	if warn != nil {
@@ -203,10 +203,10 @@ func toolCmd(cfg config.Config, args []string) int {
 	if len(args) == 0 {
 		w := 12
 		for _, t := range reg.All() {
-			w = max(w, len(t.Name))
+			w = max(w, len(t.Name()))
 		}
 		for _, t := range reg.All() {
-			fmt.Printf("%-*s %s\n", w, t.Name, firstSentence(t.Desc))
+			fmt.Printf("%-*s %s\n", w, t.Name(), firstSentence(t.Desc()))
 		}
 		for _, p := range problems {
 			fmt.Fprintf(os.Stderr, "\x1b[2mmcp: %s\x1b[0m\n", p)
@@ -214,13 +214,14 @@ func toolCmd(cfg config.Config, args []string) int {
 		return 0
 	}
 	t, ok := reg.Get(args[0])
-	if !ok || t.Name == tools.Bash {
+	// A command for the shell is typed as one, not through aish.
+	if _, handsOff := t.(tools.HandsOff); !ok || handsOff {
 		return fail(fmt.Errorf("no tool %q", args[0]))
 	}
 	if len(args) > 1 && (args[1] == "-h" || args[1] == "--help") {
-		fmt.Printf("usage: %s\n\n%s\n", t.Usage(), t.Desc)
+		fmt.Printf("usage: %s\n\n%s\n", tools.Usage(t.Name(), t.Args()), t.Desc())
 		var opts []string
-		for _, a := range t.Args {
+		for _, a := range t.Args() {
 			if a.Desc != "" {
 				opts = append(opts, fmt.Sprintf("  %-16s %s", a.Name, a.Desc))
 			}
@@ -230,13 +231,13 @@ func toolCmd(cfg config.Config, args []string) int {
 		}
 		return 0
 	}
-	targs, err := t.ParseCLI(args[1:], os.Stdin)
+	targs, err := tools.ParseCLI(t.Name(), t.Args(), args[1:], os.Stdin)
 	if err != nil {
 		return fail(err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	out, err := t.Execute(ctx, targs, nil)
+	out, err := t.Execute(ctx, tools.Exec{}, targs, nil)
 	fmt.Print(out)
 	if out != "" && !strings.HasSuffix(out, "\n") {
 		fmt.Println()
