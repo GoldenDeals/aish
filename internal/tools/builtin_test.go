@@ -131,6 +131,11 @@ func TestReadFile(t *testing.T) {
 	if got, _ := readFile(ctx, map[string]any{"path": long}); got != "     1\t"+strings.Repeat("x", 2000)+"[...]\n" {
 		t.Errorf("long line: %d bytes, %q…", len(got), got[len(got)-10:])
 	}
+	// "я" is two bytes, so byte 2000 falls inside one.
+	writeExec(t, long, "x"+strings.Repeat("я", 1500)+"\n", 0o644)
+	if got, _ := readFile(ctx, map[string]any{"path": long}); got != "     1\tx"+strings.Repeat("я", 999)+"[...]\n" {
+		t.Errorf("long line cut inside a rune: %d bytes, %q…", len(got), got[len(got)-10:])
+	}
 
 	empty := filepath.Join(dir, "empty")
 	writeExec(t, empty, "", 0o644)

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 func Builtins() []Tool {
@@ -109,7 +110,13 @@ func readFile(_ context.Context, args map[string]any) (string, error) {
 		}
 		line := sc.Text()
 		if len(line) > 2000 {
-			line = line[:2000] + "[...]"
+			// Not through the middle of a rune: the result goes to the
+			// model as JSON, where broken UTF-8 turns into U+FFFD.
+			cut := 2000
+			for cut > 2000-utf8.UTFMax+1 && !utf8.RuneStart(line[cut]) {
+				cut--
+			}
+			line = line[:cut] + "[...]"
 		}
 		fmt.Fprintf(&b, "%6d\t%s\n", n, line)
 		shown++
