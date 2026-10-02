@@ -14,9 +14,9 @@ func TestMark(t *testing.T) {
 	}
 	var out bytes.Buffer
 	a := &Agent{RunDir: run, Out: &out}
-	a.mark("fold-start;⚙ x")
+	a.mark("fold-start;⚙ x\a\x1b[1my") // a title from the model
 	a.mark("fold-end")
-	if got, want := out.String(), "\x1b]6973;N0NCE;fold-start;⚙ x\a\x1b]6973;N0NCE;fold-end\a"; got != want {
+	if got, want := out.String(), "\x1b]6973;N0NCE;fold-start;⚙ x[1my\a\x1b]6973;N0NCE;fold-end\a"; got != want {
 		t.Fatalf("%q, want %q", got, want)
 	}
 }

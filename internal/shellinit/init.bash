@@ -142,7 +142,7 @@ __aish_precmd() {
 		# Written before cmd-end: the proxy reads it when the marker arrives.
 		__aish_dump >|"$AISH_RUN/state"
 	fi
-	printf '\e]6973;%s;cmd-end;%s;%s\a' "$__aish_nonce" "$__aish_rc" "$PWD"
+	printf '\e]6973;%s;cmd-end;%s;%s\a' "$__aish_nonce" "$__aish_rc" "${PWD//[$'\a\e']/}"
 	__aish_fresh=1
 	__aish_ps0=
 	return $__aish_rc
@@ -192,7 +192,7 @@ __aish_ask() {
 		printf '\e]6973;%s;agent-start;%s;%s\a' "$__aish_nonce" "$__aish_id" "${__aish_rc:0:1000}"
 		eval "$__aish_cmd" </dev/null
 		__aish_rc=$?
-		printf '\e]6973;%s;agent-end;%s;%s;%s\a' "$__aish_nonce" "$__aish_id" "$__aish_rc" "$PWD"
+		printf '\e]6973;%s;agent-end;%s;%s;%s\a' "$__aish_nonce" "$__aish_id" "$__aish_rc" "${PWD//[$'\a\e']/}"
 		"$AISH_BIN" agent resume "$__aish_id" "$__aish_rc" || break
 	done
 }

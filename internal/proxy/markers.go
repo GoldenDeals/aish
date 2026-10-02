@@ -2,6 +2,8 @@ package proxy
 
 import "bytes"
 
+// maxMarker bounds how much output an unterminated marker holds back. Not
+// smaller: cmd-start carries the whole command line, pasted ones included.
 const maxMarker = 64 << 10
 
 // Marker is one decoded aish OSC sequence.
@@ -49,7 +51,16 @@ func (f *Filter) Feed(p []byte, onText func([]byte), onMarker func(Marker)) {
 				return
 			}
 		} else if bytes.HasPrefix(rest, f.prefix) {
-			end := bytes.IndexByte(rest, 0x07)
+			end := bytes.IndexAny(rest[len(f.prefix):], "\a\x1b")
+			if end >= 0 && rest[len(f.prefix)+end] == 0x1b {
+				// A payload holds no ESC: our marker was cut short (its
+				// printer killed), and the output goes on from the ESC.
+				if i > 0 {
+					onText(data[:i])
+				}
+				data = rest[len(f.prefix)+end:]
+				continue
+			}
 			if end < 0 {
 				if len(rest) > maxMarker {
 					// Not a real marker; give up and pass it through.
@@ -65,6 +76,7 @@ func (f *Filter) Feed(p []byte, onText func([]byte), onMarker func(Marker)) {
 			if i > 0 {
 				onText(data[:i])
 			}
+			end += len(f.prefix)
 			onMarker(parseMarker(rest[len(f.prefix):end]))
 			data = rest[end+1:]
 			continue

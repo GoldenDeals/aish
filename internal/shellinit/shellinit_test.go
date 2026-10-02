@@ -70,9 +70,14 @@ func TestRoute(t *testing.T) {
 }
 
 // TestMarkerNonce checks that every marker init.bash prints carries the
-// nonce from $AISH_RUN/nonce, the only ones the proxy takes.
+// nonce from $AISH_RUN/nonce, the only ones the proxy takes, and no BEL or
+// ESC in its payload, even from the name of the current directory.
 func TestMarkerNonce(t *testing.T) {
 	run := t.TempDir()
+	wd := filepath.Join(run, "a\ab\x1bc")
+	if err := os.Mkdir(wd, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	init := filepath.Join(run, "init.bash")
 	stub := filepath.Join(run, "aish")
 	files := map[string]string{
@@ -93,6 +98,7 @@ func TestMarkerNonce(t *testing.T) {
 		"__aish_precmd\n" +
 		"__aish_ask 'Hi'\n"
 	cmd := exec.Command("bash", "--norc", "--noprofile", "-i")
+	cmd.Dir = wd
 	cmd.Stdin = strings.NewReader(script)
 	cmd.Env = append(os.Environ(), "PS1=", "HISTFILE=/dev/null", "AISH_RUN="+run, "AISH_BIN="+stub)
 	out, err := cmd.Output()
@@ -105,7 +111,13 @@ func TestMarkerNonce(t *testing.T) {
 		if nonce != "N0NCE" {
 			t.Errorf("marker %q without the nonce", m[0])
 		}
-		kind, _, _ := strings.Cut(rest, ";")
+		if strings.Contains(rest, "\x1b") {
+			t.Errorf("marker %q holds an ESC", m[0])
+		}
+		kind, payload, _ := strings.Cut(rest, ";")
+		if kind == "cmd-end" && payload != "0;"+filepath.Join(run, "abc") {
+			t.Errorf("cmd-end payload %q", payload)
+		}
 		kinds = append(kinds, kind)
 	}
 	if want := "cmd-start cmd-end ask-start agent-start agent-end"; strings.Join(kinds, " ") != want {

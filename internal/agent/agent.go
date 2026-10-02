@@ -373,8 +373,12 @@ func (a *Agent) mark(body string) {
 		b, _ := os.ReadFile(filepath.Join(a.RunDir, "nonce"))
 		a.nonce = strings.TrimSpace(string(b))
 	}
-	fmt.Fprintf(a.Out, "\x1b]6973;%s;%s\a", a.nonce, body)
+	fmt.Fprintf(a.Out, "\x1b]6973;%s;%s\a", a.nonce, markerSafe.Replace(body))
 }
+
+// markerSafe drops what a marker payload cannot hold: BEL would end it, ESC
+// makes the proxy take it for cut short. Tool titles come from the model.
+var markerSafe = strings.NewReplacer("\a", "", "\x1b", "")
 
 // ask lets the user decide an "ask" verdict on the terminal.
 func (a *Agent) ask(d policy.Decision) policy.Decision {

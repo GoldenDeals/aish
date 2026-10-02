@@ -59,3 +59,21 @@ func TestFilterForeignNonce(t *testing.T) {
 		}
 	}
 }
+
+// TestFilterCutShort: a marker of ours broken off by an ESC is dropped at
+// once rather than holding the output behind it back.
+func TestFilterCutShort(t *testing.T) {
+	in := "a\x1b]6973;N0NCE;fold-start;ti\x1b[1mb\x1b]6973;N0NCE;cmd-end;0;/\ac"
+	for i := 1; i < len(in); i++ {
+		text, ms := feedAll(in[:i], in[i:])
+		if text != "a\x1b[1mbc" || !reflect.DeepEqual(ms, []Marker{{"cmd-end", "0;/"}}) {
+			t.Fatalf("split at %d: %q %v", i, text, ms)
+		}
+	}
+	f := NewFilter(testNonce)
+	var text []byte
+	f.Feed([]byte("\x1b]6973;N0NCE;fold-start;ti\x1b[1mbold"), func(b []byte) { text = append(text, b...) }, func(Marker) {})
+	if string(text) != "\x1b[1mbold" {
+		t.Fatalf("held back: %q", text)
+	}
+}
