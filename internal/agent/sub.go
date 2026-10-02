@@ -1,0 +1,650 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os/exec"
+	"regexp"
+	"slices"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/inebotov/aish/internal/capture"
+	"github.com/inebotov/aish/internal/llm"
+	"github.com/inebotov/aish/internal/policy"
+	"github.com/inebotov/aish/internal/rpc"
+	"github.com/inebotov/aish/internal/session"
+	"github.com/inebotov/aish/internal/subagent"
+	"github.com/inebotov/aish/internal/tools"
+)
+
+// A subagent is a nested Agent the task tool runs within one call: a
+// journal of its own in memory, the system prompt of its file, the host's
+// tools as its file allows them. The live shell is the host's, busy with
+// the request, so the subagent's bash commands run as processes of their
+// own. Only its final answer goes back, as the result of the call; the
+// session never sees the rest.
+
+const (
+	subName = "task"
+	// maxParallel is how many subagents of one call run at once.
+	maxParallel = 4
+	// subCapture bounds the output of a subagent's command kept for the
+	// model, as the proxy bounds the live shell's.
+	subCapture = 64 << 10
+)
+
+// Panes is a UI that can show several live outputs at once, one per
+// subagent. A UI without it falls back to the Live of the task call, which
+// shows them one after another: a second Live of the UI at once would take
+// the place of the first.
+type Panes interface{ Pane(title string) Live }
+
+// AddSubagents registers the task tool for the subagents found in the
+// working directory; with none it does nothing.
+func (a *Agent) AddSubagents(defs []subagent.Def) {
+	a.subs = defs
+	if len(defs) == 0 {
+		return
+	}
+	if a.Tools == nil {
+		a.Tools = &tools.Registry{}
+	}
+	// A tool of the user's named task keeps the name: the subagents are
+	// not offered then.
+	a.Tools.Add(&taskTool{a: a})
+}
+
+// taskTool runs subagents, several at once. It is streaming: the call's
+// own live output is where they show their work when the UI has no panes.
+type taskTool struct{ a *Agent }
+
+func (*taskTool) Name() string    { return subName }
+func (*taskTool) Streaming() bool { return true }
+
+func (*taskTool) Args() []tools.Arg {
+	return []tools.Arg{{Name: "tasks", Type: "array", Required: true,
+		Desc: `Tasks to run in parallel, as JSON: [{"agent": NAME, "prompt": TEXT}, …]`}}
+}
+
+func (t *taskTool) Desc() string {
+	var b strings.Builder
+	b.WriteString("Runs subagents: each works on its task alone and returns its final text answer, nothing else. " +
+		"Several tasks in one call run in parallel.\n\n" +
+		"Use it to hand off a self-contained piece of work, such as a wide search or a review, " +
+		"that would otherwise fill this conversation with what it reads.\n\n" +
+		"Usage:\n" +
+		"- A subagent starts with a fresh context: it knows nothing of this conversation. " +
+		"Its prompt must say everything it needs, and what to answer with.\n" +
+		"- Independent tasks go into one call, so that they run at once.\n" +
+		"- The answers come back to you, not to the user: tell the user what matters in them.\n\n" +
+		"Available subagents:\n")
+	for _, d := range t.a.subs {
+		fmt.Fprintf(&b, "- %s — %s\n", d.Name, d.Desc)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (t *taskTool) Schema() map[string]any {
+	names := make([]string, len(t.a.subs))
+	for i, d := range t.a.subs {
+		names[i] = d.Name
+	}
+	task := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"agent":  map[string]any{"type": "string", "enum": names, "description": "The subagent to run"},
+			"prompt": map[string]any{"type": "string", "description": "The task, with everything the subagent needs to know"},
+		},
+		"required": []string{"agent", "prompt"},
+	}
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"tasks": map[string]any{
+				"type": "array", "minItems": 1, "items": task,
+				"description": "The tasks, one subagent each; they run in parallel",
+			},
+		},
+		"required": []string{"tasks"},
+	}
+}
+
+// Title names the subagents of the call.
+func (t *taskTool) Title(args map[string]any) string {
+	var names []string
+	for _, v := range taskList(args) {
+		if m, ok := v.(map[string]any); ok {
+			if s, _ := m["agent"].(string); s != "" {
+				names = append(names, s)
+			}
+		}
+	}
+	return strings.TrimSpace(subName + " " + strings.Join(names, ", "))
+}
+
+// taskList is the tasks argument; some models send the array as JSON text.
+func taskList(args map[string]any) []any {
+	v := args["tasks"]
+	if s, ok := v.(string); ok {
+		_ = json.Unmarshal([]byte(s), &v)
+	}
+	list, _ := v.([]any)
+	return list
+}
+
+type subJob struct {
+	def    subagent.Def
+	prompt string
+}
+
+// jobs reads the tasks of a call. A mistake in any of them fails the call
+// before a subagent starts: the model fixes it and calls again.
+func (t *taskTool) jobs(args map[string]any) ([]subJob, error) {
+	list := taskList(args)
+	if len(list) == 0 {
+		return nil, errors.New("tasks: at least one task is needed")
+	}
+	var out []subJob
+	for i, v := range list {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("tasks[%d]: an object with agent and prompt is needed", i)
+		}
+		name, _ := m["agent"].(string)
+		k := slices.IndexFunc(t.a.subs, func(d subagent.Def) bool { return d.Name == name })
+		if k < 0 {
+			var known []string
+			for _, d := range t.a.subs {
+				known = append(known, d.Name)
+			}
+			return nil, fmt.Errorf("tasks[%d]: unknown subagent %q (there are %s)", i, name, strings.Join(known, ", "))
+		}
+		prompt, _ := m["prompt"].(string)
+		if strings.TrimSpace(prompt) == "" {
+			return nil, fmt.Errorf("tasks[%d]: empty prompt for %s", i, name)
+		}
+		out = append(out, subJob{t.a.subs[k], prompt})
+	}
+	return out, nil
+}
+
+func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]any, live io.Writer) (string, error) {
+	jobs, err := t.jobs(args)
+	if err != nil {
+		return "", err
+	}
+	a := t.a
+	var open func(title string) Live
+	if p, ok := a.UI.(Panes); ok {
+		open = p.Pane
+	} else {
+		if live == nil {
+			live = a.UI
+		}
+		open = (&relay{w: live, bol: true}).add
+	}
+	type result struct {
+		reply string
+		err   error
+	}
+	res := make([]result, len(jobs))
+	slots := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	// Started in the order of the call, so that panes and sections come in
+	// that order too.
+	for i, j := range jobs {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		w := open(j.def.Name)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			reply, err := a.runSafe(ctx, j.def, j.prompt, w)
+			switch {
+			case err == nil:
+				w.Finish(0)
+			case ctx.Err() != nil:
+				w.Finish(130)
+			default:
+				fmt.Fprintf(w, "%s✗ %v%s\n", red, err, reset)
+				w.Finish(1)
+			}
+			res[i] = result{reply, err}
+		}()
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	blocks := make([]string, len(jobs))
+	for i, j := range jobs {
+		status, text := "ok", res[i].reply
+		if res[i].err != nil {
+			status = "error"
+			text = strings.TrimSpace(text + "\n\n" + res[i].err.Error())
+		}
+		if text == "" {
+			text = "(no reply)"
+		}
+		blocks[i] = fmt.Sprintf("## %s (%s)\n%s", j.def.Name, status, text)
+	}
+	return strings.Join(blocks, "\n\n"), nil
+}
+
+// runSafe is runSub in a goroutine of its own: a panic there would take
+// the proxy, and the shell with it, down.
+func (a *Agent) runSafe(ctx context.Context, d subagent.Def, prompt string, out Live) (reply string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("subagent %s: %v", d.Name, r)
+		}
+	}()
+	return a.runSub(ctx, d, prompt, out)
+}
+
+// subNote opens the system prompt of a subagent: the common part, written
+// for the agent of the live shell, would tell it wrong.
+const subNote = "# Subagent\n" +
+	"You are running as a subagent: another agent gave you a task, and your final text answer is all it gets back, " +
+	"so make that answer complete and self-contained. Nobody can answer your questions: do the task, or say what stopped you. " +
+	"What is said above about the live shell does not hold for you: your bash commands run in processes of their own " +
+	"(see the bash tool), and nothing you do there stays in the user's shell."
+
+// runSub runs subagent d on prompt in the host's shell situation and
+// returns its final answer. Its output goes to out.
+func (a *Agent) runSub(ctx context.Context, d subagent.Def, prompt string, out Live) (string, error) {
+	cfg := a.Cfg
+	cfg.SystemPrompt = subNote + "\n\n" + d.Prompt
+	prov := a.Provider
+	if d.Model != "" {
+		cfg.Model = d.Model
+		p, err := llm.New(cfg)
+		if err != nil {
+			return "", err
+		}
+		prov = p
+	}
+	reg, scope := subTools(a.Tools, d.Tools)
+	j := &memJournal{id: "sub:" + d.Name}
+	sh := &subShell{}
+	child := &Agent{Cfg: cfg, Provider: prov, Tools: reg, Policy: a.Policy, Journal: j, Shell: sh, UI: subUI{out}}
+	ex := a.exec
+	err := child.Start(ctx, prompt, ex)
+	for err == nil {
+		id, cmd, ok := sh.take()
+		if !ok {
+			break
+		}
+		var o rpc.Output
+		if why := refused(scope, cmd); why != "" {
+			fmt.Fprintf(out, "%s  ✗ %s%s\n", red, why, reset)
+			o = rpc.Output{Output: "not run: " + why, Exit: 126, Cwd: ex.Dir}
+		} else {
+			o = a.runCommand(ctx, cmd, ex, out)
+		}
+		sh.done(id, o)
+		err = child.Resume(ctx, id, o.Exit, ex)
+	}
+	reply := ""
+	for i := len(j.es) - 1; i >= 0; i-- {
+		if j.es[i].Kind == session.KindAssistant {
+			reply = capture.Truncate(strings.TrimSpace(j.es[i].Text), a.Cfg.MaxOutputBytes)
+			break
+		}
+	}
+	return reply, err
+}
+
+// runCommand runs a subagent's command in a bash of its own, in the
+// shell's directory and environment, showing its output on out as it
+// comes. Its process group goes when ctx does, so that what it started
+// does not outlive the request.
+func (a *Agent) runCommand(ctx context.Context, cmd string, ex tools.Exec, out io.Writer) rpc.Output {
+	shell := a.Cfg.Shell
+	if shell == "" {
+		shell = "bash"
+	}
+	buf := capture.NewBuffer(subCapture, subCapture)
+	w := &lineEnd{w: io.MultiWriter(bufWriter{buf}, out), bol: true}
+	c := exec.CommandContext(ctx, shell, "-c", cmd)
+	c.Dir, c.Env = ex.Dir, ex.Env
+	c.Stdout, c.Stderr = w, w
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error { return syscall.Kill(-c.Process.Pid, syscall.SIGKILL) }
+	c.WaitDelay = time.Second
+	err := c.Run()
+	rc := 0
+	var exit *exec.ExitError
+	switch {
+	case err == nil, errors.Is(err, exec.ErrWaitDelay):
+		// Exited, with something it started in the background still
+		// holding its output.
+	case errors.As(err, &exit):
+		rc = exit.ExitCode()
+		if ws, ok := exit.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			rc = 128 + int(ws.Signal())
+		}
+	default:
+		rc = 127
+		fmt.Fprintf(w, "%v\n", err)
+	}
+	if !w.bol {
+		io.WriteString(out, "\n")
+	}
+	if rc != 0 {
+		fmt.Fprintf(out, "%s  exit %d%s\n", dim, rc, reset)
+	}
+	text := capture.Clean(buf.Bytes())
+	if buf.AltScreen() {
+		text = "[full-screen interactive program; output not captured]"
+	}
+	return rpc.Output{Output: text, Exit: rc, Cwd: ex.Dir}
+}
+
+// claudeTools maps the tool names of Claude Code's subagent files to
+// aish's. aish has no search tools of its own: it searches with bash.
+var claudeTools = map[string]string{
+	"read": "read_file", "write": "write_file", "edit": "edit_file", "multiedit": "edit_file",
+	"bash": tools.Bash, "grep": tools.Bash, "glob": tools.Bash, "ls": tools.Bash,
+}
+
+// subTools is the registry of a subagent whose file names the tools names,
+// nil for all of them: the host's tools but task, as subagents run no
+// subagents, and the dialogs, as nobody answers them. Scope is the
+// commands its bash may run, from Bash(...) entries; nil for any.
+//
+// Names are Claude Code's or aish's, in any case. A Bash(...) entry gives
+// bash for the commands it names, unless another entry gives it whole. A
+// pattern of another tool (Read(src/**)) is not understood, and the entry
+// gives nothing: a limit that cannot be kept does not turn into the whole
+// tool.
+func subTools(host *tools.Registry, names []string) (reg *tools.Registry, scope []string) {
+	allow := map[string]bool{}
+	whole := false // bash without a scope
+	for _, n := range names {
+		base, spec, scoped := strings.Cut(strings.TrimSpace(n), "(")
+		key := strings.ToLower(strings.TrimSpace(base))
+		if key == subName {
+			continue
+		}
+		if m, ok := claudeTools[key]; ok {
+			key = m
+		}
+		if scoped {
+			spec = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(spec), ")"))
+			scoped = spec != "" && spec != "*"
+		}
+		switch {
+		case !scoped:
+			allow[key] = true
+			whole = whole || key == tools.Bash
+		case strings.EqualFold(strings.TrimSpace(base), tools.Bash):
+			allow[key] = true
+			scope = append(scope, spec)
+		}
+	}
+	if whole {
+		scope = nil
+	}
+	reg = &tools.Registry{}
+	for _, t := range host.All() {
+		if _, own := t.(*taskTool); own || tools.IsDialog(t) {
+			continue
+		}
+		if names != nil && !allow[strings.ToLower(t.Name())] {
+			continue
+		}
+		if _, ok := t.(tools.HandsOff); ok && t.Name() == tools.Bash {
+			t = subBash{Tool: t, scope: scope}
+		}
+		reg.Add(t)
+	}
+	return reg, scope
+}
+
+// subBash is bash as a subagent has it: described for what it is there,
+// a process per command, not the live shell.
+type subBash struct {
+	tools.Tool
+	scope []string
+}
+
+func (b subBash) Desc() string {
+	d := "Executes a bash command and returns its output.\n\n" +
+		"The command does not run in the user's live shell: each one runs in a new non-interactive bash process, " +
+		"started in the user's working directory with their exported environment. Nothing persists between calls " +
+		"(a cd, variables, functions), and the user's aliases and functions are not there.\n\n" +
+		"Usage:\n" +
+		"- Use absolute paths, and chain commands that depend on each other with '&&' in one call.\n" +
+		"- Stdin is /dev/null: do not run interactive programs (editors, pagers, prompts); use non-interactive flags.\n" +
+		"- Avoid cat, head, tail, sed, awk or echo to read, edit or write files when read_file, edit_file or write_file are available."
+	if b.scope != nil {
+		d += "\n\nOnly these commands may run, every command of the line matching one of them (* matches anything): " +
+			strings.Join(b.scope, ", ") + ". Any other is refused."
+	}
+	return d
+}
+
+func (b subBash) Command(args map[string]any) (string, bool) {
+	return b.Tool.(tools.HandsOff).Command(args)
+}
+
+func (b subBash) Title(args map[string]any) string { return tools.Title(b.Tool, args) }
+
+// refused tells why cmd is not one a subagent with scope may run; "" when
+// it is. Every simple command of the line, those in $(…) and bash -c
+// included, must match a pattern.
+func refused(scope []string, cmd string) string {
+	if scope == nil {
+		return ""
+	}
+	cmds, err := policy.Commands(cmd)
+	if err != nil {
+		return "cannot parse the command: " + err.Error()
+	}
+	for _, argv := range cmds {
+		line := strings.Join(argv, " ")
+		if !slices.ContainsFunc(scope, func(p string) bool { return matchCommand(p, line) }) {
+			return fmt.Sprintf("%s is not among the commands this subagent may run: %s", argv[0], strings.Join(scope, ", "))
+		}
+	}
+	return ""
+}
+
+// matchCommand matches a command line against a pattern of Claude Code's
+// Bash(...) rules: * is any run of characters, a trailing " *" takes the
+// bare command too, and the older "git diff:*" means "git diff *".
+func matchCommand(pat, line string) bool {
+	pat = strings.TrimSpace(pat)
+	if p, ok := strings.CutSuffix(pat, ":*"); ok {
+		pat = p + " *"
+	}
+	if p, ok := strings.CutSuffix(pat, " *"); ok && line == p {
+		return true
+	}
+	parts := strings.Split(pat, "*")
+	for i := range parts {
+		parts[i] = regexp.QuoteMeta(parts[i])
+	}
+	ok, _ := regexp.MatchString("(?s)^"+strings.Join(parts, ".*")+"$", line)
+	return ok
+}
+
+// memJournal is a subagent's journal: in memory, gone with the call.
+type memJournal struct {
+	id string
+	es []session.Entry
+}
+
+func (j *memJournal) ID() string               { return j.id }
+func (j *memJournal) Len() int                 { return len(j.es) }
+func (j *memJournal) Entries() []session.Entry { return slices.Clone(j.es) }
+func (j *memJournal) Append(es ...session.Entry) error {
+	j.es = append(j.es, es...)
+	return nil
+}
+
+// subShell is the Shell of a subagent: it keeps the command handed off
+// for runSub to run, and gives Resume the output runSub collected.
+type subShell struct {
+	id, cmd string
+	handed  bool
+	out     map[string]rpc.Output
+}
+
+func (s *subShell) HandOff(id, cmd string) error {
+	s.id, s.cmd, s.handed = id, cmd, true
+	return nil
+}
+
+func (s *subShell) take() (id, cmd string, ok bool) {
+	ok, s.handed = s.handed, false
+	return s.id, s.cmd, ok
+}
+
+func (s *subShell) done(id string, o rpc.Output) {
+	if s.out == nil {
+		s.out = map[string]rpc.Output{}
+	}
+	s.out[id] = o
+}
+
+func (s *subShell) Wait(_ context.Context, id string, _ time.Duration) (rpc.Output, error) {
+	o, ok := s.out[id]
+	if !ok {
+		return rpc.Output{}, fmt.Errorf("no output of %s", id)
+	}
+	delete(s.out, id)
+	return o, nil
+}
+
+// subUI is a subagent's terminal: its output, plain text, without a
+// spinner. A call's line is closed already when a result is folded or a
+// tool streams, so neither repeats it.
+type subUI struct{ out Live }
+
+func (u subUI) Write(b []byte) (int, error) { return u.out.Write(b) }
+func (subUI) Size() (int, int)              { return 0, 0 }
+func (subUI) CommandAt(int, bool, int)      {}
+
+func (subUI) Ask(context.Context, string) (string, error) {
+	return "", errors.New("a subagent cannot ask the user")
+}
+
+func (subUI) Form(context.Context, []Question) ([]Answer, error) {
+	return nil, errors.New("a subagent cannot ask the user")
+}
+
+func (u subUI) Fold(_, text string) { fmt.Fprintf(u.out, "%s  %s%s\n", dim, summary(text), reset) }
+
+func (u subUI) Live(string) Live { return nopFinish{u.out} }
+
+// nopFinish is a tool's live output within the subagent's: that one ends
+// with the subagent.
+type nopFinish struct{ io.Writer }
+
+func (nopFinish) Finish(int) {}
+
+// relay shows the outputs of subagents running at once on one writer, one
+// after another in the order of the call: the first one's as it comes,
+// each of the others' kept until those before it are done.
+type relay struct {
+	mu   sync.Mutex
+	w    io.Writer
+	bol  bool // the last byte written ended a line
+	secs []*section
+	cur  int // the section on the writer now
+}
+
+// section is one subagent's output in a relay.
+type section struct {
+	r     *relay
+	title string
+	held  bytes.Buffer
+	done  bool
+}
+
+func (r *relay) add(title string) Live {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s := &section{r: r, title: title}
+	r.secs = append(r.secs, s)
+	if r.cur == len(r.secs)-1 {
+		r.begin(s)
+	}
+	return s
+}
+
+// begin puts s on the writer, with what it held. Called under r.mu.
+func (r *relay) begin(s *section) {
+	if !r.bol {
+		r.write([]byte("\n"))
+	}
+	r.write(fmt.Appendf(nil, "%s── %s%s\n", bold, s.title, reset))
+	r.write(s.held.Bytes())
+	s.held.Reset()
+}
+
+func (r *relay) write(b []byte) {
+	if len(b) > 0 {
+		r.w.Write(b)
+		r.bol = b[len(b)-1] == '\n'
+	}
+}
+
+func (s *section) Write(b []byte) (int, error) {
+	r := s.r
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cur < len(r.secs) && r.secs[r.cur] == s {
+		r.write(b)
+	} else {
+		s.held.Write(b)
+	}
+	return len(b), nil
+}
+
+func (s *section) Finish(int) {
+	r := s.r
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s.done = true
+	for r.cur < len(r.secs) && r.secs[r.cur].done {
+		if r.cur++; r.cur < len(r.secs) {
+			r.begin(r.secs[r.cur])
+		}
+	}
+}
+
+// lineEnd passes the output through and tells whether it ended a line.
+type lineEnd struct {
+	w   io.Writer
+	bol bool
+}
+
+func (l *lineEnd) Write(b []byte) (int, error) {
+	if len(b) > 0 {
+		l.bol = b[len(b)-1] == '\n'
+	}
+	return l.w.Write(b)
+}
+
+type bufWriter struct{ b *capture.Buffer }
+
+func (w bufWriter) Write(p []byte) (int, error) {
+	w.b.Write(p)
+	return len(p), nil
+}

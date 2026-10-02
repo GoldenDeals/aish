@@ -19,6 +19,7 @@ import (
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 	"github.com/inebotov/aish/internal/skills"
+	"github.com/inebotov/aish/internal/subagent"
 	"github.com/inebotov/aish/internal/tools"
 )
 
@@ -203,6 +204,8 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	a.Cfg, a.Provider, a.Policy = cfg, prov, pol
 	if fresh || a.Tools == nil {
 		a.Tools = p.loadTools(ctx, cfg, ex.Dir)
+		defs, _ := subagent.Find(ex.Dir)
+		a.AddSubagents(defs)
 	}
 	return a, nil
 }

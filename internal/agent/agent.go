@@ -25,6 +25,7 @@ import (
 	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
+	"github.com/inebotov/aish/internal/subagent"
 	"github.com/inebotov/aish/internal/tools"
 )
 
@@ -112,6 +113,8 @@ type Agent struct {
 	maskKey string // the config the mask was built from: it is reloaded per request
 	exec    tools.Exec
 	hooks   hookState // found once per request
+	// subs are the subagents the task tool runs: see AddSubagents.
+	subs []subagent.Def
 }
 
 // Start records a new request made in ex and works on it.
