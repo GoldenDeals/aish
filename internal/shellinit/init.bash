@@ -238,15 +238,19 @@ __aish_unecho() {
 	done
 	p=${p//[$'\001\002']/}
 	local line="__aish_ask ${1@Q}" cols=${COLUMNS:-80}
-	local rows=$(((${#vis} + ${#line}) / cols + 1))
+	# Readline leaves the cursor under the echo's last row, a full one too.
+	local rows=$(((${#vis} + ${#line} + cols - 1) / cols))
 	local c
+	# The echo's first row is erased by itself: erase below from the
+	# top-left corner is a clear screen to tmux, which keeps the screen, the
+	# echo with it, in its history.
 	for c in '$' '#'; do
 		if [[ $p == *"$c"* ]]; then
-			printf '\e[%dA\r\e[J%s?%s%s\n' "$rows" "${p%"$c"*}" "${p##*"$c"}" "$1"
+			printf '\e[%dA\r\e[K\e[B\e[J\e[A%s?%s%s\n' "$rows" "${p%"$c"*}" "${p##*"$c"}" "$1"
 			return
 		fi
 	done
-	printf '\e[%dA\r\e[J%s\e[2m?\e[0m %s\n' "$rows" "$p" "$1"
+	printf '\e[%dA\r\e[K\e[B\e[J\e[A%s\e[2m?\e[0m %s\n' "$rows" "$p" "$1"
 }
 
 __aish_ask() {
