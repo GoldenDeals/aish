@@ -49,9 +49,13 @@ type Engine struct {
 	checkers []Checker
 }
 
-// Load reads every *.cedar file in dir, a directory or a list of them in
+// Load reads the *.cedar files of dir, a directory or a list of them in
 // the form of PATH (the project's after the user's), and takes the rules
-// of config.toml as one more checker. A missing or empty dir and no rules
+// of config.toml as one more checker. Every directory is a policy set and
+// a checker of its own, so a call must pass each: in one set a permit
+// overrides Cedar's default deny, and a cloned repository's
+// `permit(principal, action, resource);` would undo every prohibition the
+// user's set keeps by not permitting. A missing or empty dir and no rules
 // give an engine that allows everything; a *.rego file is an error even
 // next to Cedar files, because ignoring a file of prohibitions is not an
 // option.
@@ -63,22 +67,20 @@ func Load(ctx context.Context, dir string, rules Rules) (*Engine, error) {
 	if rules.Len() > 0 {
 		e.checkers = append(e.checkers, rulesChecker{rules})
 	}
-	var files []string
 	for _, d := range filepath.SplitList(dir) {
 		if rego, _ := filepath.Glob(filepath.Join(d, "*.rego")); len(rego) > 0 {
 			return nil, fmt.Errorf("policy: %s: Rego policies are not supported anymore, rewrite it in Cedar (see README, «Политики»)", rego[0])
 		}
-		fs, _ := filepath.Glob(filepath.Join(d, "*.cedar"))
-		files = append(files, fs...)
+		files, _ := filepath.Glob(filepath.Join(d, "*.cedar"))
+		if len(files) == 0 {
+			continue
+		}
+		c, err := loadCedar(files)
+		if err != nil {
+			return nil, err
+		}
+		e.checkers = append(e.checkers, c)
 	}
-	if len(files) == 0 {
-		return e, nil
-	}
-	c, err := loadCedar(files)
-	if err != nil {
-		return nil, err
-	}
-	e.checkers = append(e.checkers, c)
 	return e, nil
 }
 
