@@ -54,6 +54,12 @@ func statusCmd(cfg config.Config) int {
 		ctx += ", estimated"
 	}
 	row("used", ctx)
+	// The window the agent takes, as Proxy.prepare does.
+	agentWindow := cfg.ContextWindow
+	if agentWindow <= 0 {
+		agentWindow = info.Window
+	}
+	row("compact_at", compactAt(cfg.CompactAt, agentWindow))
 	row("entries", fmt.Sprintf("%d commands, %d requests since the last compact", st.Commands, st.Requests))
 	row("session", fmt.Sprintf("%d tool calls, %d compacts, %s in (%s cached) / %s out tokens spent",
 		st.ToolCalls, st.Compacts, session.Short(st.InputTokens), session.Short(st.CachedTokens), session.Short(st.OutputTokens)))
@@ -169,6 +175,20 @@ func configFiles(project, last string, untrusted []string) string {
 		s += fmt.Sprintf(" (the last request took %s)", home(last))
 	}
 	return s
+}
+
+// compactAt says when the session is compacted on its own: the share of
+// the window and the tokens it comes to, or why it never is.
+func compactAt(share float64, window int) string {
+	pct := int(share*100 + 0.5)
+	switch {
+	case share == 0:
+		return "off (compact_at = 0)"
+	case window == 0:
+		return fmt.Sprintf("%d%% of the window; the window is unknown, so never", pct)
+	}
+	// As compactLimit in internal/agent counts it.
+	return fmt.Sprintf("%d%% of the window, at %s tokens", pct, session.Short(int(share*float64(window))))
 }
 
 // modelArgs is what `aish model [PROFILE] [NAME] [EFFORT]` switches to,
