@@ -27,6 +27,7 @@ func TestProject(t *testing.T) {
 		`max_steps = 7`,
 		`markdown = false`,
 		`tools_dir = "tools"`,
+		`hooks_dir = ".aish/hooks"`,
 		`policy_dir = "/abs/policy"`,
 	}, "\n")+"\n")
 	sub := filepath.Join(root, "home", "src", "x", "a", "b")
@@ -50,6 +51,9 @@ func TestProject(t *testing.T) {
 	}
 	if want := base.ToolsDir + string(filepath.ListSeparator) + filepath.Join(root, "home", "src", "x", "tools"); cfg.ToolsDir != want {
 		t.Errorf("tools_dir %q, want %q (relative to the file, after the global one)", cfg.ToolsDir, want)
+	}
+	if want := base.HooksDir + string(filepath.ListSeparator) + filepath.Join(root, "home", "src", "x", ".aish", "hooks"); cfg.HooksDir != want {
+		t.Errorf("hooks_dir %q, want %q", cfg.HooksDir, want)
 	}
 	if want := base.PolicyDir + string(filepath.ListSeparator) + "/abs/policy"; cfg.PolicyDir != want {
 		t.Errorf("policy_dir %q, want %q", cfg.PolicyDir, want)

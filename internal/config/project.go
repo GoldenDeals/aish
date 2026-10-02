@@ -29,6 +29,7 @@ type project struct {
 	CodeStyle      *string `toml:"code_style"`
 	PolicyDir      *string `toml:"policy_dir"`
 	Policy         *Policy `toml:"policy"`
+	HooksDir       *string `toml:"hooks_dir"`
 	ToolsDir       *string `toml:"tools_dir"`
 	SystemPrompt   *string `toml:"system_prompt"`
 }
@@ -47,6 +48,8 @@ type project struct {
 // policy and tools packages take. Relative directories are taken from
 // the file's own. The deny and ask lists of [policy] are added to the
 // global ones, and of the two write_outside_home the stricter is kept.
+// hooks_dir is added as tools_dir is: the project's hooks run after the
+// user's.
 func Project(cfg Config, cwd string) (Config, string, error) {
 	path := findProject(cwd)
 	if path == "" {
@@ -88,6 +91,9 @@ func Project(cfg Config, cwd string) (Config, string, error) {
 			Ask:              slices.Concat(cfg.Policy.Ask, pr.Policy.Ask),
 			WriteOutsideHome: stricter(cfg.Policy.WriteOutsideHome, pr.Policy.WriteOutsideHome),
 		}
+	}
+	if pr.HooksDir != nil {
+		cfg.HooksDir = addDir(cfg.HooksDir, *pr.HooksDir, dir)
 	}
 	if pr.ToolsDir != nil {
 		cfg.ToolsDir = addDir(cfg.ToolsDir, *pr.ToolsDir, dir)

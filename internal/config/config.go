@@ -68,6 +68,7 @@ type Config struct {
 
 	PolicyDir   string `toml:"policy_dir"`
 	Policy      Policy `toml:"policy"`
+	HooksDir    string `toml:"hooks_dir"`
 	ToolsDir    string `toml:"tools_dir"`
 	SessionsDir string `toml:"sessions_dir"`
 	// SessionsTTL is how long a saved session lives unmodified before aish
@@ -136,6 +137,7 @@ func Default() Config {
 		JournalIgnore:  []string{"*secret*", "env", "printenv", "cat *credentials*", "history"},
 		StateIgnore:    []string{"*TOKEN*", "*SECRET*", "*KEY*", "*PASSWORD*", "AWS_*"},
 		PolicyDir:      filepath.Join(Dir(), "policy"),
+		HooksDir:       filepath.Join(Dir(), "hooks"),
 		ToolsDir:       filepath.Join(Dir(), "tools"),
 		SessionsDir:    filepath.Join(dataDir(), "sessions"),
 		SessionsTTL:    "0",
@@ -170,6 +172,7 @@ func Load() (Config, error) {
 		cfg.Effort = e
 	}
 	cfg.PolicyDir = expand(cfg.PolicyDir)
+	cfg.HooksDir = expand(cfg.HooksDir)
 	cfg.ToolsDir = expand(cfg.ToolsDir)
 	cfg.SessionsDir = expand(cfg.SessionsDir)
 	cfg.MCPConfig = expand(cfg.MCPConfig)

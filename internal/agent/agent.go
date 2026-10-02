@@ -103,6 +103,7 @@ type Agent struct {
 	mask    *Masker
 	maskKey string // the config the mask was built from: it is reloaded per request
 	exec    tools.Exec
+	hooks   hookState // found once per request
 }
 
 // Start records a new request made in ex and works on it.
@@ -113,6 +114,11 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 		return err
 	}
 	cwd := ex.Dir
+	a.loadHooks()
+	prompt, ok, err := a.userPrompt(ctx, text, cwd)
+	if err != nil || !ok {
+		return err
+	}
 	inst := instructions(a.entries, cwd)
 	for _, e := range inst {
 		fmt.Fprintf(a.UI, "%s  (%s)%s\n", dim, tildePath(e.Path), reset)
@@ -134,7 +140,7 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	if err := a.append(used...); err != nil {
 		return err
 	}
-	if err := a.append(session.Entry{Kind: session.KindUser, Text: text, Cwd: cwd}); err != nil {
+	if err := a.append(session.Entry{Kind: session.KindUser, Text: prompt, Cwd: cwd}); err != nil {
 		return err
 	}
 	return a.drive(ctx)
@@ -159,7 +165,7 @@ func (a *Agent) Resume(ctx context.Context, id string, rc int, ex tools.Exec) er
 	if err != nil {
 		out = rpc.Output{Output: "(output was not captured: " + err.Error() + ")", Exit: rc}
 	}
-	if err := a.append(toolResult(*call, bashResult(out, a.Cfg.MaxOutputBytes), false)); err != nil {
+	if err := a.postTool(ctx, *call, a.hooks.handed(id), bashResult(out, a.Cfg.MaxOutputBytes), false); err != nil {
 		return err
 	}
 	return a.drive(ctx)
@@ -227,11 +233,16 @@ func (a *Agent) drive(ctx context.Context) error {
 			}
 		}
 		if finished(a.entries) {
+			a.stop(ctx)
 			return nil
 		}
 		if a.Cfg.MaxSteps > 0 && steps(a.entries) >= a.Cfg.MaxSteps {
 			fmt.Fprintf(a.UI, "%s[aish: stopped after %d steps; ask to continue]%s\n", dim, a.Cfg.MaxSteps, reset)
-			return a.append(session.Entry{Kind: session.KindAssistant, Text: fmt.Sprintf("(stopped after %d steps)", a.Cfg.MaxSteps)})
+			if err := a.append(session.Entry{Kind: session.KindAssistant, Text: fmt.Sprintf("(stopped after %d steps)", a.Cfg.MaxSteps)}); err != nil {
+				return err
+			}
+			a.stop(ctx)
+			return nil
 		}
 		if err := a.autoCompact(ctx); err != nil {
 			return err
@@ -332,6 +343,14 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	if err != nil {
 		return false, err
 	}
+	v, err := a.preTool(ctx, t, c, in, d)
+	if err != nil {
+		return false, err
+	}
+	d, args = v.Decision, v.args
+	if v.replaced {
+		title = a.show(t, args)
+	}
 	h, toShell := t.(tools.HandsOff)
 	var cmd string
 	var hasCmd bool
@@ -349,7 +368,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		}
 	}
 	if d.Action == policy.Deny {
-		msg := "denied by policy"
+		msg := "denied by " + v.by
 		if d.Reason != "" {
 			msg += ": " + d.Reason
 		}
@@ -392,7 +411,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 			return false, ctx.Err()
 		}
 		fmt.Fprintf(a.UI, "%s  ✗ %v%s\n", red, err, reset)
-		return false, a.append(toolResult(c, strings.TrimSpace(res+"\n"+err.Error()), true))
+		return false, a.postTool(ctx, c, args, strings.TrimSpace(res+"\n"+err.Error()), true)
 	}
 	if !streams {
 		// A one-line result is shown as is, a longer one is kept for Ctrl+O.
@@ -403,7 +422,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		}
 		fmt.Fprintf(a.UI, "%s  %s%s\n", dim, line, reset)
 	}
-	return false, a.append(toolResult(c, capture.Truncate(res, a.Cfg.MaxOutputBytes*4), false))
+	return false, a.postTool(ctx, c, args, capture.Truncate(res, a.Cfg.MaxOutputBytes*4), false)
 }
 
 // show prints the call and returns it as a plain title. A command for the
