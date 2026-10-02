@@ -398,7 +398,7 @@ func TestLoad(t *testing.T) {
 	for _, tool := range r.All() {
 		names = append(names, tool.Name())
 	}
-	builtins := []string{Bash, "read_file", "write_file", "edit_file"}
+	builtins := []string{Bash, "read_file", "write_file", "edit_file", "ask_user"}
 	want := append(builtins, "alpha", "link", "zeta")
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("got %v, want %v", names, want)

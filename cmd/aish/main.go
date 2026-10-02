@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"strings"
 
+	"github.com/inebotov/aish/internal/agent"
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/mcp"
 	"github.com/inebotov/aish/internal/rpc"
@@ -225,8 +226,9 @@ func toolCmd(cfg config.Config, args []string) int {
 		return 0
 	}
 	t, ok := reg.Get(args[0])
-	// A command for the shell is typed as one, not through aish.
-	if _, handsOff := t.(tools.HandsOff); !ok || handsOff {
+	// A command for the shell is typed as one, not through aish; questions
+	// for the user are the agent's to ask.
+	if _, handsOff := t.(tools.HandsOff); !ok || handsOff || tools.IsDialog(t) {
 		return fail(fmt.Errorf("no tool %q", args[0]))
 	}
 	if len(args) > 1 && (args[1] == "-h" || args[1] == "--help") {
@@ -330,6 +332,21 @@ func printEntry(e session.Entry) {
 			fmt.Printf("\x1b[2m%s\x1b[0m %s\n", e.Time.Format("15:04:05"), e.Text)
 		}
 		for _, c := range e.ToolCalls {
+			if qs, ok := questionsOf(c); ok {
+				fmt.Printf("         \x1b[36m⚙ %s\x1b[0m\n", c.Name)
+				for _, q := range qs {
+					labels := make([]string, len(q.Options))
+					for i, o := range q.Options {
+						labels[i] = o.Label
+					}
+					several := ""
+					if q.MultiSelect {
+						several = " (several)"
+					}
+					fmt.Printf("           %s: %s \x1b[2m[%s]%s\x1b[0m\n", q.Name(), q.Question, strings.Join(labels, " | "), several)
+				}
+				continue
+			}
 			fmt.Printf("         \x1b[36m⚙ %s\x1b[0m %s\n", c.Name, c.Args)
 		}
 	case session.KindInstructions:
@@ -344,7 +361,34 @@ func printEntry(e session.Entry) {
 			status = "error"
 		}
 		fmt.Printf("         \x1b[2m→ %s %s, %d bytes\x1b[0m\n", e.ToolName, status, len(e.Output))
+		if isDialog(e.ToolName) {
+			// The answers, short and the point of the call.
+			for _, l := range strings.Split(e.Output, "\n") {
+				fmt.Printf("           %s\n", l)
+			}
+		}
 	}
+}
+
+// isDialog tells whether name is a tool whose calls are questions for the
+// user, which the journal knows by name only.
+func isDialog(name string) bool {
+	t, ok := tools.Load("").Get(name)
+	return ok && tools.IsDialog(t)
+}
+
+// questionsOf are the questions call c asked the user, if it is a dialog
+// and they can be read.
+func questionsOf(c session.ToolCall) ([]agent.Question, bool) {
+	if !isDialog(c.Name) {
+		return nil, false
+	}
+	args, err := tools.Decode(c.Args)
+	if err != nil {
+		return nil, false
+	}
+	qs, err := agent.ParseQuestions(args)
+	return qs, err == nil
 }
 
 func firstSentence(s string) string {

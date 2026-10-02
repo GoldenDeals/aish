@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -245,6 +246,10 @@ func (u *ui) Size() (int, int) {
 
 func (u *ui) Ask(ctx context.Context, q string) (string, error) { return u.p.askUser(ctx, q) }
 
+func (u *ui) Form(ctx context.Context, qs []agent.Question) ([]agent.Answer, error) {
+	return u.p.askForm(ctx, qs)
+}
+
 // Fold shows the status of a result as a command's is shown: drawn by the
 // same code, on the line of the call if it was left open. The text is
 // kept as it came, whole.
@@ -349,7 +354,7 @@ type prompt struct {
 // shell, which stops the request.
 func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	p.mu.Lock()
-	if p.ask != nil {
+	if p.ask != nil || p.form != nil {
 		p.mu.Unlock()
 		return "", errors.New("a question is open already")
 	}
@@ -413,6 +418,121 @@ func (p *Proxy) askKey(b []byte) []byte {
 		}
 	}
 	return pass
+}
+
+// openForm is the form of ask_user while it is on the terminal; shown are
+// the lines of its frame there.
+type openForm struct {
+	f     *form
+	shown []string
+	done  chan struct{}
+}
+
+// askForm shows the questions and waits for the user to answer or cancel
+// them, or for ctx: Ctrl+C goes to the shell, which stops the request. The
+// form is drawn in place below the call: the alternate screen would hide
+// what the questions are about. The cursor is hidden meanwhile; the form
+// draws its own where the user types.
+func (p *Proxy) askForm(ctx context.Context, qs []agent.Question) ([]agent.Answer, error) {
+	p.mu.Lock()
+	if p.size == nil {
+		p.mu.Unlock()
+		return nil, errors.New("no terminal")
+	}
+	if p.ask != nil || p.form != nil {
+		p.mu.Unlock()
+		return nil, errors.New("a question is open already")
+	}
+	of := &openForm{f: newForm(qs), done: make(chan struct{})}
+	p.form = of
+	p.at = nil // the agent closed the line of the call: no status goes there
+	p.emit([]byte("\x1b[?25l"))
+	p.drawForm()
+	p.mu.Unlock()
+	select {
+	case <-of.done:
+		return of.f.answers(), nil
+	case <-ctx.Done():
+		p.mu.Lock()
+		if p.form == of {
+			p.closeForm()
+		}
+		p.mu.Unlock()
+		return nil, ctx.Err()
+	}
+}
+
+// formKey gives what the user typed to the open form and draws it anew.
+// Ctrl+C goes on to the shell and Ctrl+O opens the viewer, as with a
+// question. Returns what goes on to the shell. Called under p.mu.
+func (p *Proxy) formKey(b []byte) []byte {
+	view := false
+	if i := bytes.IndexByte(b, ctrlO); i >= 0 && len(p.viewFolds()) > 0 {
+		b, view = b[:i], true // the rest would be the viewer's
+	}
+	var keys, pass []byte
+	for _, c := range b {
+		if c == 0x03 {
+			pass = append(pass, c) // interrupts the request, like anywhere else
+		} else {
+			keys = append(keys, c)
+		}
+	}
+	if len(keys) > 0 {
+		if p.form.f.feed(keys) {
+			p.closeForm()
+			return pass
+		}
+		p.drawForm()
+	}
+	if view {
+		w, h := p.size()
+		p.view = newViewer(p.viewFolds(), w, h)
+		_, _ = p.out.Write(p.view.open())
+	}
+	return pass
+}
+
+// drawForm draws the open form over its last frame. Called under p.mu.
+func (p *Proxy) drawForm() {
+	of := p.form
+	w, _ := p.size()
+	frame := of.f.frame(w)
+	p.emit([]byte(of.erase(w) + frame))
+	of.shown = strings.Split(frame, "\r\n")
+}
+
+// closeForm takes the form off the screen and leaves the summary of the
+// answers in its place, if there are any. Called under p.mu.
+func (p *Proxy) closeForm() {
+	of := p.form
+	p.form = nil
+	w, _ := p.size()
+	out := of.erase(w)
+	if s := of.f.summary(); s != "" {
+		out += s + "\r\n"
+	}
+	p.emit([]byte(out + "\x1b[?25h"))
+	close(of.done)
+}
+
+// erase goes back to the first line of the frame on the screen and clears
+// the screen from there. The lines are counted at the width the terminal
+// has now: narrowed, it may have wrapped them.
+func (of *openForm) erase(cols int) string {
+	if of.shown == nil {
+		return ""
+	}
+	cols = max(cols, 1)
+	rows := 0
+	for _, l := range of.shown {
+		rows += max(1, (frameWidth(l)+cols-1)/cols)
+	}
+	s := "\r"
+	if rows > 1 {
+		s += fmt.Sprintf("\x1b[%dA", rows-1)
+	}
+	return s + "\x1b[J"
 }
 
 // status counts what `aish status` shows. Called under p.mu.

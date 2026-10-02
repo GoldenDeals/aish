@@ -59,6 +59,74 @@ func (shell) Execute(context.Context, Exec, map[string]any, io.Writer) (string, 
 	return "", fmt.Errorf("tool %s runs in the user's shell, not here", Bash)
 }
 
+// dialog is ask_user: a call is questions for the user, which the agent
+// asks on its terminal. The schema is the model's, with what Args cannot
+// say: the questions are objects, and how many of them.
+type dialog struct{ desc string }
+
+const askUser = "ask_user"
+
+func (dialog) Name() string   { return askUser }
+func (t dialog) Desc() string { return t.desc }
+func (dialog) Dialog() bool   { return true }
+
+func (dialog) Args() []Arg {
+	return []Arg{{Name: "questions", Type: "array", Desc: "Questions to ask, 1 to 4, as JSON", Required: true}}
+}
+
+func (dialog) Schema() map[string]any {
+	prop := func(typ, desc string) map[string]any { return map[string]any{"type": typ, "description": desc} }
+	option := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"label":       prop("string", "The choice as the user sees it and the answer names it, in 1-5 words"),
+			"description": prop("string", "What the choice means or implies"),
+		},
+		"required": []string{"label"},
+	}
+	question := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"question": prop("string", "The complete question, ending with a question mark"),
+			"header":   prop("string", `A short label of the question, at most 12 characters: its title and the name of its answer, e.g. "Approach"`),
+			"options": map[string]any{
+				"type": "array", "minItems": 2, "maxItems": 4, "items": option,
+				"description": `2 to 4 choices; "Other", for an answer of the user's own, is added to them`,
+			},
+			"multi_select": prop("boolean", "Let the user pick several options"),
+		},
+		"required": []string{"question", "header", "options"},
+	}
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"questions": map[string]any{
+				"type": "array", "minItems": 1, "maxItems": 4, "items": question,
+				"description": "1 to 4 questions; the user answers them one by one",
+			},
+		},
+		"required": []string{"questions"},
+	}
+}
+
+// Title names the questions by their headers.
+func (dialog) Title(args map[string]any) string {
+	qs, _ := args["questions"].([]any)
+	var hs []string
+	for _, q := range qs {
+		if m, ok := q.(map[string]any); ok {
+			if h := strings.TrimSpace(str(m, "header")); h != "" {
+				hs = append(hs, h)
+			}
+		}
+	}
+	return strings.TrimSpace(askUser + " " + strings.Join(hs, ", "))
+}
+
+func (dialog) Execute(context.Context, Exec, map[string]any, io.Writer) (string, error) {
+	return "", fmt.Errorf("tool %s asks on the agent's terminal, not here", askUser)
+}
+
 // external is a user's tool: an executable whose header describes it.
 type external struct {
 	name, desc, path string
@@ -143,6 +211,21 @@ func Builtins() []Tool {
 				{Name: "replace_all", Type: "boolean", Desc: "Replace every occurrence"},
 			},
 			run: editFile,
+		},
+		dialog{
+			desc: "Asks the user questions on their terminal and returns the answers. " +
+				"Each question offers 2 to 4 options: the user picks one, or several with multi_select, " +
+				"or types an answer of their own under \"Other\", which is always added.\n\n" +
+				"Use it when the request is ambiguous in a way that matters, or to choose between approaches " +
+				"that neither the request nor the code decides. Do not use it to ask for permission " +
+				"(the user's policy decides what may run), instead of reading the code, " +
+				"or for what the user has already said.\n\n" +
+				"Usage:\n" +
+				"- Ask up to 4 related questions in one call rather than a call for each.\n" +
+				"- If you recommend an option, put it first and add \"(Recommended)\" to its label.\n" +
+				"- Do not add an \"Other\" option yourself.\n" +
+				"- The result has a line \"header: answer\" per question, several options joined with \", \". " +
+				"If the user cancels, the call fails: stop and wait for their next request, do not ask again.",
 		},
 	}
 }

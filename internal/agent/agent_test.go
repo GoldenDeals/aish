@@ -101,6 +101,9 @@ type fakeUI struct {
 	folds  []string
 	lives  []string
 	at     []int
+	// form answers Form; nil means nobody can answer.
+	form  func(ctx context.Context, qs []Question) ([]Answer, error)
+	forms [][]Question
 }
 
 func (u *fakeUI) Size() (int, int) { return u.cols, 24 }
@@ -113,6 +116,13 @@ func (u *fakeUI) Ask(_ context.Context, q string) (string, error) {
 		return "", errors.New("no terminal")
 	}
 	return u.answer, nil
+}
+func (u *fakeUI) Form(ctx context.Context, qs []Question) ([]Answer, error) {
+	u.forms = append(u.forms, qs)
+	if u.form == nil {
+		return nil, errors.New("no terminal")
+	}
+	return u.form(ctx, qs)
 }
 func (u *fakeUI) Fold(title, text string) { u.folds = append(u.folds, title) }
 func (u *fakeUI) Live(title string) Live {

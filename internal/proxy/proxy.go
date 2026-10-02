@@ -83,6 +83,7 @@ type Proxy struct {
 	view    *viewer             // open while Ctrl+O shows the folds
 	held    []byte              // shell output that arrived while the viewer was open
 	ask     *prompt             // a question the agent waits for the user to answer
+	form    *openForm           // the questions of ask_user while the user answers them
 	done    map[string]rpc.Output
 	waiters map[string]chan struct{}
 	mcp     *mcp.Manager
@@ -388,6 +389,9 @@ func (p *Proxy) key(b []byte) []byte {
 	if p.ask != nil {
 		return p.askKey(b)
 	}
+	if p.form != nil {
+		return p.formKey(b)
+	}
 	i := bytes.IndexByte(b, ctrlO)
 	// A user's command (an editor, say) gets Ctrl+O as usual.
 	if i < 0 || p.user != nil {
@@ -431,6 +435,9 @@ func (p *Proxy) resized() {
 	if p.view != nil {
 		p.view.resize(p.size())
 		_, _ = p.out.Write(append([]byte("\x1b[2J"), p.view.render()...))
+	}
+	if p.form != nil {
+		p.drawForm() // held while the viewer is open
 	}
 }
 

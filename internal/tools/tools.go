@@ -43,7 +43,8 @@ type Arg struct {
 }
 
 // Tool is something the agent can call. The user can call it, too, as
-// `aish tool NAME`, unless it hands its calls off to the shell.
+// `aish tool NAME`, unless it hands its calls off to the shell or asks the
+// user.
 type Tool interface {
 	Name() string
 	Desc() string
@@ -62,6 +63,12 @@ type HandsOff interface {
 	// Command is the command line for args; false when there is none.
 	Command(args map[string]any) (string, bool)
 }
+
+// Dialog tools are answered by the user instead of run: the agent shows a
+// call as a form on its terminal, and what the user chose is the result
+// (ask_user). Only the agent has that terminal, so the user cannot call
+// them, and they get no wrapper.
+type Dialog interface{ Dialog() bool }
 
 // Hidden tools are not offered to the model as tools; it runs them as
 // commands, which keeps their schemas out of every request.
@@ -83,6 +90,11 @@ type Streaming interface{ Streaming() bool }
 // Titled tools show their calls their own way: see Title.
 type Titled interface {
 	Title(args map[string]any) string
+}
+
+func IsDialog(t Tool) bool {
+	d, ok := t.(Dialog)
+	return ok && d.Dialog()
 }
 
 func IsHidden(t Tool) bool {

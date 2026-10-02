@@ -65,6 +65,10 @@ type UI interface {
 	// Ask prints q and returns the line the user answers with. An error
 	// means nobody can answer.
 	Ask(ctx context.Context, q string) (string, error)
+	// Form asks the user qs one at a time and returns an answer to each;
+	// nil answers mean the user cancelled. An error means nobody can
+	// answer, or ctx ended: then the form is gone from the screen.
+	Form(ctx context.Context, qs []Question) ([]Answer, error)
 	// Fold keeps text, a tool's result, behind "ctrl+o to expand" and
 	// shows its status, which ends the line.
 	Fold(title, text string)
@@ -328,7 +332,7 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 
 // call executes one tool call. For a tool that hands its command off
 // (bash) it leaves the command for the shell and reports handedOff; the
-// result arrives with Resume.
+// result arrives with Resume. A dialog (ask_user) the user answers.
 func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, err error) {
 	t, ok := a.Tools.Get(c.Name)
 	if !ok {
@@ -388,6 +392,14 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		return false, a.append(toolResult(c, msg, true))
 	}
 
+	if tools.IsDialog(t) {
+		// The form opens below the call, and its answers are no status:
+		// the line is closed.
+		if !asked {
+			showClosed()
+		}
+		return false, a.dialog(ctx, c, args)
+	}
 	if toShell {
 		if !hasCmd {
 			return false, a.append(toolResult(c, "empty command", true))
