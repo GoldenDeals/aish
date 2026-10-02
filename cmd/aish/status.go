@@ -148,6 +148,7 @@ func statusCmd(cfg config.Config) int {
 		row("policy", policyLine(eng, cfg.PolicyDir, global, rulesOf(cfg).Len(), project))
 	}
 	row("tools", dirs(cfg.ToolsDir))
+	row("hooks", hooksLine(cfg.HooksDir))
 	remote, _ := mcp.Remote(client, false)
 	row("mcp", fmt.Sprintf("%s (%d tools)", cfg.MCPConfig, len(remote)))
 	return 0

@@ -4,6 +4,7 @@
 //	aish resume [ID|NAME]        bring a session back, shell state included; pick one or rename
 //	aish mcp                     the MCP servers and how they are doing
 //	aish skills                  the skills that apply here and their problems
+//	aish hooks                   the hooks that run here, by event, and their problems
 //	aish agents                  the subagents that apply here and their problems
 //	aish policy [TOOL ARGS...]   check the policies, or ask them about one call
 //	aish trust [--revoke|--list] let the .aish.toml here run the repository's hooks and tools
@@ -48,6 +49,7 @@ const usage = `usage:
                              and cwd; without an argument choose one (r renames it)
   aish mcp                   show the MCP servers: state, tools, errors
   aish skills                show the skills of this directory and their problems
+  aish hooks                 show the hooks of this directory in the order they run
   aish agents                show the subagents of this directory and their problems
   aish policy [TOOL ARGS...] check the policies, or ask them about one call
   aish trust [--revoke|--list]
@@ -126,6 +128,8 @@ func run(args []string) int {
 		return trustCmd(cfg, args[1:])
 	case "expand":
 		return expandCmd()
+	case "hooks":
+		return hooksCmd(cfg, args[1:])
 	case "help":
 		fmt.Print(usage)
 		return 0
