@@ -39,11 +39,30 @@ func (a *Agent) Compact(ctx context.Context, focus string, ex tools.Exec) error 
 		return err
 	}
 	before := session.Tokens(a.entries, a.Cfg.MaxOutputBytes)
-	prompt := compactPrompt
+	var note string
 	if focus = strings.TrimSpace(focus); focus != "" {
-		prompt += "\n\nThe user asks the summary to focus on: " + focus
+		note = "The user asks the summary to focus on: " + focus
 	}
-	cwd := ex.Dir
+	sum, err := a.summarize(ctx, note, ex.Dir)
+	if err != nil {
+		return err
+	}
+	if err := a.append(sum); err != nil {
+		return err
+	}
+	after := session.Tokens([]session.Entry{sum}, 0)
+	fmt.Fprintf(a.UI, "%scompacted: %s → %s tokens (aish session show prints the summary)%s\n",
+		dim, session.Short(before), session.Short(after), reset)
+	return nil
+}
+
+// summarize asks the model to sum up the entries the agent holds, with
+// note added to the prompt, and returns the summary unrecorded.
+func (a *Agent) summarize(ctx context.Context, note, cwd string) (session.Entry, error) {
+	prompt := compactPrompt
+	if note != "" {
+		prompt += "\n\n" + note
+	}
 	es := append(a.entries[:len(a.entries):len(a.entries)], session.Entry{Kind: session.KindUser, Text: prompt, Cwd: cwd})
 	// The tools stay in the request: the history has calls to them.
 	req := a.request(es)
@@ -53,18 +72,11 @@ func (a *Agent) Compact(ctx context.Context, focus string, ex tools.Exec) error 
 	resp, err := a.Provider.Complete(ctx, req, nil)
 	sp.Stop()
 	if err != nil {
-		return err
+		return session.Entry{}, err
 	}
 	text := strings.TrimSpace(resp.Text)
 	if text == "" {
-		return errors.New("the model returned an empty summary")
+		return session.Entry{}, errors.New("the model returned an empty summary")
 	}
-	sum := session.Entry{Kind: session.KindSummary, Text: text, Cwd: cwd}
-	if err := a.append(sum); err != nil {
-		return err
-	}
-	after := session.Tokens([]session.Entry{sum}, 0)
-	fmt.Fprintf(a.UI, "%scompacted: %s → %s tokens (aish session show prints the summary)%s\n",
-		dim, session.Short(before), session.Short(after), reset)
-	return nil
+	return session.Entry{Kind: session.KindSummary, Text: text, Cwd: cwd}, nil
 }

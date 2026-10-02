@@ -54,6 +54,11 @@ func (p *Proxy) statusText() (text, color string) {
 		case pct >= 70:
 			color = "\x1b[33m"
 		}
+		// The agent compacts before its next turn, not while the shell is
+		// the user's: no turn of the model is spent on that.
+		if limit := int(p.compactAt * float64(p.window)); limit > 0 && tokens > limit {
+			ctx += " compact?"
+		}
 	}
 	return ctx + " · " + text, color
 }

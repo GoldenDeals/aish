@@ -60,6 +60,7 @@ type Proxy struct {
 	foldLines    int
 	maxOutput    int
 	promptStatus bool
+	compactAt    float64      // compact_at: the status says when the next request compacts
 	ignore       []string     // journal_ignore: commands recorded without their output
 	stateIgnore  []string     // state_ignore: variables kept out of the shell state
 	fixedWindow  bool         // context_window is set in the config
@@ -127,6 +128,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	p.foldLines = cfg.FoldLines
 	p.maxOutput = cfg.MaxOutputBytes
 	p.promptStatus = cfg.PromptStatus
+	p.compactAt = cfg.CompactAt
 	p.ignore, p.stateIgnore = cfg.JournalIgnore, cfg.StateIgnore
 	p.provName = cfg.Provider
 	p.fixedWindow = cfg.ContextWindow > 0

@@ -232,6 +232,9 @@ func (a *Agent) drive(ctx context.Context) error {
 			fmt.Fprintf(a.UI, "%s[aish: stopped after %d steps; ask to continue]%s\n", dim, a.Cfg.MaxSteps, reset)
 			return a.append(session.Entry{Kind: session.KindAssistant, Text: fmt.Sprintf("(stopped after %d steps)", a.Cfg.MaxSteps)})
 		}
+		if err := a.autoCompact(ctx); err != nil {
+			return err
+		}
 		if err := a.turn(ctx); err != nil {
 			return err
 		}

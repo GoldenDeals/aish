@@ -50,6 +50,9 @@ type Config struct {
 	CodeStyle string `toml:"code_style"`
 	// ContextWindow is the model's context size in tokens; 0 asks the API.
 	ContextWindow int `toml:"context_window"`
+	// CompactAt is the share of the window past which the agent sums the
+	// session up before its next turn, as `aish compact` does; 0 never.
+	CompactAt float64 `toml:"compact_at"`
 	// PromptStatus shows the context size and the model at the right of the
 	// prompt.
 	PromptStatus bool `toml:"prompt_status"`
@@ -126,6 +129,7 @@ func Default() Config {
 		Markdown:       true,
 		CodeStyle:      "monokai",
 		PromptStatus:   true,
+		CompactAt:      0.8,
 		JournalIgnore:  []string{"*secret*", "env", "printenv", "cat *credentials*", "history"},
 		StateIgnore:    []string{"*TOKEN*", "*SECRET*", "*KEY*", "*PASSWORD*", "AWS_*"},
 		PolicyDir:      filepath.Join(Dir(), "policy"),
@@ -201,6 +205,9 @@ func (c Config) check() error {
 		if _, err := regexp.Compile(p); err != nil {
 			return fmt.Errorf("mask %q: %w", p, err)
 		}
+	}
+	if c.CompactAt < 0 || c.CompactAt >= 1 {
+		return fmt.Errorf("compact_at = %v: a share of the window, at least 0 (off) and less than 1", c.CompactAt)
 	}
 	for _, f := range []struct {
 		key string

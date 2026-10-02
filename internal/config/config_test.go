@@ -51,6 +51,7 @@ func TestLoadErrors(t *testing.T) {
 		{"x = {y = 1}\na.b = 2\n", `unknown keys "x", "a.b"`},
 		{"max_steps = -1\n", "max_steps = -1: must not be negative"},
 		{"max_output_bytes = -5\n", "max_output_bytes = -5: must not be negative"},
+		{"compact_at = 1.5\n", "compact_at = 1.5: a share of the window"},
 		{"max_tokens = \"1000\"\n", "max_tokens"},
 		{"mask = [\"ok\", \"(\"]\n", `mask "("`},
 		{"[policy]\ndenny = [\"sudo *\"]\n", `unknown key "policy.denny"`},

@@ -119,6 +119,9 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	p.mu.Lock()
 	p.project = project
 	cfg.Model, cfg.Effort = p.model, p.effort
+	if cfg.ContextWindow == 0 {
+		cfg.ContextWindow = p.window // the API's or `aish model`'s, for compact_at
+	}
 	a := p.ag
 	if a == nil {
 		a = &agent.Agent{Journal: journal{p}, Shell: shell{p}, UI: &ui{p: p}}
