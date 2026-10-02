@@ -31,6 +31,9 @@ type ToolInfo struct {
 	Description string          `json:"description,omitempty"`
 	Schema      json.RawMessage `json:"schema,omitempty"`
 	Expose      string          `json:"expose,omitempty"`
+	// Timeout is how long a call may take in the proxy, the server's start
+	// included: the client waits as long. Set by List, not cached.
+	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
 type ListParams struct {
@@ -75,7 +78,15 @@ type server struct {
 	known    bool
 	err      error
 	failed   time.Time
-	starting chan struct{}
+	starting *startup
+}
+
+// startup is a server start in progress; everyone who needs the server
+// waits for it.
+type startup struct {
+	done chan struct{}
+	conn conn
+	err  error
 }
 
 func NewManager(cfgs map[string]Server, cacheDir string) *Manager {
@@ -122,17 +133,32 @@ func (m *Manager) Warm() {
 
 func (m *Manager) List(ctx context.Context, wait bool) ListResult {
 	var res ListResult
-	for _, s := range m.servers {
-		s.mu.Lock()
-		known := s.known
-		s.mu.Unlock()
-		if !known && wait {
-			if _, err := m.ensure(ctx, s, false); err != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", s.name, err))
+	if wait {
+		// All at once, so that the client waits startTimeout, not that
+		// many times over.
+		errs := make([]error, len(m.servers))
+		var wg sync.WaitGroup
+		for i, s := range m.servers {
+			s.mu.Lock()
+			known := s.known
+			s.mu.Unlock()
+			if !known {
+				wg.Go(func() { _, errs[i] = m.ensure(ctx, s, false) })
 			}
 		}
+		wg.Wait()
+		for i, err := range errs {
+			if err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", m.servers[i].name, err))
+			}
+		}
+	}
+	for _, s := range m.servers {
 		s.mu.Lock()
-		res.Tools = append(res.Tools, s.tools...)
+		for _, t := range s.tools {
+			t.Timeout = startTimeout + s.timeout()
+			res.Tools = append(res.Tools, t)
+		}
 		s.mu.Unlock()
 	}
 	m.mu.Lock()
@@ -157,11 +183,7 @@ func (m *Manager) Call(ctx context.Context, name string, args map[string]any) (j
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", s.name, err)
 	}
-	timeout := callTimeout
-	if s.cfg.Timeout > 0 {
-		timeout = time.Duration(s.cfg.Timeout) * time.Second
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, s.timeout())
 	defer cancel()
 	if args == nil {
 		args = map[string]any{}
@@ -171,6 +193,14 @@ func (m *Manager) Call(ctx context.Context, name string, args map[string]any) (j
 		return nil, fmt.Errorf("%s: %w", s.name, err)
 	}
 	return res, nil
+}
+
+// timeout is that of a tool call.
+func (s *server) timeout() time.Duration {
+	if s.cfg.Timeout > 0 {
+		return time.Duration(s.cfg.Timeout) * time.Second
+	}
+	return callTimeout
 }
 
 func (m *Manager) find(name string) (*server, ToolInfo) {
@@ -196,40 +226,46 @@ func (m *Manager) ensure(ctx context.Context, s *server, force bool) (conn, erro
 			defer s.mu.Unlock()
 			return s.conn, nil
 		}
-		if ch := s.starting; ch != nil {
-			s.mu.Unlock()
-			select {
-			case <-ch:
-				continue
-			case <-ctx.Done():
-				return nil, ctx.Err()
+		st, mine := s.starting, false
+		if st == nil {
+			if s.err != nil && !force && time.Since(s.failed) < retryAfter {
+				defer s.mu.Unlock()
+				return nil, s.err
 			}
+			st, mine = &startup{done: make(chan struct{})}, true
+			s.starting = st
+			go m.start(s, st)
 		}
-		if s.err != nil && !force && time.Since(s.failed) < retryAfter {
-			defer s.mu.Unlock()
-			return nil, s.err
-		}
-		ch := make(chan struct{})
-		s.starting = ch
 		s.mu.Unlock()
+		select {
+		case <-st.done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if mine {
+			return st.conn, st.err
+		}
+	}
+}
 
-		c, tools, err := s.connect()
-		s.mu.Lock()
-		s.starting = nil
-		close(ch)
-		if err != nil {
-			s.err, s.failed = err, time.Now()
-		} else {
-			s.conn, s.tools, s.known, s.err = c, tools, true, nil
-		}
-		s.mu.Unlock()
-		if err != nil {
-			return nil, err
-		}
+// start does not stop with the caller that asked for it: others may be
+// waiting for the server too, and the start is bounded by startTimeout.
+func (m *Manager) start(s *server, st *startup) {
+	c, tools, err := s.connect()
+	s.mu.Lock()
+	s.starting = nil
+	if err != nil {
+		s.err, s.failed = err, time.Now()
+	} else {
+		s.conn, s.tools, s.known, s.err = c, tools, true, nil
+	}
+	s.mu.Unlock()
+	if err == nil {
 		m.save(s, tools)
 		m.wrap()
-		return c, nil
 	}
+	st.conn, st.err = c, err
+	close(st.done)
 }
 
 var unsafeName = regexp.MustCompile(`[^a-zA-Z0-9_-]`)

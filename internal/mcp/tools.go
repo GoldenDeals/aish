@@ -18,8 +18,14 @@ import (
 // Remote returns the MCP tools the proxy knows as tools that call it, and
 // the problems it reported. Wait starts servers whose tools are unknown.
 func Remote(c *rpc.Client, wait bool) ([]tools.Tool, []string) {
+	timeout := rpc.CallTimeout
+	if wait {
+		timeout += startTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	var res ListResult
-	if err := c.Call(rpc.MethodMCPList, ListParams{Wait: wait}, &res); err != nil {
+	if err := c.CallContext(ctx, rpc.MethodMCPList, ListParams{Wait: wait}, &res); err != nil {
 		return nil, []string{"mcp: " + err.Error()}
 	}
 	var out []tools.Tool
@@ -29,38 +35,29 @@ func Remote(c *rpc.Client, wait bool) ([]tools.Tool, []string) {
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", info.Name, err))
 			continue
 		}
-		name := info.Name
 		out = append(out, tools.Tool{
-			Name: name, Desc: info.Description, Args: args, Server: info.Server,
+			Name: info.Name, Desc: info.Description, Args: args, Server: info.Server,
 			RawSchema: info.Schema, Hidden: info.Expose != "tools",
 			Run: func(ctx context.Context, args map[string]any) (string, error) {
-				return call(ctx, c, name, args)
+				return call(ctx, c, info, args)
 			},
 		})
 	}
 	return out, res.Errors
 }
 
-func call(ctx context.Context, c *rpc.Client, name string, args map[string]any) (string, error) {
-	type reply struct {
-		raw json.RawMessage
-		err error
+func call(ctx context.Context, c *rpc.Client, info ToolInfo, args map[string]any) (string, error) {
+	timeout := info.Timeout
+	if timeout <= 0 { // a proxy older than the field
+		timeout = startTimeout + callTimeout
 	}
-	ch := make(chan reply, 1)
-	go func() {
-		var raw json.RawMessage
-		err := c.Call(rpc.MethodMCPCall, CallParams{Name: name, Args: args}, &raw)
-		ch <- reply{raw, err}
-	}()
-	select {
-	case r := <-ch:
-		if r.err != nil {
-			return "", r.err
-		}
-		return Format(r.raw)
-	case <-ctx.Done():
-		return "", ctx.Err()
+	ctx, cancel := context.WithTimeout(ctx, timeout+rpc.CallTimeout)
+	defer cancel()
+	var raw json.RawMessage
+	if err := c.CallContext(ctx, rpc.MethodMCPCall, CallParams{Name: info.Name, Args: args}, &raw); err != nil {
+		return "", err
 	}
+	return Format(raw)
 }
 
 // Format turns a CallToolResult into command output: text as is, binary

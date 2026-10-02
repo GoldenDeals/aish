@@ -3,8 +3,11 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"time"
@@ -81,8 +84,9 @@ type Output struct {
 	TUI    bool   `json:"tui"`
 }
 
-// Handler serves one method call.
-type Handler func(method string, params json.RawMessage) (any, error)
+// Handler serves one method call. Ctx is cancelled when the client hangs
+// up, so the work for a client that gave up or was killed stops.
+type Handler func(ctx context.Context, method string, params json.RawMessage) (any, error)
 
 func Serve(l net.Listener, h Handler) {
 	for {
@@ -90,22 +94,32 @@ func Serve(l net.Listener, h Handler) {
 		if err != nil {
 			return
 		}
-		go func() {
-			defer c.Close()
-			var req Request
-			if err := json.NewDecoder(c).Decode(&req); err != nil {
-				return
-			}
-			var resp Response
-			res, err := h(req.Method, req.Params)
-			if err != nil {
-				resp.Error = err.Error()
-			} else {
-				resp.Result, _ = json.Marshal(res)
-			}
-			_ = json.NewEncoder(c).Encode(resp)
-		}()
+		go serve(c, h)
 	}
+}
+
+func serve(c net.Conn, h Handler) {
+	defer c.Close()
+	var req Request
+	if err := json.NewDecoder(c).Decode(&req); err != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The client sends nothing after the request, so a read returns only
+	// when it closes the connection.
+	go func() {
+		io.Copy(io.Discard, c)
+		cancel()
+	}()
+	var resp Response
+	res, err := h(ctx, req.Method, req.Params)
+	if err != nil {
+		resp.Error = err.Error()
+	} else {
+		resp.Result, _ = json.Marshal(res)
+	}
+	_ = json.NewEncoder(c).Encode(resp)
 }
 
 // Client talks to the proxy at $AISH_SOCK.
@@ -119,21 +133,48 @@ func FromEnv() (*Client, error) {
 	return &Client{Path: p}, nil
 }
 
+const (
+	dialTimeout = 2 * time.Second
+	// CallTimeout bounds a call made without a deadline of its own: the
+	// proxy answers those at once, and a hung one must not hang every aish
+	// process in the shell.
+	CallTimeout = 10 * time.Second
+)
+
+// Call is CallContext with CallTimeout.
 func (c *Client) Call(method string, params, result any) error {
-	conn, err := net.DialTimeout("unix", c.Path, 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), CallTimeout)
+	defer cancel()
+	return c.CallContext(ctx, method, params, result)
+}
+
+// CallContext gives up on the call when ctx is done. That closes the
+// connection, which cancels the call in the proxy too.
+func (c *Client) CallContext(ctx context.Context, method string, params, result any) error {
+	d := net.Dialer{Timeout: dialTimeout}
+	conn, err := d.DialContext(ctx, "unix", c.Path)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { conn.SetDeadline(time.Now()) })
+	defer stop()
 	req := Request{Method: method}
 	if params != nil {
 		req.Params, _ = json.Marshal(params)
 	}
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return err
-	}
 	var resp Response
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+	err = json.NewEncoder(conn).Encode(req)
+	if err == nil {
+		err = json.NewDecoder(conn).Decode(&resp)
+	}
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("no answer from the aish proxy to %s: %w", method, ctx.Err())
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return err
 	}
 	if resp.Error != "" {
@@ -155,8 +196,11 @@ func (c *Client) Append(es ...session.Entry) error {
 	return c.Call(MethodAppend, AppendParams{Entries: es}, nil)
 }
 
+// WaitOutput waits up to timeout for the output of the agent's command id.
 func (c *Client) WaitOutput(id string, timeout time.Duration) (Output, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+CallTimeout)
+	defer cancel()
 	var out Output
-	err := c.Call(MethodWaitOutput, WaitParams{ID: id, TimeoutMS: int(timeout / time.Millisecond)}, &out)
+	err := c.CallContext(ctx, MethodWaitOutput, WaitParams{ID: id, TimeoutMS: int(timeout / time.Millisecond)}, &out)
 	return out, err
 }

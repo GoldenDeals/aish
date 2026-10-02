@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -29,7 +31,7 @@ func TestWaitInterrupted(t *testing.T) {
 	res := make(chan result, 1)
 	go func() {
 		b, _ := json.Marshal(rpc.WaitParams{ID: "c1", TimeoutMS: 60_000})
-		v, err := p.handle(rpc.MethodWaitOutput, b)
+		v, err := p.handle(context.Background(), rpc.MethodWaitOutput, b)
 		out, _ := v.(rpc.Output)
 		res <- result{out, err}
 	}()
@@ -66,10 +68,27 @@ func TestWaitTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := New(sess)
-	if _, err := p.wait("c1", time.Millisecond); err == nil {
+	if _, err := p.wait(context.Background(), "c1", time.Millisecond); err == nil {
 		t.Fatal("no error without output")
 	}
 	if len(p.waiters) != 0 {
 		t.Errorf("left waiters %v", p.waiters)
+	}
+}
+
+// An agent that gave up waiting leaves no waiter behind.
+func TestWaitCancel(t *testing.T) {
+	sess, err := session.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := New(sess)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := p.wait(ctx, "c1", time.Minute); !errors.Is(err, context.Canceled) {
+		t.Fatalf("wait: %v", err)
+	}
+	if len(p.waiters) != 0 {
+		t.Errorf("waiters left: %v", p.waiters)
 	}
 }

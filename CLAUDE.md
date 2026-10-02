@@ -19,7 +19,7 @@ go test ./...
 go vet ./...
 ```
 
-Тесты есть у `agent`, `bashstate`, `capture`, `config`, `llm`, `markdown`, `mcp`, `policy`, `proxy`, `session`, `shellinit`, `skills`, `tools`; они чистые
+Тесты есть у `agent`, `bashstate`, `capture`, `config`, `llm`, `markdown`, `mcp`, `policy`, `proxy`, `rpc`, `session`, `shellinit`, `skills`, `tools`; они чистые
 (без PTY и сети; `mcp` запускает свой тестовый бинарь как stub-сервер). После изменений в `internal/shellinit/init.bash` обязательно гоняй
 `go test ./internal/shellinit` — он проверяет скрипт реальным bash.
 
@@ -123,6 +123,11 @@ OSC-последовательности `\e]6973;<nonce>;<kind>;<payload>\a`, �
   `return` выходит из `__aish_ask` и обрывает цикл без `agent resume`; `$1` — текст запроса.
 - **Весь доступ к полям `Proxy` под `p.mu`.** `output`, `marker`, `key` и RPC-обработчики идут
   из разных горутин; запись в терминал тоже под локом, иначе Ctrl+O-вьюер перемешается с выводом.
+- **RPC-вызов ограничен по времени.** `Client.Call` ждёт ответа `rpc.CallTimeout` (10 с);
+  метод, который в прокси может работать дольше (`wait_output`, `mcp_list` с `wait`,
+  `mcp_call`), клиент зовёт через `CallContext` со своим дедлайном. Обработчик обязан
+  уважать `ctx`: `rpc.Serve` отменяет его, когда клиент закрыл соединение (убит, Ctrl+C,
+  таймаут). Старт MCP-сервера от `ctx` не зависит — его ждут и другие.
 - **Каждому tool call нужен result.** Прерывание по Ctrl+C оставляет «висящие» вызовы —
   `Agent.Start` закрывает их синтетическими результатами (`closePending`). Не ломай этот инвариант, Anthropic
   API отвергает сообщения без парных результатов.

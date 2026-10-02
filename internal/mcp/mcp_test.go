@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/inebotov/aish/internal/tools"
 )
@@ -64,6 +66,9 @@ func stub() {
 		case "tools/call":
 			switch m.Params.Name {
 			case "search":
+				if m.Params.Arguments["query"] == "hang" {
+					continue
+				}
 				b, _ := json.Marshal(m.Params.Arguments)
 				reply(m.ID, fmt.Sprintf(`{"content":[{"type":"text","text":%q},{"type":"image","mimeType":"image/png","data":%q}]}`,
 					b, base64.StdEncoding.EncodeToString([]byte("PNG"))))
@@ -174,6 +179,41 @@ func TestManager(t *testing.T) {
 	}
 	if st := m2.Status().Servers[0]; st.State != "idle" || len(st.Tools) != 3 {
 		t.Errorf("status from the cache: %+v", st)
+	}
+}
+
+// A client that gives up stops waiting at once, but neither the start it
+// asked for nor the server is lost for the others.
+func TestGiveUp(t *testing.T) {
+	dir := t.TempDir()
+	starts := filepath.Join(dir, "starts")
+	m := stubManager(t, filepath.Join(dir, "cache"), starts)
+
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	if res := m.List(gone, true); len(res.Errors) != 1 || !strings.Contains(res.Errors[0], "context canceled") {
+		t.Fatalf("cancelled listing: %+v", res)
+	}
+	if res := m.List(context.Background(), true); len(res.Tools) != 3 || len(res.Errors) != 0 {
+		t.Fatalf("listing after it: %+v", res)
+	}
+	if b, _ := os.ReadFile(starts); string(b) != "start\n" {
+		t.Errorf("starts %q, want one", b)
+	}
+	if res := m.List(context.Background(), false); res.Tools[0].Timeout != startTimeout+callTimeout {
+		t.Errorf("timeout %v", res.Tools[0].Timeout)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if _, err := m.Call(ctx, "stub_search", map[string]any{"query": "hang"}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("hung call: %v", err)
+	}
+	if _, err := m.Call(context.Background(), "stub_search", map[string]any{"query": "z"}); err != nil {
+		t.Errorf("call after it: %v", err)
+	}
+	if st := m.Status().Servers[0]; st.State != "running" {
+		t.Errorf("status %+v", st)
 	}
 }
 

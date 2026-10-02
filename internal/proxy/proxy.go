@@ -539,7 +539,7 @@ func render(b *capture.Buffer) (string, bool) {
 	return capture.Clean(b.Bytes()), false
 }
 
-func (p *Proxy) handle(method string, params json.RawMessage) (any, error) {
+func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
 	switch method {
 	case rpc.MethodInfo:
 		p.mu.Lock()
@@ -602,24 +602,24 @@ func (p *Proxy) handle(method string, params json.RawMessage) (any, error) {
 		if err := json.Unmarshal(params, &wp); err != nil {
 			return nil, err
 		}
-		return p.wait(wp.ID, time.Duration(wp.TimeoutMS)*time.Millisecond)
+		return p.wait(ctx, wp.ID, time.Duration(wp.TimeoutMS)*time.Millisecond)
 	case rpc.MethodMCPList:
 		var lp mcp.ListParams
 		if err := json.Unmarshal(params, &lp); err != nil {
 			return nil, err
 		}
-		return p.mcp.List(context.Background(), lp.Wait), nil
+		return p.mcp.List(ctx, lp.Wait), nil
 	case rpc.MethodMCPCall:
 		var cp mcp.CallParams
 		if err := json.Unmarshal(params, &cp); err != nil {
 			return nil, err
 		}
-		return p.mcp.Call(context.Background(), cp.Name, cp.Args)
+		return p.mcp.Call(ctx, cp.Name, cp.Args)
 	}
 	return nil, fmt.Errorf("unknown method %q", method)
 }
 
-func (p *Proxy) wait(id string, timeout time.Duration) (rpc.Output, error) {
+func (p *Proxy) wait(ctx context.Context, id string, timeout time.Duration) (rpc.Output, error) {
 	p.mu.Lock()
 	if out, ok := p.done[id]; ok {
 		delete(p.done, id)
@@ -636,6 +636,14 @@ func (p *Proxy) wait(id string, timeout time.Duration) (rpc.Output, error) {
 	select {
 	case <-ch:
 	case <-time.After(timeout):
+	case <-ctx.Done():
+		// The agent is gone; any output stays for whoever asks next.
+		p.mu.Lock()
+		if p.waiters[id] == ch {
+			delete(p.waiters, id)
+		}
+		p.mu.Unlock()
+		return rpc.Output{}, ctx.Err()
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
