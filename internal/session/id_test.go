@@ -7,12 +7,12 @@ import (
 )
 
 func TestCheckID(t *testing.T) {
-	for _, id := range []string{"20261002-211700-1234", "20261002-211700-1234-2", "my.session", "a_b"} {
+	for _, id := range []string{"20261002-211700-1234", "20261002-211700-1234-2", "20261002-150405-123-2", "a_b"} {
 		if err := CheckID(id); err != nil {
 			t.Errorf("%q: %v", id, err)
 		}
 	}
-	for _, id := range []string{"", ".", "..", "../x", "a/b", "/x", ".hidden", "-x", "a b", "x;id", "a'b", "a\nb", "ä"} {
+	for _, id := range []string{"", ".", "..", "../x", "a/b", "/x", ".hidden", "-x", "a b", "x;id", "a'b", "a\nb", "ä", "a.b", "x.state", "my.session"} {
 		if err := CheckID(id); err == nil {
 			t.Errorf("%q passed", id)
 		}

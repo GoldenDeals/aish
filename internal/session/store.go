@@ -165,6 +165,9 @@ func List(dir string) ([]Info, error) {
 	var list []Info
 	for _, f := range files {
 		id := trimExt(filepath.Base(f))
+		if CheckID(id) != nil {
+			continue // Load would refuse it
+		}
 		info := Info{ID: id, Modified: modTime(f), Open: isOpen(dir, id)}
 		if b, err := os.ReadFile(filepath.Join(dir, id+".name")); err == nil {
 			info.Name = strings.TrimSpace(string(b))

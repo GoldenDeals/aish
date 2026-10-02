@@ -75,7 +75,7 @@ func (p *Proxy) clear(cp rpc.ClearParams) (rpc.Info, error) {
 		if err != nil {
 			return rpc.Info{}, err
 		}
-		_, err = fmt.Fprintf(f, "export AISH_SESSION=%s\n", p.sess.ID)
+		_, err = fmt.Fprintf(f, "export AISH_SESSION='%s'\n", p.sess.ID)
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
