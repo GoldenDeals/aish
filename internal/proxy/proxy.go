@@ -92,9 +92,10 @@ type Proxy struct {
 	effort  string // and this, "" being the model's default
 	window  int    // its context size, 0 if unknown
 	profile string // and the profile of config.toml they are of, "" for its top level
-	// defProfile is the one config.toml selected, which the status does
-	// not name.
-	defProfile string
+	// defProfile is the one config.toml selects, as the last request (or
+	// the start) read it, which the status does not name.
+	defProfile  string
+	windowAsked string // what lookupOnce last asked about, the key included
 
 	// The shell's state: how it started, how it was at the last prompt, and
 	// what of it was saved last (session id and all).

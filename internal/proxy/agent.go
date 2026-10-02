@@ -131,10 +131,29 @@ func (p *Proxy) cancelRequest() {
 // the [policy] rules change; and, for a fresh request, the tools of the
 // shell's directory.
 func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.Agent, error) {
-	// The shell's profile: config.Load would take the one config.toml
-	// selects, which `aish model` may have switched from.
+	// What config.toml selects now: what the status compares the shell's
+	// profile with, and where a shell goes whose profile is gone. Load
+	// fails where the shell's profile may not, on a profile $AISH_PROFILE
+	// or the profile key names and config.toml has not: LoadProfile tells
+	// what is wrong if the shell's profile is too.
+	def, defErr := config.Load()
 	p.mu.Lock()
-	profile := p.profile
+	if defErr == nil {
+		p.defProfile = def.Profile
+		if _, ok := def.Profiles[p.profile]; p.profile != "" && !ok {
+			if err := p.leaveGone(def); err != nil {
+				p.mu.Unlock()
+				return nil, err
+			}
+		}
+	}
+	// One moment for all of them: `aish model` may land in between. The
+	// shell's profile, not the one config.toml selects, which `aish model`
+	// may have switched from.
+	profile, model, effort, window, fixed := p.profile, p.model, p.effort, p.window, p.fixedWindow
+	if window > 0 {
+		p.windowAsked = "" // see lookupOnce
+	}
 	p.mu.Unlock()
 	cfg, err := config.LoadProfile(profile)
 	if err != nil {
@@ -149,9 +168,9 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	}
 	p.mu.Lock()
 	p.project = project
-	cfg.Model, cfg.Effort = p.model, p.effort
+	cfg.Model, cfg.Effort = model, effort
 	if cfg.ContextWindow == 0 {
-		cfg.ContextWindow = p.window // the API's or `aish model`'s, for compact_at
+		cfg.ContextWindow = window // the API's or `aish model`'s, for compact_at
 	}
 	a := p.ag
 	if a == nil {
@@ -164,6 +183,13 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	prov, err := p.providerFor(cfg)
 	if err != nil {
 		return nil, err
+	}
+	// Not waited for: the first request must not stand on the models list.
+	// The window reaches cfg with the next prepare.
+	if window == 0 && !fixed {
+		p.mu.Lock()
+		p.lookupOnce(prov, profile, model, cfg.APIKey)
+		p.mu.Unlock()
 	}
 	rules := policy.Rules{Deny: cfg.Policy.Deny, Ask: cfg.Policy.Ask, WriteOutsideHome: cfg.Policy.WriteOutsideHome}
 	pol, err := p.policies.Engine(ctx, cfg.PolicyDir, rules)
