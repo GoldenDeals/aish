@@ -14,11 +14,16 @@ when { resource in [Command::"exit", Command::"exec", Command::"logout"] };
 
 @reason("recursive delete of / or $HOME")
 forbid(principal, action == Action::"run", resource == Command::"rm")
-when { context.flags.containsAny(["r", "R"]) && context.paths.containsAny(["/", context.home]) };
+when { context.flags.containsAny(["r", "R", "recursive"]) && context.paths.containsAny(["/", context.home]) };
 
+// A refspec starting with + (git push origin +main) forces the push without
+// a flag. A set has no prefix match, so the operand is found in the text.
 @reason("force push is not allowed")
 forbid(principal, action == Action::"run", resource == Command::"git")
-when { context.args.contains("push") && context.flags.containsAny(["f", "force", "force-with-lease"]) };
+when {
+  context.args.contains("push") &&
+  (context.flags.containsAny(["f", "force", "force-with-lease"]) || context.text like "* +*")
+};
 
 @reason("writing outside $HOME")
 forbid(principal, action == Action::"write", resource)
