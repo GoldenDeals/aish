@@ -79,6 +79,7 @@ type Proxy struct {
 	agent   map[string]*segment // commands run on behalf of the agent, by call id
 	tool    *fold               // live output of an external tool, while it runs
 	at      *statusAt           // where the agent left the cursor after printing its next command
+	line    *inputLine          // the line typed at the prompt, kept off its status
 	folds   []Fold              // folded outputs of the last request, for Ctrl+O
 	view    *viewer             // open while Ctrl+O shows the folds
 	held    []byte              // shell output that arrived while the viewer was open
@@ -390,6 +391,9 @@ func (p *Proxy) key(b []byte) []byte {
 	if p.ask != nil {
 		return p.askKey(b)
 	}
+	if p.line != nil {
+		p.line.typed()
+	}
 	if p.form != nil {
 		return p.formKey(b)
 	}
@@ -433,6 +437,7 @@ func (p *Proxy) closeView() {
 func (p *Proxy) resized() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.dropLine() // the terminal rewrapped the lines the model knows
 	if p.view != nil {
 		p.view.resize(p.size())
 		_, _ = p.out.Write(append([]byte("\x1b[2J"), p.view.render()...))
@@ -502,6 +507,9 @@ func (p *Proxy) output(b []byte) {
 	if p.tool != nil {
 		show = p.tool.write(b)
 	}
+	if p.line != nil {
+		show = p.line.feed(show)
+	}
 	p.emit(show)
 }
 
@@ -524,8 +532,10 @@ func (p *Proxy) marker(m Marker) {
 	defer p.mu.Unlock()
 	switch m.Kind {
 	case "cmd-start":
+		p.dropLine()
 		p.user = &segment{cmd: m.Payload, buf: capture.NewBuffer(headCap, tailCap)}
 	case "ask-start":
+		p.dropLine()
 		p.asking = true
 		p.folds = nil
 		// A command that asks (an alias of __aish_ask) is the request's:

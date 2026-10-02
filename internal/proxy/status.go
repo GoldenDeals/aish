@@ -76,16 +76,19 @@ func (p *Proxy) statusText() (text, color string) {
 
 // drawStatus puts the status at the right edge of the line the prompt is
 // about to be printed on. The cursor is put back, so bash and readline
-// never know: no PS1 to keep in sync with prompts that rebuild it.
+// never know: no PS1 to keep in sync with prompts that rebuild it. Till
+// the next command, p.line keeps it off the line being typed.
 func (p *Proxy) drawStatus() {
+	p.dropLine()
 	if !p.promptStatus || p.size == nil {
 		return
 	}
 	text, color := p.statusText()
-	w, _ := p.size()
+	w, h := p.size()
 	width := runewidth.StringWidth(text)
 	if w < width+40 {
 		return // the prompt and the command need the room more
 	}
-	p.emit(fmt.Appendf(nil, "\x1b7\x1b[%dG%s%s\x1b[0m\x1b8", w-width, color, text))
+	p.line = newInputLine(w, h, text, color)
+	p.emit(p.line.draw())
 }
