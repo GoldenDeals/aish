@@ -12,8 +12,11 @@ import (
 // Profile is a [profiles.NAME] table: an endpoint and its model, laid over
 // the top level of config.toml, which stays the profile of a config with
 // none. A key the table does not set is the top level's, so an empty table
-// is the top level itself. Pointers tell a key that is set from one that
-// is not.
+// is the top level itself. The API key is the exception, lest it go to
+// another endpoint: a table setting api_key or api_key_env has both of its
+// own, and one naming provider or base_url but no key has none, so the
+// provider's variable gives it. Pointers tell a key that is set from one
+// that is not.
 type Profile struct {
 	Provider      *string `toml:"provider"`
 	BaseURL       *string `toml:"base_url"`
@@ -70,6 +73,19 @@ func (c Config) withProfile(name, from string) (Config, error) {
 	lay(&c.Effort, pr.Effort)
 	lay(&c.MaxTokens, pr.MaxTokens)
 	lay(&c.ContextWindow, pr.ContextWindow)
+	// Whether the endpoint changed is told by what the table sets, not by
+	// the values: "" and "anthropic" are one provider, which only llm knows.
+	switch {
+	case pr.APIKey != nil || pr.APIKeyEnv != nil:
+		if pr.APIKey == nil {
+			c.APIKey = ""
+		}
+		if pr.APIKeyEnv == nil {
+			c.APIKeyEnv = ""
+		}
+	case pr.Provider != nil || pr.BaseURL != nil:
+		c.APIKey, c.APIKeyEnv = "", ""
+	}
 	return c, nil
 }
 

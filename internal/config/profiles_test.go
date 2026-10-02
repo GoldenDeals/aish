@@ -43,8 +43,9 @@ func TestProfileOverTop(t *testing.T) {
 	if cfg.Profile != "work" || cfg.Provider != "anthropic" || cfg.BaseURL != "http://127.0.0.1:8317" || cfg.Model != "claude-opus-5" {
 		t.Errorf("the profile key's: %q %q %q %q", cfg.Profile, cfg.Provider, cfg.BaseURL, cfg.Model)
 	}
-	// What the profile does not set is the top level's.
-	if cfg.Effort != "high" || cfg.MaxTokens != 1000 || cfg.APIKeyEnv != Default().APIKeyEnv {
+	// What the profile does not set is the top level's, but for the key:
+	// work names its own base_url, so the top level's api_key_env stays out.
+	if cfg.Effort != "high" || cfg.MaxTokens != 1000 || cfg.APIKeyEnv != "" {
 		t.Errorf("not from the top level: %q %d %q", cfg.Effort, cfg.MaxTokens, cfg.APIKeyEnv)
 	}
 	if got := cfg.ProfileNames(); !slices.Equal(got, []string{"local", "top", "work"}) {
