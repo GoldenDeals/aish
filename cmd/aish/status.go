@@ -76,7 +76,11 @@ func statusCmd(cfg config.Config) int {
 
 	head("model")
 	row("provider", cfg.Provider)
-	row("base_url", cfg.BaseURL)
+	base := cfg.BaseURL
+	if base == "" {
+		base = "the provider's API"
+	}
+	row("base_url", base)
 	m := info.Model
 	if m != cfg.Model {
 		m += fmt.Sprintf(" (switched in this shell; config: %s)", cfg.Model)

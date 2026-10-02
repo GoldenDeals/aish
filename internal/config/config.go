@@ -17,7 +17,7 @@ import (
 type Config struct {
 	// Provider selects the wire protocol: "anthropic" or "openai".
 	Provider string `toml:"provider"`
-	// BaseURL of the API. Defaults to a local cliproxyapi instance.
+	// BaseURL of the API. Empty: the provider's own.
 	BaseURL string `toml:"base_url"`
 	// APIKey is used as-is if set; otherwise it is read from APIKeyEnv.
 	APIKey    string `toml:"api_key"`
@@ -88,7 +88,6 @@ func dataDir() string {
 func Default() Config {
 	return Config{
 		Provider:       "anthropic",
-		BaseURL:        "http://127.0.0.1:8317",
 		APIKeyEnv:      "AISH_API_KEY",
 		Model:          "claude-opus-5",
 		MaxSteps:       50,

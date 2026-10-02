@@ -274,7 +274,7 @@ argv каждой простой команды из bash-строки, вклю
 
 ```toml
 provider = "anthropic"            # или "openai" (Chat Completions)
-base_url = "http://127.0.0.1:8317" # cliproxyapi
+base_url = "http://127.0.0.1:8317" # прокси, например cliproxyapi; нет — официальный API провайдера
 api_key_env = "AISH_API_KEY"
 model = "claude-opus-5"           # или $AISH_MODEL
 effort = "high"                   # low … max (у OpenAI ещё none, minimal); нет — уровень модели; или $AISH_EFFORT
