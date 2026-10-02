@@ -78,7 +78,11 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 	}
 	// Cache breakpoints, in the order the API renders the prompt: tools,
 	// system, the conversation so far. The last one moves forward every turn,
-	// and the turn after reads everything up to it from the cache.
+	// and the turn after reads everything up to it from the cache. A breakpoint
+	// finds an earlier entry only within 20 blocks behind it, and a turn of a
+	// dozen parallel calls adds more than that, so the user message before the
+	// last gets one too: it is where the last breakpoint of the previous turn
+	// stood, and that turn wrote its prefix. Four in all, the API's limit.
 	for _, t := range req.Tools {
 		props, required := schemaParts(t.Schema)
 		tp := anthropic.ToolParam{
@@ -94,9 +98,16 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 	if req.System != "" {
 		params.System = []anthropic.TextBlockParam{{Text: req.System, CacheControl: anthropic.NewCacheControlEphemeralParam()}}
 	}
-	if n := len(params.Messages); n > 0 && params.Messages[n-1].Role == anthropic.MessageParamRoleUser {
-		// Only a user message: an assistant one may be a replayed Raw.
-		blocks := params.Messages[n-1].Content
+	// Only user messages: an assistant one may be a replayed Raw.
+	for i, users := len(params.Messages)-1, 0; i >= 0 && users < 2; i-- {
+		if params.Messages[i].Role != anthropic.MessageParamRoleUser {
+			continue
+		}
+		users++
+		if users == 1 && i != len(params.Messages)-1 {
+			continue
+		}
+		blocks := params.Messages[i].Content
 		if cc := blocks[len(blocks)-1].GetCacheControl(); cc != nil {
 			*cc = anthropic.NewCacheControlEphemeralParam()
 		}

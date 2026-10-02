@@ -63,8 +63,8 @@ func TestAnthropicCacheControl(t *testing.T) {
 		t.Errorf("tokens: in %d, cached %d, out %d; want 330, 300, 5", resp.InputTokens, resp.CachedTokens, resp.OutputTokens)
 	}
 
-	if n := strings.Count(string(body), `"cache_control"`); n != 3 {
-		t.Errorf("%d cache_control in the request, want 3:\n%s", n, body)
+	if n := strings.Count(string(body), `"cache_control"`); n != 4 {
+		t.Errorf("%d cache_control in the request, want 4:\n%s", n, body)
 	}
 	var sent struct {
 		Tools    []map[string]any `json:"tools"`
@@ -86,6 +86,9 @@ func TestAnthropicCacheControl(t *testing.T) {
 	last := sent.Messages[2].Content
 	if !strings.Contains(string(last[len(last)-1]), `"cache_control"`) {
 		t.Errorf("no breakpoint on the last block of the last user message: %s", last[len(last)-1])
+	}
+	if prev := sent.Messages[0].Content; !strings.Contains(string(prev[len(prev)-1]), `"cache_control"`) {
+		t.Errorf("no breakpoint on the last block of the previous user message: %s", prev[len(prev)-1])
 	}
 	for _, b := range sent.Messages[1].Content {
 		if strings.Contains(string(b), `"cache_control"`) {
