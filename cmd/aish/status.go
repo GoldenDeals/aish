@@ -143,7 +143,8 @@ func statusCmd(cfg config.Config) int {
 	dirs := func(list string) string { return strings.Join(filepath.SplitList(list), ", ") }
 	// Loaded as the agent would: an error shows here, not on the next request.
 	if eng, err := policy.Load(context.Background(), cfg.PolicyDir, rulesOf(cfg)); err != nil {
-		row("policy", "\x1b[31m"+dirs(cfg.PolicyDir)+": "+err.Error()+"\x1b[0m")
+		// The row says policy already, and a validation error names its file.
+		row("policy", "\x1b[31m"+strings.TrimPrefix(err.Error(), "policy: ")+"\x1b[0m")
 	} else {
 		row("policy", policyLine(eng, cfg.PolicyDir, global, rulesOf(cfg).Len(), project))
 	}

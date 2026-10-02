@@ -14,7 +14,8 @@ func TestPolicyLine(t *testing.T) {
 	t.Setenv("HOME", root)
 	empty := filepath.Join(root, "empty")
 	cedar := filepath.Join(root, "cedar")
-	for _, d := range []string{empty, cedar} {
+	one := filepath.Join(root, "one")
+	for _, d := range []string{empty, cedar, one} {
 		if err := os.Mkdir(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -22,6 +23,9 @@ func TestPolicyLine(t *testing.T) {
 	src := "permit(principal, action, resource);\n" +
 		"forbid(principal, action == Action::\"run\", resource == Command::\"sudo\");\n"
 	if err := os.WriteFile(filepath.Join(cedar, "x.cedar"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(one, "y.cedar"), []byte("permit(principal, action, resource);\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	project := filepath.Join(root, "proj", ".aish.toml")
@@ -36,6 +40,7 @@ func TestPolicyLine(t *testing.T) {
 	}{
 		{"nothing", empty, policy.Rules{}, 0, "", "no policies in " + empty},
 		{"cedar", cedar, policy.Rules{}, 0, "", "2 policies in " + cedar + ": x.cedar (2)"},
+		{"one policy", one, policy.Rules{}, 0, "", "1 policy in " + one + ": y.cedar (1)"},
 		{"one global rule", empty, policy.Rules{Deny: []string{"sudo *"}}, 1, "",
 			"no policies in " + empty + " + 1 rule from config.toml"},
 		{"global and project rules", empty,

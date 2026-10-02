@@ -79,7 +79,10 @@ func policyLine(eng *policy.Engine, dir string, global, total int, project strin
 		files = append(files, fmt.Sprintf("%s (%d)", s.File, s.Policies))
 	}
 	line := "no policies in " + dirs
-	if n > 0 {
+	switch {
+	case n == 1:
+		line = fmt.Sprintf("1 policy in %s: %s", dirs, strings.Join(files, ", "))
+	case n > 1:
 		line = fmt.Sprintf("%d policies in %s: %s", n, dirs, strings.Join(files, ", "))
 	}
 	for _, r := range []struct {
