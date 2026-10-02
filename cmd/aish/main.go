@@ -15,7 +15,8 @@
 //	aish new [NAME]              start a new session that is saved
 //	aish compact [FOCUS]         replace the session with a summary
 //	aish status                  the context, the model and the settings
-//	aish model [NAME] [EFFORT]   list the models, switch this shell's model or effort
+//	aish model [PROFILE] [NAME] [EFFORT]
+//	                             list the models, switch this shell's profile, model or effort
 //	aish expand                  print the outputs folded during the last request (Ctrl+O)
 //	aish agent start -- TEXT     (internal) hand a request to the agent in the proxy
 //	aish agent resume ID RC      (internal) continue it after a bash command
@@ -57,7 +58,9 @@ const usage = `usage:
   aish new [NAME]            start a new session that is saved, as NAME if given
   aish compact [FOCUS]       replace the session with its summary (FOCUS: what to keep)
   aish status                show the context size, the model and the settings
-  aish model [NAME] [EFFORT] list the models, or switch the model and/or the
+  aish model [PROFILE] [NAME] [EFFORT]
+                             list the profiles and the models, or switch the
+                             profile of config.toml, the model and/or the
                              effort (low … max, default) for this shell
   aish expand                print outputs folded during the last request (Ctrl+O)
 
@@ -151,11 +154,12 @@ func shell(cfg config.Config, args []string) int {
 	return startShell(cfg, sess, resume && sess.Len() > 0)
 }
 
-// shellConfig is cfg with the model and the effort this shell uses: `aish
-// model` may have switched them.
+// shellConfig is cfg with the profile, the model and the effort this shell
+// uses: `aish model` may have switched them.
 func shellConfig(cfg config.Config, client *rpc.Client) config.Config {
 	var info rpc.Info
 	if client.Call(rpc.MethodInfo, nil, &info) == nil && info.Model != "" {
+		cfg, _ = profileOf(cfg, info)
 		cfg.Model, cfg.Effort = info.Model, info.Effort
 	}
 	return cfg

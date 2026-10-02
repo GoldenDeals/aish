@@ -89,6 +89,10 @@ type Proxy struct {
 	model   string // `aish model` switches it for this shell
 	effort  string // and this, "" being the model's default
 	window  int    // its context size, 0 if unknown
+	profile string // and the profile of config.toml they are of, "" for its top level
+	// defProfile is the one config.toml selected, which the status does
+	// not name.
+	defProfile string
 
 	// The shell's state: how it started, how it was at the last prompt, and
 	// what of it was saved last (session id and all).
@@ -136,6 +140,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	if prov, err := llm.New(pc); err == nil {
 		p.prov = prov
 	}
+	p.profile, p.defProfile = cfg.Profile, cfg.Profile
 	p.effort, p.window = cfg.Effort, cfg.ContextWindow
 	p.setModel(cfg.Model, cfg.ContextWindow)
 	if p.resumed != nil {
@@ -628,14 +633,7 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 		}
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if err := llm.CheckEffort(p.prov, mp.Effort); err != nil {
-			return nil, err
-		}
-		if mp.Model != p.model || mp.Window > 0 {
-			p.setModel(mp.Model, mp.Window)
-		}
-		p.effort = mp.Effort
-		return p.info(), nil
+		return p.switchModel(mp)
 	case rpc.MethodStatus:
 		p.mu.Lock()
 		defer p.mu.Unlock()

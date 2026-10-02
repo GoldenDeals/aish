@@ -31,6 +31,11 @@ type Config struct {
 	Effort string `toml:"effort"`
 	// MaxTokens bounds a reply; 0 leaves it to the provider, by the effort.
 	MaxTokens int64 `toml:"max_tokens"`
+	// Profile names the one of Profiles laid over the keys above and
+	// context_window; "" is none. After Load it is the profile in force,
+	// $AISH_PROFILE's if set.
+	Profile  string             `toml:"profile"`
+	Profiles map[string]Profile `toml:"profiles"`
 
 	// MaxSteps bounds the number of LLM round-trips per user request.
 	MaxSteps int `toml:"max_steps"`
@@ -146,10 +151,15 @@ func Default() Config {
 	}
 }
 
-// Load reads the config file (if any) over the defaults. The path can be
-// overridden with $AISH_CONFIG. Unknown keys and negative limits are errors:
-// otherwise a typo leaves the default in force without a word.
-func Load() (Config, error) {
+// Load reads the config file (if any) over the defaults, with the profile
+// $AISH_PROFILE or the profile key selects laid over its top level. The
+// path can be overridden with $AISH_CONFIG. Unknown keys, inside profiles
+// too, negative limits and an unknown profile are errors: otherwise a typo
+// leaves the default in force without a word.
+func Load() (Config, error) { return loadWith(nil) }
+
+// loadWith is Load with the profile named by profile, if not nil.
+func loadWith(profile *string) (Config, error) {
 	cfg := Default()
 	path := os.Getenv("AISH_CONFIG")
 	if path == "" {
@@ -162,13 +172,19 @@ func Load() (Config, error) {
 	if err == nil {
 		err = cfg.check()
 	}
+	if err == nil {
+		err = checkProfiles(cfg.Profiles)
+	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
-	if m := os.Getenv("AISH_MODEL"); m != "" {
+	if cfg, err = cfg.pick(profile); err != nil {
+		return cfg, fmt.Errorf("%s: %w", path, err)
+	}
+	if m := os.Getenv("AISH_MODEL"); m != "" && profile == nil {
 		cfg.Model = m
 	}
-	if e := os.Getenv("AISH_EFFORT"); e != "" {
+	if e := os.Getenv("AISH_EFFORT"); e != "" && profile == nil {
 		cfg.Effort = e
 	}
 	cfg.PolicyDir = expand(cfg.PolicyDir)

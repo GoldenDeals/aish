@@ -7,25 +7,27 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
+	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/session"
 )
 
-// lookupWindow asks the API for the context size of model, which the
-// models list reports for Anthropic.
-func (p *Proxy) lookupWindow(model string) {
-	if p.prov == nil {
+// lookupWindow asks prov, the provider of profile, for the context size of
+// model, which the models list reports for Anthropic. The shell may have
+// switched to another profile or model by the time it answers.
+func (p *Proxy) lookupWindow(prov llm.Provider, profile, model string) {
+	if prov == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	ms, err := p.prov.Models(ctx)
+	ms, err := prov.Models(ctx)
 	if err != nil {
 		return
 	}
 	for _, m := range ms {
 		if m.ID == model && m.Window > 0 {
 			p.mu.Lock()
-			if p.model == model && p.window == 0 {
+			if p.profile == profile && p.model == model && p.window == 0 {
 				p.window = m.Window
 			}
 			p.mu.Unlock()
@@ -33,11 +35,15 @@ func (p *Proxy) lookupWindow(model string) {
 	}
 }
 
-// statusText is the context size, the model and its effort, colored by how
-// full the context is.
+// statusText is the context size, the profile when it is not the one
+// config.toml selects, the model and its effort, colored by how full the
+// context is.
 func (p *Proxy) statusText() (text, color string) {
 	tokens := session.Tokens(p.sess.Entries(), p.maxOutput)
 	text, color = p.model, "\x1b[2m"
+	if p.profile != "" && p.profile != p.defProfile {
+		text = p.profile + " · " + text
+	}
 	if p.effort != "" {
 		text += " · " + p.effort
 	}

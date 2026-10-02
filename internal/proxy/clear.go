@@ -45,7 +45,7 @@ func (p *Proxy) clear(cp rpc.ClearParams) (rpc.Info, error) {
 		}
 		// The shell as the last prompt found it: right before the user
 		// typed `aish clear save`.
-		st := session.Saved{Model: p.model, Effort: p.effort}
+		st := session.Saved{Profile: p.profile, Model: p.model, Effort: p.effort}
 		if p.base != nil && p.cur != nil {
 			st.Shell = bashstate.Diff(*p.base, *p.cur)
 		}

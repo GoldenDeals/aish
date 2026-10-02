@@ -29,6 +29,9 @@ func statusCmd(cfg config.Config) int {
 		return fail(err)
 	}
 	info := st.Info
+	// The profile of the shell, which `aish model` may have switched.
+	def := cfg.Profile
+	cfg, profErr := profileOf(cfg, info)
 	// The settings of this directory: what the next request would take.
 	cwd, _ := os.Getwd()
 	cfg, project, err := config.Project(cfg, cwd)
@@ -62,6 +65,16 @@ func statusCmd(cfg config.Config) int {
 	row("journal", journal)
 
 	head("model")
+	if len(cfg.Profiles) > 0 || info.Profile != "" {
+		prof := profileName(info.Profile)
+		if info.Model != "" && info.Profile != def {
+			prof += fmt.Sprintf(" (switched in this shell; config: %s)", profileName(def))
+		}
+		if profErr != nil {
+			prof += ": " + profErr.Error()
+		}
+		row("profile", prof)
+	}
 	// Without the effort: it can only be wrong for the provider, and is
 	// shown below.
 	pc := cfg
@@ -152,11 +165,44 @@ func configFiles(project, last string) string {
 	return s
 }
 
-// modelArgs is what `aish model [NAME] [EFFORT]` switches to; effort ""
-// is the model's default.
+// modelArgs is what `aish model [PROFILE] [NAME] [EFFORT]` switches to,
+// past the profile; effort "" is the model's default.
 type modelArgs struct {
 	name, effort       string
 	setName, setEffort bool
+}
+
+// profileArg cuts the profile off aish model [PROFILE] [NAME] [EFFORT]:
+// the first word, if cfg has a profile of that name. It goes before a
+// model or an effort of the same name, which are then given after it.
+func profileArg(cfg config.Config, args []string) (string, []string, bool) {
+	if len(args) > 0 {
+		if _, ok := cfg.Profiles[args[0]]; ok {
+			return args[0], args[1:], true
+		}
+	}
+	return "", args, false
+}
+
+// profileOf is cfg for the profile the shell uses, by its info: as
+// config.toml has it, the shell's model and effort not laid over. On an
+// error, such as a profile config.toml has no more, cfg is kept.
+func profileOf(cfg config.Config, info rpc.Info) (config.Config, error) {
+	if info.Model == "" || info.Profile == cfg.Profile { // "": a proxy that knows no profiles
+		return cfg, nil
+	}
+	pc, err := config.LoadProfile(info.Profile)
+	if err != nil {
+		return cfg, err
+	}
+	return pc, nil
+}
+
+func profileName(p string) string {
+	if p == "" {
+		return "none"
+	}
+	return p
 }
 
 // parseModelArgs reads aish model [NAME] [EFFORT|default], where a lone
@@ -166,7 +212,7 @@ func parseModelArgs(provider string, levels []string, args []string) (modelArgs,
 	var m modelArgs
 	switch {
 	case len(args) > 2:
-		return m, errors.New("usage: aish model [NAME] [EFFORT|default]")
+		return m, errors.New("usage: aish model [PROFILE] [NAME] [EFFORT|default]")
 	case len(args) == 2 && !isEffort(args[1]):
 		return m, fmt.Errorf("no effort %q for %s (want %s or default)", args[1], provider, strings.Join(levels, ", "))
 	case len(args) == 0:
@@ -184,14 +230,33 @@ func parseModelArgs(provider string, levels []string, args []string) (modelArgs,
 	return m, nil
 }
 
-// modelCmd lists the models or switches this shell's model and effort.
-func modelCmd(cfg config.Config, args []string) int {
+// modelCmd lists the profiles and the models of this shell's, or switches
+// its profile, model and effort.
+func modelCmd(conf config.Config, args []string) int {
 	client, err := rpc.FromEnv()
 	if err != nil {
 		return fail(err)
 	}
-	conf := cfg
-	cfg = shellConfig(cfg, client)
+	var info rpc.Info
+	if err := client.Call(rpc.MethodInfo, nil, &info); err != nil {
+		return fail(err)
+	}
+	// Another profile comes with its own model and effort, unless given;
+	// the shell's comes with the shell's.
+	profile, args, switching := profileArg(conf, args)
+	var cfg config.Config
+	if switching {
+		cfg, err = config.LoadProfile(profile)
+	} else {
+		cfg, err = profileOf(conf, info)
+	}
+	if err != nil {
+		return fail(err)
+	}
+	file := cfg // config.toml's, for how to keep the switch
+	if !switching && info.Model != "" {
+		cfg.Model, cfg.Effort = info.Model, info.Effort
+	}
 	// The list is asked without the effort: a wrong one is what may need fixing.
 	lc := cfg
 	lc.Effort = ""
@@ -209,7 +274,17 @@ func modelCmd(cfg config.Config, args []string) int {
 	ms, listErr := prov.Models(ctx)
 	slices.SortFunc(ms, func(a, b llm.ModelInfo) int { return strings.Compare(a.ID, b.ID) })
 
-	if len(args) == 0 {
+	if len(args) == 0 && !switching {
+		usage := "aish model [NAME] [EFFORT|default]"
+		if names := conf.ProfileNames(); len(names) > 0 {
+			usage = "aish model [PROFILE] [NAME] [EFFORT|default]"
+			for i, n := range names {
+				if n == cfg.Profile {
+					names[i] = "\x1b[0;1m*" + n + "\x1b[0;2m"
+				}
+			}
+			fmt.Printf("\x1b[2mprofiles %s\x1b[0m\n", strings.Join(names, " "))
+		}
 		if listErr != nil {
 			fmt.Printf("%s, effort %s\n", cfg.Model, effortName(cfg.Effort))
 			return fail(fmt.Errorf("list models: %w", listErr))
@@ -232,7 +307,7 @@ func modelCmd(cfg config.Config, args []string) int {
 			// A proxy such as cliproxyapi: the API refuses what does not fit.
 			fmt.Printf(" · %s", strings.Join(levels, " "))
 		}
-		fmt.Print(" · aish model [NAME] [EFFORT|default]\x1b[0m\n")
+		fmt.Printf(" · %s\x1b[0m\n", usage)
 		return 0
 	}
 
@@ -266,15 +341,22 @@ func modelCmd(cfg config.Config, args []string) int {
 			}
 		}
 	}
-	if err := client.Call(rpc.MethodModel, rpc.ModelParams{Model: name, Effort: effort, Window: window}, nil); err != nil {
+	mp := rpc.ModelParams{Profile: cfg.Profile, Model: name, Effort: effort, Window: window}
+	if err := client.Call(rpc.MethodModel, mp, nil); err != nil {
 		return fail(err)
 	}
 	var keep []string
-	if name != conf.Model {
+	if cfg.Profile != conf.Profile {
+		keep = append(keep, "profile")
+	}
+	if name != file.Model {
 		keep = append(keep, "model")
 	}
-	if effort != conf.Effort {
+	if effort != file.Effort {
 		keep = append(keep, "effort")
+	}
+	if cfg.Profile != "" {
+		fmt.Printf("profile %s, ", cfg.Profile)
 	}
 	fmt.Printf("model %s, effort %s for this shell", name, effortName(effort))
 	if len(keep) > 0 {

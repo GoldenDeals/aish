@@ -139,18 +139,23 @@ func findProject(cwd string) string {
 }
 
 // forbidden names the first undecoded key that config.toml would take: a
-// project must not set it. Keys neither takes are unknown, as in Load.
+// project must not set it, nor a key inside such a table ([profiles.x]).
+// Keys neither takes are unknown, as in Load.
 func forbidden(md toml.MetaData) error {
-	global := map[string]bool{}
-	t := reflect.TypeOf(Config{})
-	for i := range t.NumField() {
-		if tag := t.Field(i).Tag.Get("toml"); tag != "" && tag != "-" {
-			global[tag] = true
+	keys := func(v any) map[string]bool {
+		m := map[string]bool{}
+		t := reflect.TypeOf(v)
+		for i := range t.NumField() {
+			if tag := t.Field(i).Tag.Get("toml"); tag != "" && tag != "-" {
+				m[tag] = true
+			}
 		}
+		return m
 	}
+	global, own := keys(Config{}), keys(project{})
 	for _, k := range md.Undecoded() {
-		if global[k.String()] {
-			return fmt.Errorf("key %s is not allowed in a project config: set it in config.toml", strconv.Quote(k.String()))
+		if global[k[0]] && !own[k[0]] {
+			return fmt.Errorf("key %s is not allowed in a project config: set it in config.toml", strconv.Quote(k[0]))
 		}
 	}
 	return unknown(md)

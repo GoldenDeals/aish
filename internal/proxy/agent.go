@@ -108,7 +108,12 @@ func (p *Proxy) cancelRequest() {
 // the [policy] rules change; and, for a fresh request, the tools of the
 // shell's directory.
 func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.Agent, error) {
-	cfg, err := config.Load()
+	// The shell's profile: config.Load would take the one config.toml
+	// selects, which `aish model` may have switched from.
+	p.mu.Lock()
+	profile := p.profile
+	p.mu.Unlock()
+	cfg, err := config.LoadProfile(profile)
 	if err != nil {
 		return nil, err
 	}

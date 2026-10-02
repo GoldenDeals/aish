@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/inebotov/aish/internal/bashstate"
+	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
@@ -24,20 +25,84 @@ func (p *Proxy) Resume(st session.Saved) {
 	p.resumed = &st
 }
 
-// restoreModel brings back the model a session used and its effort. A state
-// without a model was saved before aish kept them: the config's stay. Called
-// under p.mu.
+// restoreModel brings back the profile a session used, its model and their
+// effort. A state without a model was saved before aish kept them: the
+// config's stay. So do they when config.toml has the profile no more: the
+// model would go to the endpoint of another. Called under p.mu.
 func (p *Proxy) restoreModel(st session.Saved) {
 	if st.Model == "" {
 		return
 	}
-	if st.Model != p.model {
+	if st.Profile != p.profile {
+		cfg, err := config.LoadProfile(st.Profile)
+		if err != nil {
+			return
+		}
+		prov, err := p.listProvider(cfg)
+		if err != nil {
+			return
+		}
+		p.setProfile(cfg, prov)
+		p.setModel(st.Model, 0)
+	} else if st.Model != p.model {
 		p.setModel(st.Model, 0)
 	}
 	// An effort of another provider would fail every request.
 	if llm.CheckEffort(p.prov, st.Effort) == nil {
 		p.effort = st.Effort
 	}
+}
+
+// switchModel is `aish model`: the profile, the model and the effort for
+// this shell at once. Called under p.mu.
+func (p *Proxy) switchModel(mp rpc.ModelParams) (rpc.Info, error) {
+	prov, other := p.prov, mp.Profile != p.profile
+	var cfg config.Config
+	if other {
+		var err error
+		if cfg, err = config.LoadProfile(mp.Profile); err != nil {
+			return rpc.Info{}, err
+		}
+		if prov, err = p.listProvider(cfg); err != nil {
+			return rpc.Info{}, err
+		}
+	}
+	if err := llm.CheckEffort(prov, mp.Effort); err != nil {
+		return rpc.Info{}, err
+	}
+	switch {
+	case other:
+		p.setProfile(cfg, prov)
+		p.setModel(mp.Model, mp.Window)
+	case mp.Model != p.model || mp.Window > 0:
+		p.setModel(mp.Model, mp.Window)
+	}
+	p.effort = mp.Effort
+	return p.info(), nil
+}
+
+// setProfile switches to the profile of cfg, as config.LoadProfile read it,
+// with prov its provider: another endpoint, other models, its own levels of
+// effort and context_window. setModel goes next: the window known is of
+// the old model. Called under p.mu.
+func (p *Proxy) setProfile(cfg config.Config, prov llm.Provider) {
+	p.profile, p.prov = cfg.Profile, prov
+	p.fixedWindow, p.window = cfg.ContextWindow > 0, cfg.ContextWindow
+	p.effort = ""
+	if llm.CheckEffort(prov, cfg.Effort) == nil {
+		p.effort = cfg.Effort
+	}
+}
+
+// listProvider is the provider of cfg the shell asks for the models list
+// and the levels of effort; made without the effort, which is what may
+// need fixing.
+func (p *Proxy) listProvider(cfg config.Config) (llm.Provider, error) {
+	cfg.Effort = ""
+	if p.newProvider != nil {
+		return p.newProvider(cfg)
+	}
+	return llm.New(cfg)
 }
 
 // setModel switches the model; window 0 has its size looked up. Called under
@@ -49,14 +114,15 @@ func (p *Proxy) setModel(model string, window int) {
 	}
 	p.window = window
 	if window == 0 {
-		go p.lookupWindow(model)
+		go p.lookupWindow(p.prov, p.profile, model)
 	}
 }
 
 // info is what `aish` commands ask the proxy about the shell. Called under
 // p.mu.
 func (p *Proxy) info() rpc.Info {
-	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Saved: p.sess.Saved(), Model: p.model, Effort: p.effort, Window: p.window}
+	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Saved: p.sess.Saved(),
+		Profile: p.profile, Model: p.model, Effort: p.effort, Window: p.window}
 }
 
 // saveState records how the shell differs from the one that started, from
@@ -88,7 +154,7 @@ func (p *Proxy) saveState(cwd string) {
 	if !p.sess.Saved() {
 		return // an unsaved session leaves nothing on disk, its state neither
 	}
-	saved := session.Saved{Shell: bashstate.Diff(*p.base, cur), Model: p.model, Effort: p.effort}
+	saved := session.Saved{Shell: bashstate.Diff(*p.base, cur), Profile: p.profile, Model: p.model, Effort: p.effort}
 	data, _ := json.Marshal(saved)
 	key := append([]byte(p.sess.ID), data...)
 	if bytes.Equal(key, p.lastSaved) {

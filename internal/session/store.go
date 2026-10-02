@@ -23,9 +23,13 @@ import (
 // Saved is what a session keeps besides its journal.
 type Saved struct {
 	// Shell is how the shell differs from the one aish started with.
-	Shell  bashstate.State `json:"shell"`
-	Model  string          `json:"model,omitempty"`
-	Effort string          `json:"effort,omitempty"`
+	Shell bashstate.State `json:"shell"`
+	// Profile is the one of config.toml the model is of, "" for the top
+	// level: a state saved before there were profiles has a model of the
+	// top level too.
+	Profile string `json:"profile,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Effort  string `json:"effort,omitempty"`
 }
 
 func statePath(dir, id string) string { return filepath.Join(dir, id+".state") }

@@ -60,18 +60,22 @@ type Info struct {
 	Dir string `json:"dir"`
 	// Saved is whether the session is on disk.
 	Saved bool `json:"saved"`
-	// Model and Effort are what this shell uses, which `aish model` may
-	// have changed; Window is the model's context size, 0 if unknown.
-	Model  string `json:"model"`
-	Effort string `json:"effort,omitempty"`
-	Window int    `json:"window"`
+	// Profile, Model and Effort are what this shell uses, which `aish
+	// model` may have changed; Window is the model's context size, 0 if
+	// unknown. Profile "" is the top level of config.toml alone.
+	Profile string `json:"profile,omitempty"`
+	Model   string `json:"model"`
+	Effort  string `json:"effort,omitempty"`
+	Window  int    `json:"window"`
 }
 
-// ModelParams set both the model and the effort: "" is the model's default.
+// ModelParams set the profile, the model and the effort at once: effort ""
+// is the model's default, profile "" the top level of config.toml.
 type ModelParams struct {
-	Model  string `json:"model"`
-	Effort string `json:"effort,omitempty"`
-	Window int    `json:"window"` // 0: the proxy finds out
+	Profile string `json:"profile,omitempty"`
+	Model   string `json:"model"`
+	Effort  string `json:"effort,omitempty"`
+	Window  int    `json:"window"` // 0: the proxy finds out
 }
 
 // Status is what `aish status` shows of the session, counted by the proxy,

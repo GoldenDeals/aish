@@ -47,7 +47,7 @@ func TestLoadErrors(t *testing.T) {
 	for _, tc := range []struct{ toml, want string }{
 		{"max_token = 1000\n", `unknown key "max_token"`},
 		{"modle = \"x\"\nprovider_name = \"y\"\n", `unknown keys "modle", "provider_name"`},
-		{"[profiles.work]\nmodel = \"x\"\nmax_tokens = 1\n", `unknown key "profiles.work"`},
+		{"[profiless.work]\nmodel = \"x\"\nmax_tokens = 1\n", `unknown key "profiless.work"`},
 		{"x = {y = 1}\na.b = 2\n", `unknown keys "x", "a.b"`},
 		{"max_steps = -1\n", "max_steps = -1: must not be negative"},
 		{"max_output_bytes = -5\n", "max_output_bytes = -5: must not be negative"},

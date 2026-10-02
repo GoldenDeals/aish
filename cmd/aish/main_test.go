@@ -59,7 +59,7 @@ func TestParseModelArgs(t *testing.T) {
 		{"a", []string{"minimal"}, modelArgs{name: "minimal", setName: true}, ""},
 		{"o", []string{"minimal"}, modelArgs{effort: "minimal", setEffort: true}, ""},
 		{"a", []string{"claude-x", "minimal"}, modelArgs{}, `no effort "minimal" for a (want low, medium, high, xhigh, max or default)`},
-		{"a", []string{"a", "high", "b"}, modelArgs{}, "usage: aish model [NAME] [EFFORT|default]"},
+		{"a", []string{"a", "high", "b"}, modelArgs{}, "usage: aish model [PROFILE] [NAME] [EFFORT|default]"},
 	} {
 		got, err := parseModelArgs(tc.provider, levels[tc.provider], tc.args)
 		if tc.err != "" {
