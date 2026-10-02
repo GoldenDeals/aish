@@ -84,8 +84,6 @@ type Registry struct {
 	byID map[string]Tool
 }
 
-func (r *Registry) add(t Tool) { r.Add(t) }
-
 // Add registers t unless a tool with its name exists.
 func (r *Registry) Add(t Tool) bool {
 	if _, dup := r.byID[t.Name]; dup {
@@ -107,10 +105,10 @@ func (r *Registry) All() []Tool { return r.list }
 func Load(dir string) *Registry {
 	r := &Registry{byID: map[string]Tool{}}
 	for _, t := range Builtins() {
-		r.add(t)
+		r.Add(t)
 	}
 	for _, t := range loadExternal(dir) {
-		r.add(t)
+		r.Add(t)
 	}
 	return r
 }
