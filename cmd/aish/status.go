@@ -128,21 +128,50 @@ func configPath() string {
 	return filepath.Join(config.Dir(), "config.toml")
 }
 
-// modelCmd lists the models or switches this shell's model and effort:
-// aish model [NAME] [EFFORT], where a lone EFFORT keeps the model.
+// modelArgs is what `aish model [NAME] [EFFORT]` switches to; effort ""
+// is the model's default.
+type modelArgs struct {
+	name, effort       string
+	setName, setEffort bool
+}
+
+// parseModelArgs reads aish model [NAME] [EFFORT|default], where a lone
+// EFFORT keeps the model.
+func parseModelArgs(provider string, args []string) (modelArgs, error) {
+	levels := llm.Efforts(provider)
+	isEffort := func(s string) bool { return s == "default" || slices.Contains(levels, s) }
+	var m modelArgs
+	switch {
+	case len(args) > 2:
+		return m, errors.New("usage: aish model [NAME] [EFFORT|default]")
+	case len(args) == 2 && !isEffort(args[1]):
+		return m, fmt.Errorf("no effort %q for %s (want %s or default)", args[1], provider, strings.Join(levels, ", "))
+	case len(args) == 0:
+		return m, nil
+	}
+	if e := args[len(args)-1]; isEffort(e) {
+		m.effort, m.setEffort = e, true
+		if e == "default" {
+			m.effort = ""
+		}
+	}
+	if len(args) == 2 || !m.setEffort {
+		m.name, m.setName = args[0], true
+	}
+	return m, nil
+}
+
+// modelCmd lists the models or switches this shell's model and effort.
 func modelCmd(cfg config.Config, args []string) int {
 	client, err := rpc.FromEnv()
 	if err != nil {
 		return fail(err)
 	}
-	levels := llm.Efforts(cfg.Provider)
-	isEffort := func(s string) bool { return s == "default" || slices.Contains(levels, s) }
-	switch {
-	case len(args) > 2:
-		return fail(errors.New("usage: aish model [NAME] [EFFORT|default]"))
-	case len(args) == 2 && !isEffort(args[1]):
-		return fail(fmt.Errorf("no effort %q for %s (want %s or default)", args[1], cfg.Provider, strings.Join(levels, ", ")))
+	want, err := parseModelArgs(cfg.Provider, args)
+	if err != nil {
+		return fail(err)
 	}
+	levels := llm.Efforts(cfg.Provider)
 	conf := cfg
 	cfg = shellConfig(cfg, client)
 	// The list is asked without the effort: a wrong one is what may need fixing.
@@ -184,15 +213,12 @@ func modelCmd(cfg config.Config, args []string) int {
 		return 0
 	}
 
-	name, effort, setEffort := cfg.Model, cfg.Effort, false
-	if isEffort(args[len(args)-1]) {
-		effort, setEffort = args[len(args)-1], true
-		if effort == "default" {
-			effort = ""
-		}
+	name, effort, setEffort := cfg.Model, cfg.Effort, want.setEffort
+	if want.setName {
+		name = want.name
 	}
-	if len(args) == 2 || !setEffort {
-		name = args[0]
+	if setEffort {
+		effort = want.effort
 	}
 	var model *llm.ModelInfo
 	if listErr == nil {

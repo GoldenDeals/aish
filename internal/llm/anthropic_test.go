@@ -93,3 +93,75 @@ func TestAnthropicCacheControl(t *testing.T) {
 		}
 	}
 }
+
+// The API rejects a tool_use without a tool_result right after it, an
+// empty message and a result that is not at the start of the user turn.
+func TestAnthropicMessages(t *testing.T) {
+	p := newAnthropic(config.Config{Model: "m", APIKey: "k"})
+	got := p.messages([]Message{
+		{Role: RoleUser, Text: "list files"},
+		{Role: RoleAssistant, Text: "listing", ToolCalls: []ToolCall{
+			{ID: "c1", Name: "bash", Args: json.RawMessage(`{"command":"ls"}`)},
+			{ID: "c2", Name: "read_file"},
+		}},
+		{Role: RoleUser, Text: "<shell>…</shell>", ToolResults: []ToolResult{
+			{CallID: "c1", Content: "a b"},
+			{CallID: "c2", Content: "", IsError: true},
+		}},
+		{Role: RoleAssistant},
+		{Role: RoleUser},
+		{Role: RoleUser, Text: "thanks"},
+	})
+	sameJSON(t, got, `[
+		{"role":"user","content":[{"type":"text","text":"list files"}]},
+		{"role":"assistant","content":[
+			{"type":"text","text":"listing"},
+			{"type":"tool_use","id":"c1","name":"bash","input":{"command":"ls"}},
+			{"type":"tool_use","id":"c2","name":"read_file","input":{}}
+		]},
+		{"role":"user","content":[
+			{"type":"tool_result","tool_use_id":"c1","is_error":false,"content":[{"type":"text","text":"a b"}]},
+			{"type":"tool_result","tool_use_id":"c2","is_error":true,"content":[{"type":"text","text":"(no output)"}]},
+			{"type":"text","text":"<shell>…</shell>"}
+		]},
+		{"role":"assistant","content":[{"type":"text","text":"(no response)"}]},
+		{"role":"user","content":[{"type":"text","text":"thanks"}]}
+	]`)
+}
+
+func TestAnthropicReplay(t *testing.T) {
+	p := newAnthropic(config.Config{Model: "m", APIKey: "k"})
+	raw := `{"role":"assistant","content":[
+		{"type":"thinking","thinking":"ls will do","signature":"sig"},
+		{"type":"tool_use","id":"c1","name":"bash","input":{"command":"ls"}}
+	]}`
+	rebuilt := `{"role":"assistant","content":[
+		{"type":"text","text":"listing"},
+		{"type":"tool_use","id":"c1","name":"bash","input":{"command":"ls"}}
+	]}`
+	for _, tc := range []struct {
+		name            string
+		raw             string
+		provider, model string
+		want            string
+	}{
+		{"same model", raw, "anthropic", "m", raw},
+		{"model not recorded", raw, "anthropic", "", raw},
+		// A signature is only valid for the model that made it.
+		{"other model", raw, "anthropic", "other", rebuilt},
+		{"other provider", raw, "openai", "m", rebuilt},
+		{"broken raw", `{"role":`, "anthropic", "m", rebuilt},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := p.messages([]Message{{
+				Role: RoleAssistant, Text: "listing",
+				ToolCalls: []ToolCall{{ID: "c1", Name: "bash", Args: json.RawMessage(`{"command":"ls"}`)}},
+				Raw:       json.RawMessage(tc.raw), Provider: tc.provider, Model: tc.model,
+			}})
+			if len(got) != 1 {
+				t.Fatalf("%d messages", len(got))
+			}
+			sameJSON(t, got[0], tc.want)
+		})
+	}
+}

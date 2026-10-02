@@ -19,8 +19,9 @@ go test ./...
 go vet ./...
 ```
 
-Тесты есть у `agent`, `bashstate`, `capture`, `config`, `llm`, `markdown`, `mcp`, `policy`, `proxy`, `rpc`, `session`, `shellinit`, `skills`, `tools`; они чистые
-(без PTY и сети; `mcp` запускает свой тестовый бинарь как stub-сервер). После изменений в `internal/shellinit/init.bash` обязательно гоняй
+Тесты есть у всех пакетов с логикой, включая `cmd/aish`; они чистые (без PTY и сети;
+`mcp` запускает свой тестовый бинарь как stub-сервер, `llm` ходит в `httptest`, `rpc` слушает
+временный unix-сокет, `tools` запускает скрипты на `/bin/sh`). После изменений в `internal/shellinit/init.bash` обязательно гоняй
 `go test ./internal/shellinit` — он проверяет скрипт реальным bash.
 
 Проверить руками: `./aish` открывает новую сессию, `./aish --resume` продолжает последнюю.
