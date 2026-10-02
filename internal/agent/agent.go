@@ -6,7 +6,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -390,12 +389,31 @@ func (a *Agent) ask(d policy.Decision) policy.Decision {
 		q = d.Reason + " — allow?"
 	}
 	fmt.Fprintf(a.Out, "%s%s [y/N] %s", bold, q, reset)
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	switch strings.ToLower(strings.TrimSpace(line)) {
+	switch strings.ToLower(strings.TrimSpace(readLine(os.Stdin))) {
 	case "y", "yes", "д", "да":
 		return policy.Decision{Action: policy.Allow}
 	}
 	return policy.Decision{Action: policy.Deny, Reason: "the user declined"}
+}
+
+// readLine reads one line a byte at a time: a buffer would take what was
+// typed after it too, the answer to the next question or the shell's input.
+func readLine(r io.Reader) string {
+	var line []byte
+	var c [1]byte
+	for {
+		n, err := r.Read(c[:])
+		if n == 1 {
+			if c[0] == '\n' {
+				break
+			}
+			line = append(line, c[0])
+		}
+		if err != nil {
+			break
+		}
+	}
+	return string(line)
 }
 
 func toolResult(c session.ToolCall, out string, isErr bool) session.Entry {
