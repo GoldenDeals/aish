@@ -20,8 +20,7 @@ func repo(t *testing.T, root, toml string) {
 }
 
 func TestProject(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	root := trustHome(t)
 	repo(t, filepath.Join(root, "home", "src", "x"), strings.Join([]string{
 		`system_prompt = "A Go service; test with make."`,
 		`max_steps = 7`,
@@ -32,6 +31,9 @@ func TestProject(t *testing.T) {
 	}, "\n")+"\n")
 	sub := filepath.Join(root, "home", "src", "x", "a", "b")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Trust(filepath.Join(root, "home", "src", "x", ProjectFile)); err != nil {
 		t.Fatal(err)
 	}
 	base := Default()
@@ -57,6 +59,50 @@ func TestProject(t *testing.T) {
 	}
 	if want := base.PolicyDir + string(filepath.ListSeparator) + "/abs/policy"; cfg.PolicyDir != want {
 		t.Errorf("policy_dir %q, want %q", cfg.PolicyDir, want)
+	}
+	if cfg.Untrusted != nil {
+		t.Errorf("untrusted %q in a trusted file", cfg.Untrusted)
+	}
+}
+
+// The keys that run code from the repository hold only once the file is
+// trusted, as it is: the rest holds anyway.
+func TestProjectUntrusted(t *testing.T) {
+	root := trustHome(t)
+	repo(t, root, "hooks_dir = \".aish/hooks\"\ntools_dir = \"tools\"\nmax_steps = 7\n")
+	base := Default()
+	cfg, file, err := Project(base, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MaxSteps != 7 || cfg.HooksDir != base.HooksDir || cfg.ToolsDir != base.ToolsDir {
+		t.Errorf("untrusted: max_steps %d, hooks_dir %q, tools_dir %q", cfg.MaxSteps, cfg.HooksDir, cfg.ToolsDir)
+	}
+	if want := []string{"hooks_dir", "tools_dir"}; !reflect.DeepEqual(cfg.Untrusted, want) {
+		t.Errorf("Untrusted %q, want %q", cfg.Untrusted, want)
+	}
+
+	if err := Trust(file); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err = Project(base, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sep := string(filepath.ListSeparator)
+	if cfg.MaxSteps != 7 || cfg.HooksDir != base.HooksDir+sep+filepath.Join(root, ".aish", "hooks") ||
+		cfg.ToolsDir != base.ToolsDir+sep+filepath.Join(root, "tools") || cfg.Untrusted != nil {
+		t.Errorf("trusted: max_steps %d, hooks_dir %q, tools_dir %q, untrusted %q", cfg.MaxSteps, cfg.HooksDir, cfg.ToolsDir, cfg.Untrusted)
+	}
+
+	// An edit, a pull say, takes the trust back.
+	repo(t, root, "hooks_dir = \"other\"\nmax_steps = 7\n")
+	cfg, _, err = Project(base, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HooksDir != base.HooksDir || !reflect.DeepEqual(cfg.Untrusted, []string{"hooks_dir"}) {
+		t.Errorf("edited: hooks_dir %q, untrusted %q", cfg.HooksDir, cfg.Untrusted)
 	}
 }
 

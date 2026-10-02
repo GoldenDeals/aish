@@ -122,6 +122,9 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	if err != nil {
 		return nil, err
 	}
+	if fresh {
+		p.tellUntrusted(project, cfg.Untrusted)
+	}
 	p.mu.Lock()
 	p.project = project
 	cfg.Model, cfg.Effort = p.model, p.effort

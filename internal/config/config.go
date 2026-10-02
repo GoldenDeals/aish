@@ -89,6 +89,11 @@ type Config struct {
 
 	// SystemPrompt is appended to the built-in system prompt.
 	SystemPrompt string `toml:"system_prompt"`
+
+	// Untrusted names the keys of the project file that Project left out,
+	// those that run code from the repository: the file is not trusted.
+	// Not a key of any file.
+	Untrusted []string `toml:"-"`
 }
 
 // Policy is the [policy] table, the simple rules checked next to the

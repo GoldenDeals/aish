@@ -6,6 +6,7 @@
 //	aish skills                  the skills that apply here and their problems
 //	aish agents                  the subagents that apply here and their problems
 //	aish policy [TOOL ARGS...]   check the policies, or ask them about one call
+//	aish trust [--revoke|--list] let the .aish.toml here run the repository's hooks and tools
 //	aish init bash               print the bash integration script
 //	aish tool [NAME ARGS...]     list tools or run one
 //	aish session show            print the current session
@@ -49,6 +50,9 @@ const usage = `usage:
   aish skills                show the skills of this directory and their problems
   aish agents                show the subagents of this directory and their problems
   aish policy [TOOL ARGS...] check the policies, or ask them about one call
+  aish trust [--revoke|--list]
+                             let the .aish.toml here run hooks and tools from the
+                             repository, as it is now; or take that back; or list
   aish init bash             print the bash integration script
   aish tool [NAME ARGS...]   list tools, or run one
   aish session show          print the current session
@@ -118,6 +122,8 @@ func run(args []string) int {
 		return agentsCmd(cfg, args[1:])
 	case "policy":
 		return policyCmd(cfg, args[1:])
+	case "trust":
+		return trustCmd(cfg, args[1:])
 	case "expand":
 		return expandCmd()
 	case "help":

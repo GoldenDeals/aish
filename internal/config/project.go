@@ -49,14 +49,19 @@ type project struct {
 // the file's own. The deny and ask lists of [policy] are added to the
 // global ones, and of the two write_outside_home the stricter is kept.
 // hooks_dir is added as tools_dir is: the project's hooks run after the
-// user's.
+// user's. Both run code from the repository and hold only if the file is
+// Trusted; otherwise they are left out and named in Untrusted.
 func Project(cfg Config, cwd string) (Config, string, error) {
 	path := findProject(cwd)
 	if path == "" {
 		return cfg, "", nil
 	}
 	var pr project
-	md, err := toml.DecodeFile(path, &pr)
+	data, err := os.ReadFile(path)
+	var md toml.MetaData
+	if err == nil {
+		md, err = toml.Decode(string(data), &pr)
+	}
 	if err == nil {
 		err = forbidden(md)
 	}
@@ -92,11 +97,16 @@ func Project(cfg Config, cwd string) (Config, string, error) {
 			WriteOutsideHome: stricter(cfg.Policy.WriteOutsideHome, pr.Policy.WriteOutsideHome),
 		}
 	}
-	if pr.HooksDir != nil {
-		cfg.HooksDir = addDir(cfg.HooksDir, *pr.HooksDir, dir)
-	}
-	if pr.ToolsDir != nil {
-		cfg.ToolsDir = addDir(cfg.ToolsDir, *pr.ToolsDir, dir)
+	// The contents read once: trusted are the very bytes laid over.
+	trust := trusted(path, data)
+	for _, k := range pr.code(&cfg) {
+		switch {
+		case k.value == nil:
+		case trust:
+			*k.dst = addDir(*k.dst, *k.value, dir)
+		default:
+			cfg.Untrusted = append(cfg.Untrusted, k.name)
+		}
 	}
 	if pr.SystemPrompt != nil {
 		if cfg.SystemPrompt != "" && *pr.SystemPrompt != "" {

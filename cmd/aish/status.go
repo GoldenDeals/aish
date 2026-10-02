@@ -133,7 +133,7 @@ func statusCmd(cfg config.Config) int {
 		len(cfg.JournalIgnore), len(cfg.StateIgnore)))
 	row("markdown", fmt.Sprint(cfg.Markdown))
 	row("prompt_status", fmt.Sprint(cfg.PromptStatus))
-	row("config", configFiles(project, st.ProjectConfig))
+	row("config", configFiles(project, st.ProjectConfig, cfg.Untrusted))
 	dirs := func(list string) string { return strings.Join(filepath.SplitList(list), ", ") }
 	// Loaded as the agent would: an error shows here, not on the next request.
 	if eng, err := policy.Load(context.Background(), cfg.PolicyDir, rulesOf(cfg)); err != nil {
@@ -155,12 +155,15 @@ func configPath() string {
 }
 
 // configFiles names the files in force: config.toml and the project's
-// for this directory, and the one the last request took when that is
-// another (the shell has moved since).
-func configFiles(project, last string) string {
+// for this directory, with the keys it is not trusted with, and the one
+// the last request took when that is another (the shell has moved since).
+func configFiles(project, last string, untrusted []string) string {
 	s := configPath()
 	if project != "" {
 		s += " + " + home(project)
+	}
+	if len(untrusted) > 0 {
+		s += fmt.Sprintf(" (untrusted: %s; aish trust)", strings.Join(untrusted, ", "))
 	}
 	if last != "" && last != project {
 		s += fmt.Sprintf(" (the last request took %s)", home(last))

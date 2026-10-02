@@ -112,6 +112,7 @@ type Proxy struct {
 	cancelReq    context.CancelFunc
 	policies     policy.Cache
 	project      string // the .aish.toml of the last request, "" if none
+	untrusted    map[string]bool
 	agentProv    llm.Provider
 	agentProvKey string
 	newProvider  func(config.Config) (llm.Provider, error) // nil: llm.New; tests set it
