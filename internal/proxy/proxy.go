@@ -640,6 +640,9 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 		}
 		p.mu.Lock()
 		defer p.mu.Unlock()
+		if p.asking {
+			return nil, errors.New("the model is switched by the user, not by the assistant")
+		}
 		return p.switchModel(mp)
 	case rpc.MethodStatus:
 		p.mu.Lock()

@@ -163,6 +163,8 @@ aish подскажет префикс `?`. Свой `command_not_found_handle` 
   Нужен известный размер окна — от API или `context_window`; `compact_at = 0` выключает.
 - `aish model` — список моделей, которые отдаёт API, с размером окна; текущая отмечена `*`.
   `aish model ИМЯ` переключает модель **для этого shell**; насовсем — `model` в `config.toml`.
+  Переключает только пользователь: `aish model` из команды ассистента получает отказ, как и
+  `aish resume` и `aish clear`.
 - Effort — насколько долго модель думает. `aish model high` меняет только его, `aish model
   claude-sonnet-5 xhigh` — модель вместе с effort, `aish model default` возвращает уровень, который
   модель выбирает сама. Уровни Anthropic: `low`, `medium`, `high`, `xhigh`, `max`; у OpenAI ещё
