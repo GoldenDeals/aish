@@ -49,6 +49,7 @@ func loadCedar(files []string) (*cedarChecker, error) {
 		return nil, fmt.Errorf("policy: built-in schema: %w", err)
 	}
 	v := validate.New(resolved)
+	attrs := contextAttrs(resolved)
 	c := &cedarChecker{ps: cedar.NewPolicySet(), files: files}
 	for _, f := range files {
 		src, err := os.ReadFile(f)
@@ -63,7 +64,11 @@ func loadCedar(files []string) (*cedarChecker, error) {
 		for i, p := range list {
 			id := fmt.Sprintf("%s:%d", base, i)
 			// The validator's message names the policy ID itself.
-			if err := v.Policy(id, (*xast.Policy)(p.AST())); err != nil {
+			ast := (*xast.Policy)(p.AST())
+			if err := v.Policy(id, ast); err != nil {
+				return nil, fmt.Errorf("policy: %s:%d: %w", f, p.Position().Line, err)
+			}
+			if err := checkHas(ast, attrs); err != nil {
 				return nil, fmt.Errorf("policy: %s:%d: %w", f, p.Position().Line, err)
 			}
 			c.ps.Add(types.PolicyID(id), p)
