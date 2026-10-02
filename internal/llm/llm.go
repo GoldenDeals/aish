@@ -62,6 +62,8 @@ type Response struct {
 	StopReason string
 	// Tokens sent, cache included, and received; 0 if the API did not say.
 	InputTokens, OutputTokens int
+	// CachedTokens is the part of InputTokens read from the provider's cache.
+	CachedTokens int
 }
 
 // ModelInfo is a model the API offers. Window is 0 when it is not reported.

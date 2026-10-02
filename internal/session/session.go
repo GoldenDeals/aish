@@ -57,8 +57,9 @@ type Entry struct {
 	Provider string          `json:"provider,omitempty"`
 	Model    string          `json:"model,omitempty"`
 	// What the request for this turn cost: everything sent, cache included,
-	// and the reply.
+	// the part of it read from the cache, and the reply.
 	InputTokens  int `json:"input_tokens,omitempty"`
+	CachedTokens int `json:"cached_tokens,omitempty"`
 	OutputTokens int `json:"output_tokens,omitempty"`
 
 	// instructions, file

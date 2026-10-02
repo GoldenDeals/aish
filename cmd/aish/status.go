@@ -33,7 +33,7 @@ func statusCmd(cfg config.Config) int {
 	es := session.Current(all)
 	tokens := session.Tokens(es, cfg.MaxOutputBytes)
 
-	var shell, asks, calls, summaries, in, out int
+	var shell, asks, calls, summaries, in, cached, out int
 	measured := false
 	for _, e := range all {
 		switch e.Kind {
@@ -42,6 +42,7 @@ func statusCmd(cfg config.Config) int {
 		case session.KindAssistant:
 			calls += len(e.ToolCalls)
 			in += e.InputTokens
+			cached += e.CachedTokens
 			out += e.OutputTokens
 		}
 	}
@@ -69,8 +70,8 @@ func statusCmd(cfg config.Config) int {
 	}
 	row("used", ctx)
 	row("entries", fmt.Sprintf("%d commands, %d requests since the last compact", shell, asks))
-	row("session", fmt.Sprintf("%d tool calls, %d compacts, %s in / %s out tokens spent",
-		calls, summaries, session.Short(in), session.Short(out)))
+	row("session", fmt.Sprintf("%d tool calls, %d compacts, %s in (%s cached) / %s out tokens spent",
+		calls, summaries, session.Short(in), session.Short(cached), session.Short(out)))
 	row("journal", filepath.Join(cfg.SessionsDir, info.SessionID+".jsonl"))
 
 	head("model")

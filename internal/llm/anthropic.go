@@ -64,9 +64,9 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 	if p.effort != "" {
 		params.OutputConfig = anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffort(p.effort)}
 	}
-	if req.System != "" {
-		params.System = []anthropic.TextBlockParam{{Text: req.System}}
-	}
+	// Cache breakpoints, in the order the API renders the prompt: tools,
+	// system, the conversation so far. The last one moves forward every turn,
+	// and the turn after reads everything up to it from the cache.
 	for _, t := range req.Tools {
 		props, required := schemaParts(t.Schema)
 		tp := anthropic.ToolParam{
@@ -75,6 +75,19 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 			InputSchema: anthropic.ToolInputSchemaParam{Properties: props, Required: required},
 		}
 		params.Tools = append(params.Tools, anthropic.ToolUnionParam{OfTool: &tp})
+	}
+	if n := len(params.Tools); n > 0 {
+		params.Tools[n-1].OfTool.CacheControl = anthropic.NewCacheControlEphemeralParam()
+	}
+	if req.System != "" {
+		params.System = []anthropic.TextBlockParam{{Text: req.System, CacheControl: anthropic.NewCacheControlEphemeralParam()}}
+	}
+	if n := len(params.Messages); n > 0 && params.Messages[n-1].Role == anthropic.MessageParamRoleUser {
+		// Only a user message: an assistant one may be a replayed Raw.
+		blocks := params.Messages[n-1].Content
+		if cc := blocks[len(blocks)-1].GetCacheControl(); cc != nil {
+			*cc = anthropic.NewCacheControlEphemeralParam()
+		}
 	}
 
 	stream := p.client.Messages.NewStreaming(ctx, params)
@@ -99,6 +112,7 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 	resp := &Response{
 		StopReason:   string(msg.StopReason),
 		InputTokens:  int(u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens),
+		CachedTokens: int(u.CacheReadInputTokens),
 		OutputTokens: int(u.OutputTokens),
 	}
 	for _, b := range msg.Content {
