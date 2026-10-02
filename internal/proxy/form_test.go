@@ -70,7 +70,7 @@ func TestFormFeed(t *testing.T) {
 			if done {
 				t.Errorf("%s: done before key %d", tc.name, i)
 			}
-			done = f.feed([]byte(k))
+			_, done = f.feed([]byte(k))
 		}
 		if !done {
 			t.Errorf("%s: not done", tc.name)
@@ -78,7 +78,7 @@ func TestFormFeed(t *testing.T) {
 		if got := f.answers(); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: answers %+v, want %+v", tc.name, got, tc.want)
 		}
-		if got := capture.Clean([]byte(f.frame(80))); got != tc.summary {
+		if got := capture.Clean([]byte(f.frame(80, 24))); got != tc.summary {
 			t.Errorf("%s: last frame %q, want %q", tc.name, got, tc.summary)
 		}
 	}
@@ -88,7 +88,7 @@ func TestFormFeed(t *testing.T) {
 // options and the cursor, what is checked and typed, the keys that work.
 func TestFormFrame(t *testing.T) {
 	f := newForm(twoQuestions())
-	frame := func() string { return capture.Clean([]byte(f.frame(80))) }
+	frame := func() string { return capture.Clean([]byte(f.frame(80, 24))) }
 	expect := func(step string, want, not []string) {
 		t.Helper()
 		got := frame()
@@ -113,8 +113,8 @@ func TestFormFrame(t *testing.T) {
 	expect("checked", []string{"❯ 1. [x] Colors"}, nil)
 	f.feed([]byte("4ab"))
 	expect("typing", []string{"    1. [x] Colors", "❯ 4. [x] Other: ab", "type the answer"}, nil)
-	if !strings.Contains(f.frame(80), "Other: "+reset+"ab"+reverse+" "+reset) {
-		t.Errorf("no cursor after the text: %q", f.frame(80))
+	if !strings.Contains(f.frame(80, 24), "Other: "+reset+"ab"+reverse+" "+reset) {
+		t.Errorf("no cursor after the text: %q", f.frame(80, 24))
 	}
 }
 
@@ -129,7 +129,7 @@ func TestFormFrameNarrow(t *testing.T) {
 	f := newForm(qs)
 	f.feed([]byte("3" + strings.Repeat("typed ", 10)))
 	const cols = 24
-	frame := f.frame(cols)
+	frame := f.frame(cols, 24)
 	for _, l := range strings.Split(frame, "\r\n") {
 		if w := frameWidth(l); w > cols-1 {
 			t.Errorf("%d columns: %q", w, l)
@@ -149,8 +149,134 @@ func TestFormFrameNarrow(t *testing.T) {
 	}
 }
 
+// feed takes the keys of the form alone: what comes after the Enter that
+// answers it is not the form's.
+func TestFormFeedRest(t *testing.T) {
+	for _, tc := range []struct {
+		keys string
+		n    int
+		done bool
+	}{
+		{"1\r" + "ls\r", 2, true},
+		{keyDownSeq + keyEnterSeq + "ls", 4, true},
+		{"2" + keyUpSeq, 4, false},
+	} {
+		n, done := newForm(twoQuestions()[:1]).feed([]byte(tc.keys))
+		if n != tc.n || done != tc.done {
+			t.Errorf("%q: took %d, done %v; want %d, %v", tc.keys, n, done, tc.n, tc.done)
+		}
+	}
+}
+
+// fourOptions is a question of four options whose descriptions wrap at 80
+// columns: sixteen lines in all.
+func fourOptions() []agent.Question {
+	return []agent.Question{{
+		Question: "Which database should the service keep its sessions in?",
+		Header:   "Store",
+		Options: []agent.Option{
+			{Label: "Postgres", Description: "Already runs in production: sessions go to a table of their own, with an index on the expiry time and a nightly job to drop the stale ones."},
+			{Label: "Redis", Description: "Fast and made for this, keys expire on their own, but it is one more server to run, back up and watch over at night."},
+			{Label: "SQLite", Description: "A file next to the service: nothing to run, but every replica would keep sessions of its own, and that breaks the logins."},
+			{Label: "Memory", Description: "Simplest of all, and every restart logs everyone out, which is fine for now and a problem later on."},
+		},
+	}}
+}
+
+// A question that fits on the screen is drawn whole, as it was before the
+// frame knew the height.
+func TestFormFrameFits(t *testing.T) {
+	want := []string{
+		"\x1b[1m  Store\x1b[0m\x1b[2m 1/1\x1b[0m",
+		"  Which database should the service keep its sessions in?",
+		"\x1b[36m  ❯ 1. Postgres\x1b[0m",
+		"\x1b[2m       Already runs in production: sessions go to a table of their own, with an\x1b[0m",
+		"\x1b[2m       index on the expiry time and a nightly job to drop the stale ones.\x1b[0m",
+		"    2. Redis",
+		"\x1b[2m       Fast and made for this, keys expire on their own, but it is one more\x1b[0m",
+		"\x1b[2m       server to run, back up and watch over at night.\x1b[0m",
+		"    3. SQLite",
+		"\x1b[2m       A file next to the service: nothing to run, but every replica would keep\x1b[0m",
+		"\x1b[2m       sessions of its own, and that breaks the logins.\x1b[0m",
+		"    4. Memory",
+		"\x1b[2m       Simplest of all, and every restart logs everyone out, which is fine for\x1b[0m",
+		"\x1b[2m       now and a problem later on.\x1b[0m",
+		"    5. Other",
+		"\x1b[2m  ↑↓/1-5 choose · enter done · esc cancel\x1b[0m",
+	}
+	f := newForm(fourOptions())
+	for _, rows := range []int{0, len(want) + 1, 100} {
+		if got := strings.Split(f.frame(80, rows), "\r\n"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%d rows:\n%s", rows, strings.Join(got, "\n"))
+		}
+	}
+}
+
+// A frame taller than the screen loses the descriptions of the options
+// but the one under the cursor, then the options far from the cursor, then
+// the end of the question: the header, the option under the cursor and
+// the hint stay.
+func TestFormFrameHeight(t *testing.T) {
+	lines := func(f *form, rows int) []string {
+		t.Helper()
+		got := strings.Split(capture.Clean([]byte(f.frame(80, rows))), "\n")
+		if len(got) > rows-1 {
+			t.Errorf("%d lines in %d rows:\n%s", len(got), rows, strings.Join(got, "\n"))
+		}
+		return got
+	}
+	expect := func(step string, got, want, not []string) {
+		t.Helper()
+		text := strings.Join(got, "\n")
+		for _, s := range want {
+			if !strings.Contains(text, s) {
+				t.Errorf("%s: no %q in\n%s", step, s, text)
+			}
+		}
+		for _, s := range not {
+			if strings.Contains(text, s) {
+				t.Errorf("%s: %q in\n%s", step, s, text)
+			}
+		}
+	}
+
+	f := newForm(fourOptions())
+	expect("descriptions", lines(f, 13), []string{"Which database", "❯ 1. Postgres", "Already runs", "4. Memory", "5. Other", "esc cancel"}, []string{"Fast and made", "more"})
+	expect("window", lines(f, 10), []string{"Store 1/1", "Which database", "❯ 1. Postgres", "Already runs", "3. SQLite", "↓ 2 more", "esc cancel"}, []string{"↑ ", "Fast and made"})
+	f.feed([]byte("3"))
+	expect("middle", lines(f, 10), []string{"↑ 2 more", "❯ 3. SQLite", "A file next to", "5. Other", "esc cancel"}, []string{"2. Redis", "↓ "})
+	f.feed([]byte("5ab"))
+	expect("typing", lines(f, 7), []string{"Store 1/1", "❯ 5. Other: ab", "type the answer"}, nil)
+
+	long := fourOptions()
+	long[0].Question = strings.Repeat("Which database should the service keep its sessions in? ", 10)
+	f = newForm(long)
+	got := lines(f, 10)
+	expect("long question", got, []string{"Store 1/1", "❯ 1. Postgres", "↓ 3 more", "esc cancel"}, []string{"Already runs"})
+	if len(got) != 9 || !strings.HasSuffix(got[4], "…") || strings.HasPrefix(got[5], "  Which") {
+		t.Errorf("the question is not cut at its fourth line:\n%s", strings.Join(got, "\n"))
+	}
+
+	// Whatever the height and the option under the cursor.
+	for _, qs := range [][]agent.Question{fourOptions(), long} {
+		for rows := 6; rows <= 20; rows++ {
+			for cur := 1; cur <= 5; cur++ {
+				f := newForm(qs)
+				f.feed([]byte{byte('0' + cur)})
+				expect(fmt.Sprintf("%d rows, option %d", rows, cur), lines(f, rows), []string{"Store 1/1", fmt.Sprintf("❯ %d.", cur), "esc cancel"}, nil)
+			}
+		}
+	}
+}
+
 // formProxy is a proxy whose terminal is cols wide, with a form open.
 func formProxy(t *testing.T, cols *int) (*Proxy, *terminal, chan formResult, context.CancelFunc) {
+	t.Helper()
+	return formProxyOf(t, cols, twoQuestions())
+}
+
+// formProxyOf is formProxy with the form of qs.
+func formProxyOf(t *testing.T, cols *int, qs []agent.Question) (*Proxy, *terminal, chan formResult, context.CancelFunc) {
 	t.Helper()
 	sess, err := session.New(t.TempDir())
 	if err != nil {
@@ -164,7 +290,7 @@ func formProxy(t *testing.T, cols *int) (*Proxy, *terminal, chan formResult, con
 	ctx, cancel := context.WithCancel(context.Background())
 	res := make(chan formResult, 1)
 	go func() {
-		ans, err := p.askForm(ctx, twoQuestions())
+		ans, err := p.askForm(ctx, qs)
 		res <- formResult{ans, err}
 	}()
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(time.Millisecond) {
@@ -197,8 +323,10 @@ func result(t *testing.T, res chan formResult) formResult {
 	return formResult{}
 }
 
-// up is how a redraw goes back to the first line of the frame drawn.
-func up(lines int) string { return fmt.Sprintf("\r\x1b[%dA\x1b[J", lines-1) }
+// up is how a redraw goes back to the first line of the frame drawn and
+// clears the screen from there: never erase below from the line's start
+// itself, which tmux takes for a clear screen when the line is the top one.
+func up(lines int) string { return fmt.Sprintf("\r\x1b[%dA\x1b[K\x1b[B\x1b[J\x1b[A", lines-1) }
 
 // While the form is open the keys are its own, but Ctrl+C, which stops
 // the request; once answered, the summary replaces it on the screen.
@@ -250,7 +378,7 @@ func TestFormCancel(t *testing.T) {
 	if r := result(t, res); r.ans != nil || r.err != nil {
 		t.Errorf("esc: %+v", r)
 	}
-	if s := out.String(); !strings.HasSuffix(s, "\x1b[J\x1b[?25h") || p.form != nil {
+	if s := out.String(); !strings.HasSuffix(s, "\x1b[J\x1b[A\x1b[?25h") || p.form != nil {
 		t.Errorf("esc left %q, form %v", s, p.form)
 	}
 
@@ -259,7 +387,7 @@ func TestFormCancel(t *testing.T) {
 	if r := result(t, res); !errors.Is(r.err, context.Canceled) {
 		t.Errorf("interrupted: %+v", r)
 	}
-	if s := out.String(); !strings.HasSuffix(s, "\x1b[J\x1b[?25h") || p.form != nil {
+	if s := out.String(); !strings.HasSuffix(s, "\x1b[J\x1b[A\x1b[?25h") || p.form != nil {
 		t.Errorf("interrupted, left %q, form %v", s, p.form)
 	}
 

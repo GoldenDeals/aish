@@ -112,15 +112,16 @@ func nextKey(b []byte) (int, formKey, rune) {
 	return size, keyRune, r
 }
 
-// feed takes what the user typed and reports whether the form is over:
-// answered or cancelled. Keys after that are not the form's.
-func (f *form) feed(b []byte) (done bool) {
-	for len(b) > 0 && !f.done {
-		n, k, r := nextKey(b)
-		b = b[n:]
+// feed takes what the user typed and reports whether the form is over,
+// answered or cancelled, and how much of b it took: keys after the last
+// Enter are not the form's.
+func (f *form) feed(b []byte) (n int, done bool) {
+	for n < len(b) && !f.done {
+		size, k, r := nextKey(b[n:])
+		n += size
 		f.press(k, r)
 	}
-	return f.done
+	return n, f.done
 }
 
 func (f *form) press(k formKey, r rune) {
@@ -222,61 +223,141 @@ func (f *form) answers() []agent.Answer {
 
 // frame is what the screen shows, lines separated by "\r\n": the question
 // being answered, or, once the form is answered, the summary of the
-// answers, which stays on the screen; nothing when it was cancelled. Every
-// line of a question fits in cols-1 columns: one that wrapped would throw
-// off the redraw, which goes back as many lines as it drew.
-func (f *form) frame(cols int) string {
+// answers, which stays on the screen; nothing when it was cancelled. A
+// question fits in cols-1 columns and rows-1 lines (rows 0: the height is
+// not known): a line that wrapped, or a frame that scrolled the screen,
+// would throw off the redraw, which goes back as many lines as it drew.
+func (f *form) frame(cols, rows int) string {
 	if f.done {
 		return f.summary()
 	}
 	w := max(cols-1, 1)
 	q := f.qs[f.step]
-	other := len(q.Options)
+	question := wrap(q.Question, w-2)
+	opts := make([][]string, len(q.Options)+1) // Other last
+	for j := range opts {
+		opts[j] = f.option(j, w)
+	}
+	lo, hi := 0, len(opts)-1
+	if rows > 0 {
+		question, lo, hi = fitRows(question, opts, f.cur[f.step], rows-3) // the header and the hint
+	}
+
 	var lines []string
 	add := func(segs ...seg) { lines = append(lines, fit(w, segs...)) }
-
 	add(seg{bold, "  " + oneLine(q.Name())}, seg{dim, fmt.Sprintf(" %d/%d", f.step+1, len(f.qs))})
-	for _, l := range wrap(q.Question, w-2) {
+	for _, l := range question {
 		add(seg{"", "  " + l})
 	}
-	for j := 0; j <= other; j++ {
-		mark, style := "    ", ""
-		if j == f.cur[f.step] {
-			mark, style = "  ❯ ", cyan
-		}
-		lead := fmt.Sprintf("%s%d. ", mark, j+1)
-		if q.MultiSelect {
-			box := "[ ] "
-			if j < other && f.picked[f.step][j] || j == other && strings.TrimSpace(f.other[f.step]) != "" {
-				box = "[x] "
-			}
-			lead += box
-		}
-		indent := strings.Repeat(" ", runewidth.StringWidth(lead))
-		if j < other {
-			add(seg{style, lead + oneLine(q.Options[j].Label)})
-			if d := q.Options[j].Description; strings.TrimSpace(d) != "" {
-				for _, l := range wrap(d, w-len(indent)) {
-					add(seg{dim, indent + l})
-				}
-			}
-			continue
-		}
-		typed, editing := f.other[f.step], j == f.cur[f.step]
-		if typed == "" && !editing {
-			add(seg{style, lead + "Other"})
-			continue
-		}
-		lead += "Other: "
-		room := w - runewidth.StringWidth(lead) - 1 // the cursor
-		segs := []seg{{style, lead}, {"", tailFit(oneLine(typed), room)}}
-		if editing {
-			segs = append(segs, seg{reverse, " "})
-		}
-		add(segs...)
+	if lo > 0 {
+		add(seg{dim, fmt.Sprintf("  ↑ %d more", lo)})
+	}
+	for _, o := range opts[lo : hi+1] {
+		lines = append(lines, o...)
+	}
+	if n := len(opts) - 1 - hi; n > 0 {
+		add(seg{dim, fmt.Sprintf("  ↓ %d more", n)})
 	}
 	add(seg{dim, "  " + f.hint()})
 	return strings.Join(lines, "\r\n")
+}
+
+// option is the lines of the option j of the question shown, Other being
+// the last one: its label and its description.
+func (f *form) option(j, w int) []string {
+	q := f.qs[f.step]
+	other := len(q.Options)
+	mark, style := "    ", ""
+	if j == f.cur[f.step] {
+		mark, style = "  ❯ ", cyan
+	}
+	lead := fmt.Sprintf("%s%d. ", mark, j+1)
+	if q.MultiSelect {
+		box := "[ ] "
+		if j < other && f.picked[f.step][j] || j == other && strings.TrimSpace(f.other[f.step]) != "" {
+			box = "[x] "
+		}
+		lead += box
+	}
+	indent := strings.Repeat(" ", runewidth.StringWidth(lead))
+	if j < other {
+		lines := []string{fit(w, seg{style, lead + oneLine(q.Options[j].Label)})}
+		if d := q.Options[j].Description; strings.TrimSpace(d) != "" {
+			for _, l := range wrap(d, w-len(indent)) {
+				lines = append(lines, fit(w, seg{dim, indent + l}))
+			}
+		}
+		return lines
+	}
+	typed, editing := f.other[f.step], j == f.cur[f.step]
+	if typed == "" && !editing {
+		return []string{fit(w, seg{style, lead + "Other"})}
+	}
+	lead += "Other: "
+	room := w - runewidth.StringWidth(lead) - 1 // the cursor
+	segs := []seg{{style, lead}, {"", tailFit(oneLine(typed), room)}}
+	if editing {
+		segs = append(segs, seg{reverse, " "})
+	}
+	return []string{fit(w, segs...)}
+}
+
+// fitRows makes the question and the options, each its lines, fit in room
+// lines, as far as they can: it drops the descriptions but the one under
+// the cursor, then shows the options around the cursor alone, with a line
+// for those above and one for those below, then cuts the question.
+// Returns the lines of the question left and the options shown, lo to hi;
+// opts loses the lines dropped.
+func fitRows(question []string, opts [][]string, cur, room int) ([]string, int, int) {
+	last := len(opts) - 1
+	size := func(lo, hi int) int {
+		n := 0
+		if lo > 0 {
+			n++
+		}
+		if hi < last {
+			n++
+		}
+		for _, o := range opts[lo : hi+1] {
+			n += len(o)
+		}
+		return n
+	}
+	if len(question)+size(0, last) <= room {
+		return question, 0, last
+	}
+	for j := range opts {
+		if j != cur {
+			opts[j] = opts[j][:1]
+		}
+	}
+	if len(question)+size(0, last) <= room {
+		return question, 0, last
+	}
+	// Room for the option under the cursor and the lines above and below
+	// it, wherever it is: the question stays as it is while the cursor
+	// moves.
+	if n := max(room-min(3, len(opts)), 0); n < len(question) {
+		question = question[:n]
+		if n > 0 {
+			question[n-1] += "…"
+		}
+	}
+	avail := room - len(question)
+	if size(cur, cur) > avail {
+		opts[cur] = opts[cur][:1]
+	}
+	lo, hi := cur, cur
+	for grown := true; grown; {
+		grown = false
+		if hi < last && size(lo, hi+1) <= avail {
+			hi, grown = hi+1, true
+		}
+		if lo > 0 && size(lo-1, hi) <= avail {
+			lo, grown = lo-1, true
+		}
+	}
+	return question, lo, hi
 }
 
 func (f *form) hint() string {

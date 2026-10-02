@@ -271,6 +271,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	case <-outDone:
 	case <-time.After(200 * time.Millisecond):
 	}
+	p.restoreScreen()
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
 		return exitErr.ExitCode(), nil
@@ -446,6 +447,22 @@ func (p *Proxy) resized() {
 	}
 	if p.form != nil {
 		p.drawForm() // held while the viewer is open
+	}
+}
+
+// restoreScreen takes the viewer and the form off the terminal once the
+// shell is gone: nobody would close them, and the terminal would be left
+// on the alternate screen or without its cursor. The form ends unanswered,
+// as on Esc.
+func (p *Proxy) restoreScreen() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.view != nil {
+		// With what it held: the form's last frame, which closeForm erases.
+		p.closeView()
+	}
+	if p.form != nil {
+		p.closeForm()
 	}
 }
 

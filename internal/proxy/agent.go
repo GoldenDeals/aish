@@ -586,25 +586,38 @@ func (p *Proxy) askForm(ctx context.Context, qs []agent.Question) ([]agent.Answe
 
 // formKey gives what the user typed to the open form and draws it anew.
 // Ctrl+C goes on to the shell and Ctrl+O opens the viewer, as with a
-// question. Returns what goes on to the shell. Called under p.mu.
+// question. Returns what goes on to the shell: Ctrl+C and, once the form
+// is answered, what was typed after it, as the shell keeps what is typed
+// ahead. Called under p.mu.
 func (p *Proxy) formKey(b []byte) []byte {
 	view := false
 	if i := bytes.IndexByte(b, ctrlO); i >= 0 && len(p.viewFolds()) > 0 {
 		b, view = b[:i], true // the rest would be the viewer's
 	}
-	var keys, pass []byte
+	var keys []byte
 	for _, c := range b {
-		if c == 0x03 {
-			pass = append(pass, c) // interrupts the request, like anywhere else
-		} else {
+		if c != 0x03 {
 			keys = append(keys, c)
 		}
 	}
+	n, done := 0, false
 	if len(keys) > 0 {
-		if p.form.f.feed(keys) {
-			p.closeForm()
-			return pass
+		n, done = p.form.f.feed(keys)
+	}
+	var pass []byte
+	for i, c := range b {
+		if c == 0x03 {
+			pass = append(pass, c) // interrupts the request, like anywhere else
+		} else if n == 0 {
+			pass = append(pass, b[i:]...) // the rest, in the order it came
+			break
+		} else {
+			n--
 		}
+	}
+	if done {
+		p.closeForm()
+	} else if len(keys) > 0 {
 		p.drawForm()
 	}
 	if view {
@@ -618,8 +631,8 @@ func (p *Proxy) formKey(b []byte) []byte {
 // drawForm draws the open form over its last frame. Called under p.mu.
 func (p *Proxy) drawForm() {
 	of := p.form
-	w, _ := p.size()
-	frame := of.f.frame(w)
+	w, h := p.size()
+	frame := of.f.frame(w, h)
 	p.emit([]byte(of.erase(w) + frame))
 	of.shown = strings.Split(frame, "\r\n")
 }
@@ -650,11 +663,13 @@ func (of *openForm) erase(cols int) string {
 	for _, l := range of.shown {
 		rows += max(1, (frameWidth(l)+cols-1)/cols)
 	}
-	s := "\r"
-	if rows > 1 {
-		s += fmt.Sprintf("\x1b[%dA", rows-1)
+	if rows == 1 {
+		return "\r\x1b[K"
 	}
-	return s + "\x1b[J"
+	// The first line is erased by itself: erase below from the top-left
+	// corner is a clear screen to tmux, which keeps the screen, the frame
+	// with it, in its history (scroll-on-clear).
+	return fmt.Sprintf("\r\x1b[%dA\x1b[K\x1b[B\x1b[J\x1b[A", rows-1)
 }
 
 // status counts what `aish status` shows. Called under p.mu.
