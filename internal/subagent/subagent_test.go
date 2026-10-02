@@ -42,6 +42,7 @@ func TestFind(t *testing.T) {
 	write(t, filepath.Join(home, "cfg", "aish", "agents", "mine.md"), agent("mine", "aish's own"))
 	write(t, filepath.Join(user, "other.md"), agent("renamed", "loaded anyway"))
 	write(t, filepath.Join(user, "plain.md"), "no frontmatter\n")
+	write(t, filepath.Join(user, "README.md"), "# Agents\n\n---\n")
 	write(t, filepath.Join(user, "yaml.md"), "---\nname: [yaml\n---\nbody\n")
 	write(t, filepath.Join(user, "nodesc.md"), "---\nname: nodesc\n---\nbody\n")
 	write(t, filepath.Join(user, "empty.md"), "---\nname: empty\ndescription: no prompt\n---\n\n  \n")
@@ -54,6 +55,10 @@ func TestFind(t *testing.T) {
 	m := byName(got)
 	if len(m) != 4 || m["unnamed"].Desc == "" || m["mine"].Project || m["renamed"].Project {
 		t.Fatalf("from sub: %+v", got)
+	}
+	// A note without a frontmatter is not a subagent, not a broken one.
+	if _, ok := m["plain"]; ok {
+		t.Errorf("plain.md loaded: %+v", got)
 	}
 	if s := m["shared"]; s.Desc != "sub" || !s.Project || s.Root != filepath.Join(sub, ".claude") ||
 		s.File != filepath.Join(sub, ".claude", "agents", "shared.md") {
@@ -70,7 +75,6 @@ func TestFind(t *testing.T) {
 	}
 	want := map[string]string{
 		"other.md":  "differs from the file name",
-		"plain.md":  "no frontmatter",
 		"yaml.md":   "frontmatter: yaml",
 		"nodesc.md": "no description",
 		"empty.md":  "no system prompt",

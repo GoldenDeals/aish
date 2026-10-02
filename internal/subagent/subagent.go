@@ -92,6 +92,11 @@ func Find(cwd string) ([]Def, []Problem) {
 				continue
 			}
 			d, err := load(path)
+			// A file without a frontmatter, a README beside the
+			// definitions, is not a subagent at all, not a broken one.
+			if errors.Is(err, errNoFrontmatter) {
+				continue
+			}
 			if err != nil {
 				problems = append(problems, Problem{path, err.Error()})
 				continue
@@ -185,6 +190,8 @@ type frontmatter struct {
 	Model string `yaml:"model"`
 }
 
+var errNoFrontmatter = errors.New("no frontmatter: the file must start with ---")
+
 // parse splits the file into the frontmatter, between the --- lines that
 // open it, and the body, trimmed.
 func parse(path string) (frontmatter, string, error) {
@@ -196,7 +203,7 @@ func parse(path string) (frontmatter, string, error) {
 	text := strings.TrimPrefix(strings.ReplaceAll(string(b), "\r\n", "\n"), "\ufeff")
 	lines := strings.Split(text, "\n")
 	if strings.TrimSpace(lines[0]) != "---" {
-		return fm, "", errors.New("no frontmatter: the file must start with ---")
+		return fm, "", errNoFrontmatter
 	}
 	for i := 1; i < len(lines); i++ {
 		if strings.TrimSpace(lines[i]) != "---" {

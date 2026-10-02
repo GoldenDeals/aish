@@ -351,13 +351,13 @@ You are a code reviewer. Read the diff, then …
 Остальные поля фронтматтера не читаются. `aish agents` (внутри aish — и просто `agents`) показывает
 найденных сабагентов — имя, откуда, модель, инструменты, описание — и проблемы с файлами: битый
 фронтматтер, нет `description` или промпта, имя с недопустимыми символами, `name` не совпадает с
-именем файла.
+именем файла. Файлы без фронтматтера (`README.md` и т. п.) не считаются описаниями и пропускаются.
 
 ```
 $ aish agents
 reviewer  ./.claude  inherit  tools: Read, Grep, Bash  Reviews the diff before a commit and points…
 tester    ~/.claude  gpt-5                             Writes tests for the changed code
-problem: ~/proj/.claude/agents/notes.md: no frontmatter: the file must start with ---
+problem: ~/proj/.claude/agents/draft.md: no description in the frontmatter
 ```
 
 ## MCP-серверы
