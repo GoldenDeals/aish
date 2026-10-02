@@ -165,26 +165,40 @@ func editFile(_ context.Context, args map[string]any) (string, error) {
 	return fmt.Sprintf("replaced %d occurrence(s) in %s", n, path), nil
 }
 
-// runExternal runs a user tool: arguments positionally and as AISH_ARG_<NAME>,
-// a Stdin argument on standard input. Output is shown live and returned.
+// runExternal runs a user tool with the command line ParseCLI reads: the
+// positional arguments first, so they are always $1, $2…, then the flags as
+// --name VALUE (a true boolean as --name); a Stdin argument on standard
+// input. Every argument given is also in AISH_ARG_<NAME>. Output is shown
+// live and returned.
 func runExternal(ctx context.Context, t Tool, args map[string]any, live io.Writer) (string, error) {
-	var argv []string
+	var pos, flags []string
 	cmd := exec.CommandContext(ctx, t.Path)
 	cmd.Env = os.Environ()
 	for _, a := range t.Args {
-		v, ok := args[a.Name]
-		if !ok {
+		v := args[a.Name]
+		if v == nil {
+			// A missing positional argument would shift the rest.
+			if a.Required {
+				return "", fmt.Errorf("%s: missing argument %s", t.Name, a.Name)
+			}
 			continue
 		}
-		s := fmt.Sprint(v)
+		s := cliValue(v)
 		cmd.Env = append(cmd.Env, "AISH_ARG_"+strings.ToUpper(a.Name)+"="+s)
-		if a.Stdin {
+		switch {
+		case a.Stdin:
 			cmd.Stdin = strings.NewReader(s)
-		} else {
-			argv = append(argv, s)
+		case a.Flag && a.Type == "boolean":
+			if boolean(args, a.Name) {
+				flags = append(flags, "--"+a.Name)
+			}
+		case a.Flag:
+			flags = append(flags, "--"+a.Name, s)
+		default:
+			pos = append(pos, s)
 		}
 	}
-	cmd.Args = append(cmd.Args, argv...)
+	cmd.Args = append(append(cmd.Args, pos...), flags...)
 	var buf bytes.Buffer
 	w := io.Writer(&buf)
 	if live != nil {

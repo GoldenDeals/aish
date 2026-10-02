@@ -268,6 +268,15 @@ func convert(a Arg, raw string) (any, error) {
 	return raw, nil
 }
 
+// cliValue is the inverse of convert: a string as is, anything else as JSON.
+func cliValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
 // Decode parses LLM-provided JSON arguments.
 func Decode(raw json.RawMessage) (map[string]any, error) {
 	args := map[string]any{}
@@ -371,6 +380,9 @@ func parseHeader(path string, t *Tool) bool {
 			if a.Type == "stdin" {
 				a.Type, a.Stdin = "string", true
 			}
+			// As for MCP commands, only required arguments are positional:
+			// an optional one left out would shift those after it.
+			a.Flag = !a.Required && !a.Stdin
 			t.Args = append(t.Args, a)
 		}
 	}
