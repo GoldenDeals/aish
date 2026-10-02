@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/inebotov/aish/internal/session"
 	"github.com/inebotov/aish/internal/tools"
@@ -38,7 +39,7 @@ func (a *Agent) Compact(ctx context.Context, focus string, ex tools.Exec) error 
 	if err := a.closePending(ctx); err != nil {
 		return err
 	}
-	before := session.Tokens(a.entries, a.Cfg.MaxOutputBytes)
+	before := a.contextTokens(a.entries)
 	var note string
 	if focus = strings.TrimSpace(focus); focus != "" {
 		note = "The user asks the summary to focus on: " + focus
@@ -50,7 +51,7 @@ func (a *Agent) Compact(ctx context.Context, focus string, ex tools.Exec) error 
 	if err := a.append(sum); err != nil {
 		return err
 	}
-	after := session.Tokens([]session.Entry{sum}, 0)
+	after := a.contextTokens(a.entries)
 	fmt.Fprintf(a.UI, "%scompacted: %s → %s tokens (aish session show prints the summary)%s\n",
 		dim, session.Short(before), session.Short(after), reset)
 	return nil
@@ -63,7 +64,7 @@ func (a *Agent) summarize(ctx context.Context, note, cwd string) (session.Entry,
 	if note != "" {
 		prompt += "\n\n" + note
 	}
-	es := append(a.entries[:len(a.entries):len(a.entries)], session.Entry{Kind: session.KindUser, Text: prompt, Cwd: cwd})
+	es := append(a.entries[:len(a.entries):len(a.entries)], session.Entry{Kind: session.KindUser, Text: prompt, Cwd: cwd, Time: time.Now()})
 	// The tools stay in the request: the history has calls to them.
 	req := a.request(es)
 

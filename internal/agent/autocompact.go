@@ -35,7 +35,7 @@ func compactLimit(cfg config.Config) int {
 // since brought, and its results are cut instead.
 func (a *Agent) autoCompact(ctx context.Context) error {
 	limit := compactLimit(a.Cfg)
-	tokens := session.Tokens(a.entries, a.Cfg.MaxOutputBytes)
+	tokens := a.contextTokens(a.entries)
 	if limit <= 0 || tokens <= limit {
 		return nil
 	}
@@ -74,7 +74,7 @@ func (a *Agent) autoCompact(ctx context.Context) error {
 	if err := a.append(tail...); err != nil {
 		return err
 	}
-	after := session.Tokens(a.entries, a.Cfg.MaxOutputBytes)
+	after := a.contextTokens(a.entries)
 	fmt.Fprintf(a.UI, "%scompacted: %s → %s tokens (aish session show prints the summary)%s\n",
 		dim, session.Short(tokens), session.Short(after), reset)
 	if after > limit {
