@@ -44,10 +44,15 @@ type Engine struct {
 	q *rego.PreparedEvalQuery
 }
 
-// Load compiles every *.rego file in dir. A missing or empty dir gives an
-// engine that allows everything.
+// Load compiles every *.rego file in dir, a directory or a list of them
+// in the form of PATH (the project's after the user's). A missing or
+// empty dir gives an engine that allows everything.
 func Load(ctx context.Context, dir string) (*Engine, error) {
-	files, _ := filepath.Glob(filepath.Join(dir, "*.rego"))
+	var files []string
+	for _, d := range filepath.SplitList(dir) {
+		fs, _ := filepath.Glob(filepath.Join(d, "*.rego"))
+		files = append(files, fs...)
+	}
 	if len(files) == 0 {
 		return &Engine{}, nil
 	}

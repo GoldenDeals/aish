@@ -110,7 +110,12 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	if err != nil {
 		return nil, err
 	}
+	cfg, project, err := config.Project(cfg, ex.Dir)
+	if err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
+	p.project = project
 	cfg.Model, cfg.Effort = p.model, p.effort
 	a := p.ag
 	if a == nil {
@@ -388,7 +393,7 @@ func (p *Proxy) askKey(b []byte) []byte {
 func (p *Proxy) status() rpc.Status {
 	all := p.sess.Entries()
 	es := session.Current(all)
-	st := rpc.Status{Info: p.info(), Tokens: session.Tokens(es, p.maxOutput)}
+	st := rpc.Status{Info: p.info(), ProjectConfig: p.project, Tokens: session.Tokens(es, p.maxOutput)}
 	for _, e := range all {
 		switch e.Kind {
 		case session.KindSummary:

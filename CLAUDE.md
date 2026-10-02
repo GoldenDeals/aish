@@ -259,6 +259,11 @@ checkout, где он лежит, ничего не меняй и git там н�
 ## Конфигурация и пути
 
 - `~/.config/aish/config.toml` (путь переопределяется `$AISH_CONFIG`) — см. `config.Default()`.
+- `.aish.toml` — настройки проекта поверх `config.toml` (`config.Project`): ищется от cwd запроса
+  вверх до каталога с `.git` или `/`, `~` не считается; только белый список ключей (`project` в
+  `internal/config/project.go`), `system_prompt` дописывается, `policy_dir`/`tools_dir`
+  добавляются — `Config.PolicyDir`/`ToolsDir` после `Project` могут быть списком в формате `PATH`,
+  `policy.Load` и `tools.Load` его разбирают. Загружается в `Proxy.prepare` на каждый запрос.
 - `~/.config/aish/tools/` — внешние инструменты (заголовок `# aish:desc` / `# aish:arg`,
   пример — `examples/tools/weather`).
 - `~/.config/aish/policy/*.rego` — политики, запрос `data.aish.decision`,

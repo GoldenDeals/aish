@@ -36,7 +36,11 @@ func (c *Cache) Engine(ctx context.Context, dir string) (*Engine, error) {
 }
 
 func stamp(dir string) string {
-	files, _ := filepath.Glob(filepath.Join(dir, "*.rego"))
+	var files []string
+	for _, d := range filepath.SplitList(dir) {
+		fs, _ := filepath.Glob(filepath.Join(d, "*.rego"))
+		files = append(files, fs...)
+	}
 	var b strings.Builder
 	for _, f := range files {
 		if st, err := os.Stat(f); err == nil {

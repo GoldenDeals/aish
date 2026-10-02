@@ -29,6 +29,12 @@ func statusCmd(cfg config.Config) int {
 		return fail(err)
 	}
 	info := st.Info
+	// The settings of this directory: what the next request would take.
+	cwd, _ := os.Getwd()
+	cfg, project, err := config.Project(cfg, cwd)
+	if err != nil {
+		return fail(err)
+	}
 
 	row := func(k, v string) { fmt.Printf("  \x1b[2m%-16s\x1b[0m %s\n", k, v) }
 	head := func(s string) { fmt.Printf("\x1b[1m%s\x1b[0m\n", s) }
@@ -95,10 +101,15 @@ func statusCmd(cfg config.Config) int {
 	row("fold_lines", fmt.Sprint(cfg.FoldLines))
 	row("markdown", fmt.Sprint(cfg.Markdown))
 	row("prompt_status", fmt.Sprint(cfg.PromptStatus))
-	row("config", configPath())
-	rego, _ := filepath.Glob(filepath.Join(cfg.PolicyDir, "*.rego"))
-	row("policy", fmt.Sprintf("%s (%d files)", cfg.PolicyDir, len(rego)))
-	row("tools", cfg.ToolsDir)
+	row("config", configFiles(project, st.ProjectConfig))
+	dirs := func(list string) string { return strings.Join(filepath.SplitList(list), ", ") }
+	var rego []string
+	for _, d := range filepath.SplitList(cfg.PolicyDir) {
+		fs, _ := filepath.Glob(filepath.Join(d, "*.rego"))
+		rego = append(rego, fs...)
+	}
+	row("policy", fmt.Sprintf("%s (%d files)", dirs(cfg.PolicyDir), len(rego)))
+	row("tools", dirs(cfg.ToolsDir))
 	remote, _ := mcp.Remote(client, false)
 	row("mcp", fmt.Sprintf("%s (%d tools)", cfg.MCPConfig, len(remote)))
 	return 0
@@ -109,6 +120,20 @@ func configPath() string {
 		return p
 	}
 	return filepath.Join(config.Dir(), "config.toml")
+}
+
+// configFiles names the files in force: config.toml and the project's
+// for this directory, and the one the last request took when that is
+// another (the shell has moved since).
+func configFiles(project, last string) string {
+	s := configPath()
+	if project != "" {
+		s += " + " + home(project)
+	}
+	if last != "" && last != project {
+		s += fmt.Sprintf(" (the last request took %s)", home(last))
+	}
+	return s
 }
 
 // modelArgs is what `aish model [NAME] [EFFORT]` switches to; effort ""

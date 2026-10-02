@@ -102,14 +102,18 @@ func (r *Registry) Get(name string) (Tool, bool) {
 
 func (r *Registry) All() []Tool { return r.list }
 
-// Load returns the built-in tools plus executables found in dir.
+// Load returns the built-in tools plus executables found in dir: a
+// directory, or a list of them in the form of PATH, the first with a
+// name keeping it (the user's tools come before the project's).
 func Load(dir string) *Registry {
 	r := &Registry{byID: map[string]Tool{}}
 	for _, t := range Builtins() {
 		r.Add(t)
 	}
-	for _, t := range loadExternal(dir) {
-		r.Add(t)
+	for _, d := range filepath.SplitList(dir) {
+		for _, t := range loadExternal(d) {
+			r.Add(t)
+		}
 	}
 	return r
 }

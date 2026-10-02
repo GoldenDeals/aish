@@ -179,6 +179,12 @@ func loadTools(cfg config.Config, warn func(string)) *tools.Registry {
 }
 
 func toolCmd(cfg config.Config, args []string) int {
+	// The project's tools too, as the agent would have them here.
+	cwd, _ := os.Getwd()
+	cfg, _, err := config.Project(cfg, cwd)
+	if err != nil {
+		return fail(err)
+	}
 	var problems []string
 	reg := loadTools(cfg, func(s string) { problems = append(problems, s) })
 	if len(args) == 0 {

@@ -76,6 +76,8 @@ type ModelParams struct {
 // which has the journal, instead of sending the journal over.
 type Status struct {
 	Info
+	// ProjectConfig is the .aish.toml the last request took, if any.
+	ProjectConfig string `json:"project_config,omitempty"`
 	// Tokens is the size of the context the next request would send;
 	// Measured when the API reported it, else estimated.
 	Tokens   int  `json:"tokens"`
