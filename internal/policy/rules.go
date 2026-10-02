@@ -47,14 +47,20 @@ func (c rulesChecker) Check(ctx context.Context, in Input) (Decision, error) {
 		for _, argv := range in.Commands {
 			texts = append(texts, Analyze(argv, in.Cwd, in.Home).Text)
 		}
-		// What could not be parsed is matched as one command: a rule must
-		// not stop working because of a stray quote.
-		if in.ParseError != "" {
+		// What could not be parsed, or is built at run time, is matched as
+		// one command too: a rule must not stop working because of a stray
+		// quote or an eval.
+		if in.ParseError != "" || len(in.Dynamic) > 0 {
 			texts = append(texts, in.Line)
 		}
 		for _, text := range texts {
 			ds = append(ds, matches(Deny, c.Deny, text)...)
 			ds = append(ds, matches(Ask, c.Ask, text)...)
+		}
+		// A command no pattern has seen may be one a pattern names. Without
+		// patterns nothing is forbidden, and there is nothing to bypass.
+		if len(in.Dynamic) > 0 && len(c.Deny)+len(c.Ask) > 0 {
+			ds = append(ds, Decision{Action: Ask, Reason: fmt.Sprintf("command built at run time (%s)", strings.Join(in.Dynamic, ", "))})
 		}
 	case in.Tool == "write_file", in.Tool == "edit_file":
 		if a := c.WriteOutsideHome; a != "" && a != Allow && !under(in.Path, in.Home) {

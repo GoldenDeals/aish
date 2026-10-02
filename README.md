@@ -452,7 +452,10 @@ write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
 
 Шаблон сравнивается с каждой простой командой bash-строки — с её argv через пробел, в том числе
 внутри конвейеров, `$(...)`, `bash -c '...'` и за `sudo`; строка, которую не удалось разобрать,
-сравнивается целиком. `*` ловит всё, **включая пробелы и `/`**, `?` — один символ, других
+сравнивается целиком. Строка с командами, собранными во время исполнения (`eval "$x"`, `$cmd`,
+`echo … | bash`, `source` — см. `context.dynamic` ниже), тоже сравнивается целиком и спрашивает
+`[y/N]`, если задан хоть один шаблон.
+`*` ловит всё, **включая пробелы и `/`**, `?` — один символ, других
 спецсимволов нет: `sudo *` ловит `sudo cat /etc/x`, а `rm -rf /` не ловит `rm -rf /tmp/x`.
 `deny` запрещает, `ask` спрашивает Yes/No (стрелки или `y`/`n`, по умолчанию Yes), `write_outside_home` решает за `write_file` и
 `edit_file` с путём вне `$HOME`. Что правила не назвали — разрешено. Правила и Cedar проверяются
@@ -470,12 +473,20 @@ write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
 
 | инструмент | action | resource | context |
 |---|---|---|---|
-| `bash` и любой инструмент, который отдаёт команду shell, — на каждую простую команду | `Action::"run"` | `Command::"rm"` (basename) | `program`, `args`, `flags` (`-rf` → `r`, `f`; `--force` → `force`), `operands`, `paths`, `text`, `line`, `cwd`, `home`, `parse_error` |
+| `bash` и любой инструмент, который отдаёт команду shell, — на каждую простую команду | `Action::"run"` | `Command::"rm"` (basename) | `program`, `args`, `flags` (`-rf` → `r`, `f`; `--force` → `force`), `operands`, `paths`, `text`, `line`, `cwd`, `home`, `parse_error`, `dynamic` |
 | `read_file` / `write_file`, `edit_file` | `Action::"read"` / `Action::"write"` | `File::"/abs/path"` | `path`, `exists`, `cwd`, `home` |
 | остальные (внешние, MCP, скиллы) | `Action::"call"` | `Tool::"имя"` | `server`, `path`, `cwd`, `home` |
 
 Команды bash-строки разбираются все: конвейеры, `$(...)`, `bash -c '...'` и обёртки — `sudo rm x`
-даёт запросы и для `sudo`, и для `rm`; вердикт вызова — худший из них. `paths` — операнды,
+даёт запросы и для `sudo`, и для `rm`; вердикт вызова — худший из них. Так же разбирается код,
+который строка отдаёт shell: `eval` со статичными аргументами, here-string и here-document для
+`bash`/`sh`, `env -S`, значение `alias` и команда `trap`. Чего нельзя знать до исполнения, помечено
+в `context.dynamic` (множество): `computed` — программа или код из подстановок и глобов (`$x`,
+`"$(which rm)"`, `eval "$x"`, `bash -c "$x"`), `source` — `source` и `.`, `stdin` — shell читает
+команды со stdin (`echo … | bash`), `prompt` — присваивание `PROMPT_COMMAND`, `PS0`, `PS1`, `PS2`,
+`PS4`, `BASH_ENV`, `ENV`, `depth` — вложенность глубже четырёх уровней. Пример спрашивает о любой
+пометке; отпустить `source` — `unless { context has dynamic && context.dynamic == ["source"] }`.
+`paths` — операнды,
 похожие на пути, уже абсолютные и с раскрытыми симлинками: `rm -rf ~/`, `rm -rf "$HOME"` и
 `rm -rf /home/me/../me/` дают один и тот же `context.home`, и правило одно; `$PWD` раскрывается в
 текущий каталог, а `context.cwd` тоже с раскрытыми симлинками, так что `cd .`, `cd "$PWD"` и

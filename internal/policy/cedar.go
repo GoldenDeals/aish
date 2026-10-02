@@ -173,6 +173,9 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 			if in.ParseError != "" {
 				ctx["parse_error"] = types.String(in.ParseError)
 			}
+			if len(in.Dynamic) > 0 {
+				ctx["dynamic"] = stringSet(in.Dynamic)
+			}
 			reqs = append(reqs, types.Request{
 				Principal: principal,
 				Action:    actionRun,

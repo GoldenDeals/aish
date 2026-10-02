@@ -43,6 +43,9 @@ type Input struct {
 	// those in pipelines, $(...), subshells and `bash -c` strings.
 	Commands   [][]string `json:"commands,omitempty"`
 	ParseError string     `json:"parse_error,omitempty"`
+	// Dynamic is Script.Dynamic of Line: what in it runs code no policy
+	// has seen.
+	Dynamic []string `json:"dynamic,omitempty"`
 	// Model is the model making the call, the principal of the request.
 	Model string `json:"model,omitempty"`
 }
@@ -108,8 +111,8 @@ func NewInput(tool string, args map[string]any, cwd string) Input {
 // that the policies judge its commands one by one.
 func (in *Input) HandOff(line string) {
 	in.Line = line
-	cmds, err := Commands(line)
-	in.Commands = cmds
+	s, err := Parse(line)
+	in.Commands, in.Dynamic = s.Commands, s.Dynamic
 	if err != nil {
 		in.ParseError = err.Error()
 	}

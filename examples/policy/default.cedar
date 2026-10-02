@@ -33,6 +33,13 @@ unless { resource in Dir::"~" || resource in Dir::"/tmp" };
 forbid(principal, action == Action::"run", resource)
 when { context has parse_error };
 
+// eval "$x", $cmd, echo … | bash, source, PROMPT_COMMAND=…: code no rule
+// above has seen. To let source through, add
+// unless { context has dynamic && context.dynamic == ["source"] }
+@ask("the command is built at run time")
+forbid(principal, action == Action::"run", resource)
+when { context has dynamic };
+
 @ask("installs packages")
 forbid(principal, action == Action::"run", resource)
 when {

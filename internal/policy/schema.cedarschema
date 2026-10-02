@@ -8,7 +8,7 @@ action run appliesTo {
   principal: [Model], resource: [Command],
   context: { tool: String, program: String, args: Set<String>, flags: Set<String>,
              operands: Set<String>, paths: Set<String>, text: String, line: String,
-             cwd: String, home: String, parse_error?: String }
+             cwd: String, home: String, parse_error?: String, dynamic?: Set<String> }
 };
 action read, write appliesTo {
   principal: [Model], resource: [File],
