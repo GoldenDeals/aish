@@ -67,6 +67,33 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+// TestRemoveStateTmp: a SaveState cut short leaves <id>.state.tmp with the
+// shell's variables in it; it goes with the session, and is a session
+// to remove when it is all that is left.
+func TestRemoveStateTmp(t *testing.T) {
+	dir := t.TempDir()
+	id := saved(t, dir, "work", 0)
+	if err := os.WriteFile(filepath.Join(dir, id+".state.tmp"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(dir, id); err != nil {
+		t.Fatal(err)
+	}
+	if f := files(t, dir, id); len(f) != 0 {
+		t.Errorf("left %v", f)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "x.state.tmp"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(dir, "x"); err != nil {
+		t.Errorf("only a .state.tmp: %v", err)
+	}
+	if f := files(t, dir, "x"); len(f) != 0 {
+		t.Errorf("left %v", f)
+	}
+}
+
 func TestRemoveOpen(t *testing.T) {
 	dir := t.TempDir()
 	id := saved(t, dir, "work", 0)

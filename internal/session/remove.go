@@ -21,10 +21,14 @@ func Remove(dir, id string) error {
 	return err
 }
 
+// fileExts are the extensions of a session's files besides its .lock; the
+// .state.tmp is what a SaveState cut short leaves.
+var fileExts = []string{".jsonl", ".state", ".state.tmp", ".name"}
+
 // remove is Remove that reports a session already gone by found instead
 // of an error: two aish may prune at once.
 func remove(dir, id string) (found bool, err error) {
-	for _, ext := range []string{".jsonl", ".state", ".name", ".lock"} {
+	for _, ext := range append(fileExts, ".lock") {
 		if _, err := os.Lstat(filepath.Join(dir, id+ext)); err == nil {
 			found = true
 		}
@@ -37,7 +41,7 @@ func remove(dir, id string) (found bool, err error) {
 		return true, err
 	}
 	defer unlock(l) // the .lock goes last
-	for _, ext := range []string{".jsonl", ".state", ".name"} {
+	for _, ext := range fileExts {
 		if err := os.Remove(filepath.Join(dir, id+ext)); err != nil && !os.IsNotExist(err) {
 			return true, err
 		}
