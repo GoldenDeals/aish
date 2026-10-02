@@ -13,7 +13,6 @@ import (
 	"github.com/inebotov/aish/internal/proxy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/skills"
 	"github.com/inebotov/aish/internal/tools"
 )
 
@@ -99,12 +98,7 @@ func startShell(cfg config.Config, sess *session.Session, resume bool) int {
 			}
 		}
 	}
-	// The user's skills become commands; project ones would outlive a cd.
 	reg := tools.Load(cfg.ToolsDir)
-	found, _ := skills.Find("")
-	for _, s := range found {
-		reg.Add(s.Tool())
-	}
 	p.Commands = UserCommands
 	code, err := p.Run(cfg, reg)
 	if err != nil {

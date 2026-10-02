@@ -70,13 +70,13 @@ func requestCwd(entries []session.Entry, cwd string) string {
 // Messages converts the session journal into a conversation. User commands
 // and requests between two assistant turns become one user message. What
 // the user did not type themselves (command output, files, instructions,
-// tool results) goes through mask; the journal keeps the original.
+// skills, tool results) goes through mask; the journal keeps the original.
 func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Message {
 	entries = session.Current(entries)
 	var out []llm.Message
 	var user llm.Message
 	var parts []string
-	var inst, files []session.Entry
+	var inst, files, used []session.Entry
 	flushInst := func() {
 		if len(inst) > 0 {
 			parts = append(parts, instructionsBlock(inst))
@@ -85,6 +85,10 @@ func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Messag
 		if len(files) > 0 {
 			parts = append(parts, filesBlock(files))
 			files = nil
+		}
+		if len(used) > 0 {
+			parts = append(parts, skillsBlock(used))
+			used = nil
 		}
 	}
 	flush := func() {
@@ -97,7 +101,7 @@ func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Messag
 		user, parts = llm.Message{}, nil
 	}
 	for _, e := range entries {
-		if e.Kind != session.KindInstructions && e.Kind != session.KindFile {
+		if e.Kind != session.KindInstructions && e.Kind != session.KindFile && e.Kind != session.KindSkill {
 			flushInst()
 		}
 		switch e.Kind {
@@ -107,6 +111,9 @@ func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Messag
 		case session.KindFile:
 			e.Text = mask.Mask(e.Text)
 			files = append(files, e)
+		case session.KindSkill:
+			e.Text = mask.Mask(e.Text)
+			used = append(used, e)
 		case session.KindSummary:
 			parts = append(parts, summaryBlock(e))
 		case session.KindShell:

@@ -126,6 +126,13 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	if err := a.append(files...); err != nil {
 		return err
 	}
+	used := skillMentions(text, cwd)
+	for _, e := range used {
+		fmt.Fprintf(a.UI, "%s  %s%s\n", dim, skillNote(e, cwd), reset)
+	}
+	if err := a.append(used...); err != nil {
+		return err
+	}
 	if err := a.append(session.Entry{Kind: session.KindUser, Text: text, Cwd: cwd}); err != nil {
 		return err
 	}

@@ -25,6 +25,8 @@ const (
 	KindInstructions = "instructions"
 	// KindFile is a file the user mentioned as @path in a request.
 	KindFile = "file"
+	// KindSkill is a skill the user invoked as /name in a request.
+	KindSkill = "skill"
 	// KindSummary replaces everything before it: `aish compact` asked the
 	// model to sum the session up, and only the summary is sent from then on.
 	KindSummary = "summary"
@@ -67,7 +69,7 @@ type Entry struct {
 	CachedTokens int `json:"cached_tokens,omitempty"`
 	OutputTokens int `json:"output_tokens,omitempty"`
 
-	// instructions, file
+	// instructions, file, skill (About: the skill's name)
 	Path  string `json:"path,omitempty"`
 	About string `json:"about,omitempty"`
 
@@ -75,7 +77,7 @@ type Entry struct {
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	ToolName   string `json:"tool_name,omitempty"`
 
-	// tool_result, file (a mention that could not be read)
+	// tool_result, file, skill (a mention that could not be read)
 	IsError bool `json:"is_error,omitempty"`
 }
 

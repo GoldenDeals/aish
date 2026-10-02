@@ -35,8 +35,8 @@ func skillsCmd(cfg config.Config, args []string) int {
 			problems = append(problems, skills.Problem{Path: s.File(), Msg: "skipped, an aish command has this name"})
 			continue
 		}
-		if p := shadowed(s.Name); p != "" && !s.Project {
-			problems = append(problems, skills.Problem{Path: s.File(), Msg: "not a command, it would shadow " + p})
+		if p := shadowed(s.Name); p != "" {
+			problems = append(problems, skills.Problem{Path: s.File(), Msg: "typed as a command it runs " + p + "; use /" + s.Name})
 		}
 		shown = append(shown, s)
 		nameW, srcW = max(nameW, runewidth.StringWidth(call(s))), max(srcW, len(source(s, cwd)))
@@ -86,8 +86,8 @@ func source(s skills.Skill, cwd string) string {
 	return "./" + rel
 }
 
-// shadowed is the command on PATH that a wrapper named name would hide;
-// aish's own wrappers do not count.
+// shadowed is the command on PATH that bash runs for name, so a skill typed
+// as a command does not reach the assistant; aish's own wrappers do not count.
 func shadowed(name string) string {
 	own := ""
 	if run := os.Getenv("AISH_RUN"); run != "" {
