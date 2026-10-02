@@ -13,16 +13,19 @@ import (
 
 // policyCmd loads the policies, so that a validation error shows up right
 // after editing a file, and with a tool call asks them about it without
-// running the model: `aish policy bash 'sudo ls'`.
+// running the model: `aish policy bash 'sudo ls'`. The [policy] rules of
+// the config are one more checker of the engine and answer there too.
 func policyCmd(cfg config.Config, args []string) int {
+	global := rulesOf(cfg).Len()
 	// The project's policies too, as the agent would have them here.
 	cwd, _ := os.Getwd()
-	cfg, _, err := config.Project(cfg, cwd)
+	cfg, project, err := config.Project(cfg, cwd)
 	if err != nil {
 		return fail(err)
 	}
 	ctx := context.Background()
-	eng, err := policy.Load(ctx, cfg.PolicyDir)
+	rules := rulesOf(cfg)
+	eng, err := policy.Load(ctx, cfg.PolicyDir, rules)
 	if err != nil {
 		return fail(err)
 	}
@@ -33,11 +36,22 @@ func policyCmd(cfg config.Config, args []string) int {
 			n += s.Policies
 			files = append(files, fmt.Sprintf("%s (%d)", s.File, s.Policies))
 		}
-		if n == 0 {
-			fmt.Printf("no policies in %s\n", cfg.PolicyDir)
-			return 0
+		line := "no policies in " + cfg.PolicyDir
+		if n > 0 {
+			line = fmt.Sprintf("%d policies in %s: %s", n, cfg.PolicyDir, strings.Join(files, ", "))
 		}
-		fmt.Printf("%d policies in %s: %s\n", n, cfg.PolicyDir, strings.Join(files, ", "))
+		for _, r := range []struct {
+			n    int
+			from string
+		}{{global, "config.toml"}, {rules.Len() - global, project}} {
+			switch {
+			case r.n == 1:
+				line += " + 1 rule from " + r.from
+			case r.n > 1:
+				line += fmt.Sprintf(" + %d rules from %s", r.n, r.from)
+			}
+		}
+		fmt.Println(line)
 		return 0
 	}
 	reg := loadTools(cfg, nil)
@@ -65,4 +79,9 @@ func policyCmd(cfg config.Config, args []string) int {
 	}
 	fmt.Printf("%s: %s\n", d.Action, d.Reason)
 	return 1
+}
+
+// rulesOf is the [policy] table of cfg as the policy package takes it.
+func rulesOf(cfg config.Config) policy.Rules {
+	return policy.Rules{Deny: cfg.Policy.Deny, Ask: cfg.Policy.Ask, WriteOutsideHome: cfg.Policy.WriteOutsideHome}
 }

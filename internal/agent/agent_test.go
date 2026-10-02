@@ -282,7 +282,7 @@ func TestAsk(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "a.cedar"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pol, err := policy.Load(context.Background(), dir)
+	pol, err := policy.Load(context.Background(), dir, policy.Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}

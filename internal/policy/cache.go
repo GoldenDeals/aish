@@ -11,23 +11,26 @@ import (
 
 // Cache keeps the compiled policies of a directory for an agent that
 // outlives one request, and compiles them again only when a file there
-// changes: preparing a Rego query takes longer than a request should.
+// or the rules change: parsing and validating the policies takes longer
+// than a request should.
 type Cache struct {
 	mu    sync.Mutex
 	dir   string
-	stamp string // the files, their sizes and mtimes
+	stamp string // the files, their sizes and mtimes, and the rules
 	eng   *Engine
 }
 
-// Engine returns the policies of dir, compiled now or earlier.
-func (c *Cache) Engine(ctx context.Context, dir string) (*Engine, error) {
-	stamp := stamp(dir)
+// Engine returns the policies of dir and the rules, compiled now or
+// earlier. The rules come from a config read anew for every request, so
+// an edit of config.toml is in force from the next one.
+func (c *Cache) Engine(ctx context.Context, dir string, rules Rules) (*Engine, error) {
+	stamp := stamp(dir) + fmt.Sprintf("%q", rules)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.eng != nil && c.dir == dir && c.stamp == stamp {
 		return c.eng, nil
 	}
-	eng, err := Load(ctx, dir)
+	eng, err := Load(ctx, dir, rules)
 	if err != nil {
 		return nil, err
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/mcp"
+	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 	"github.com/inebotov/aish/internal/skills"
@@ -103,8 +104,9 @@ func (p *Proxy) cancelRequest() {
 
 // prepare gives the agent what this request needs: the config as it is
 // now, with this shell's model and effort; the provider, kept while they
-// stay the same; the policies, compiled again only when their files
-// change; and, for a fresh request, the tools of the shell's directory.
+// stay the same; the policies, compiled again only when their files or
+// the [policy] rules change; and, for a fresh request, the tools of the
+// shell's directory.
 func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.Agent, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -129,7 +131,8 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	if err != nil {
 		return nil, err
 	}
-	pol, err := p.policies.Engine(ctx, cfg.PolicyDir)
+	rules := policy.Rules{Deny: cfg.Policy.Deny, Ask: cfg.Policy.Ask, WriteOutsideHome: cfg.Policy.WriteOutsideHome}
+	pol, err := p.policies.Engine(ctx, cfg.PolicyDir, rules)
 	if err != nil {
 		return nil, err
 	}

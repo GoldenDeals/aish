@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 
 	"github.com/BurntSushi/toml"
@@ -27,6 +28,7 @@ type project struct {
 	Markdown       *bool   `toml:"markdown"`
 	CodeStyle      *string `toml:"code_style"`
 	PolicyDir      *string `toml:"policy_dir"`
+	Policy         *Policy `toml:"policy"`
 	ToolsDir       *string `toml:"tools_dir"`
 	SystemPrompt   *string `toml:"system_prompt"`
 }
@@ -43,7 +45,8 @@ type project struct {
 // are added after the global directories: PolicyDir and ToolsDir come
 // back as lists in the form of PATH (filepath.ListSeparator), which the
 // policy and tools packages take. Relative directories are taken from
-// the file's own.
+// the file's own. The deny and ask lists of [policy] are added to the
+// global ones, and of the two write_outside_home the stricter is kept.
 func Project(cfg Config, cwd string) (Config, string, error) {
 	path := findProject(cwd)
 	if path == "" {
@@ -78,6 +81,13 @@ func Project(cfg Config, cwd string) (Config, string, error) {
 	}
 	if pr.PolicyDir != nil {
 		cfg.PolicyDir = addDir(cfg.PolicyDir, *pr.PolicyDir, dir)
+	}
+	if pr.Policy != nil {
+		cfg.Policy = Policy{
+			Deny:             slices.Concat(cfg.Policy.Deny, pr.Policy.Deny),
+			Ask:              slices.Concat(cfg.Policy.Ask, pr.Policy.Ask),
+			WriteOutsideHome: stricter(cfg.Policy.WriteOutsideHome, pr.Policy.WriteOutsideHome),
+		}
 	}
 	if pr.ToolsDir != nil {
 		cfg.ToolsDir = addDir(cfg.ToolsDir, *pr.ToolsDir, dir)
@@ -138,6 +148,26 @@ func forbidden(md toml.MetaData) error {
 		}
 	}
 	return unknown(md)
+}
+
+// stricter is the stricter of two write_outside_home values. A value that
+// is none of them wins, so that check rejects it.
+func stricter(a, b string) string {
+	rank := func(v string) int {
+		switch v {
+		case "", "allow":
+			return 0
+		case "ask":
+			return 1
+		case "deny":
+			return 2
+		}
+		return 3
+	}
+	if rank(b) > rank(a) {
+		return b
+	}
+	return a
 }
 
 // addDir appends dir, relative to base unless absolute or ~/, to the

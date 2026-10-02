@@ -33,7 +33,7 @@ func TestCommands(t *testing.T) {
 
 func TestExamplePolicy(t *testing.T) {
 	ctx := context.Background()
-	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"))
+	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestExamplePolicy(t *testing.T) {
 }
 
 func TestNoPolicies(t *testing.T) {
-	e, err := Load(context.Background(), t.TempDir())
+	e, err := Load(context.Background(), t.TempDir(), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,9 +76,56 @@ func TestNoPolicies(t *testing.T) {
 	}
 }
 
+func TestRulesWithoutCedar(t *testing.T) {
+	ctx := context.Background()
+	e, err := Load(ctx, t.TempDir(), Rules{Deny: []string{"sudo *"}, Ask: []string{"git push*"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(e.checkers) != 1 {
+		t.Fatalf("checkers: %#v, want the rules alone", e.checkers)
+	}
+	// Rules are not default deny: what they do not name is allowed.
+	for cmd, want := range map[string]string{"sudo ls": Deny, "git push origin": Ask, "git status": Allow} {
+		d, err := e.Check(ctx, NewInput("bash", map[string]any{"command": cmd}, "/"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Action != want {
+			t.Errorf("%s: %s (%s), want %s", cmd, d.Action, d.Reason, want)
+		}
+	}
+}
+
+func TestRulesAndCedar(t *testing.T) {
+	ctx := context.Background()
+	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{
+		Deny: []string{"pacman *"},
+		Ask:  []string{"ls *", "git status"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	for _, c := range []struct{ cmd, want, reason string }{
+		{"ls -la", Ask, `policy: matches "ls *"`},                      // Cedar allows, the rules ask
+		{"pacman -S ripgrep", Deny, `policy: matches "pacman *"`},      // Cedar asks, the rules deny
+		{"sudo git status", Deny, "sudo is not allowed for the agent"}, // Cedar denies, the rules ask
+		{"cat README.md", Allow, ""},                                   // neither has anything against it
+	} {
+		d, err := e.Check(ctx, NewInput("bash", map[string]any{"command": c.cmd}, home))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.Action != c.want || d.Reason != c.reason {
+			t.Errorf("%s: %s (%s), want %s (%s)", c.cmd, d.Action, d.Reason, c.want, c.reason)
+		}
+	}
+}
+
 func TestSymlinkOutOfHome(t *testing.T) {
 	ctx := context.Background()
-	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"))
+	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}

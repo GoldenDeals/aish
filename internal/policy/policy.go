@@ -1,9 +1,10 @@
 // Package policy decides whether the agent may run a tool call. The policies
 // are Cedar files in policy_dir, validated against a built-in schema when
-// loaded; every simple command of a bash call is one authorization request,
-// and the verdict is the strictest answer of every Checker. The engine is
-// fail-closed: an evaluation error, a call no permit covers and a leftover
-// Rego file are all a deny or a load error, never an allow.
+// loaded, and the deny/ask patterns of [policy] in config.toml; every simple
+// command of a bash call is one authorization request, and the verdict is
+// the strictest answer of every Checker. The engine is fail-closed: an
+// evaluation error, a call no permit covers and a leftover Rego file are
+// all a deny or a load error, never an allow.
 package policy
 
 import (
@@ -49,11 +50,19 @@ type Engine struct {
 }
 
 // Load reads every *.cedar file in dir, a directory or a list of them in
-// the form of PATH (the project's after the user's). A missing or empty
-// dir gives an engine that allows everything; a *.rego file is an error
-// even next to Cedar files, because ignoring a file of prohibitions is not
-// an option.
-func Load(ctx context.Context, dir string) (*Engine, error) {
+// the form of PATH (the project's after the user's), and takes the rules
+// of config.toml as one more checker. A missing or empty dir and no rules
+// give an engine that allows everything; a *.rego file is an error even
+// next to Cedar files, because ignoring a file of prohibitions is not an
+// option.
+func Load(ctx context.Context, dir string, rules Rules) (*Engine, error) {
+	if err := rules.check(); err != nil {
+		return nil, err
+	}
+	e := &Engine{}
+	if rules.Len() > 0 {
+		e.checkers = append(e.checkers, rulesChecker{rules})
+	}
 	var files []string
 	for _, d := range filepath.SplitList(dir) {
 		if rego, _ := filepath.Glob(filepath.Join(d, "*.rego")); len(rego) > 0 {
@@ -63,13 +72,14 @@ func Load(ctx context.Context, dir string) (*Engine, error) {
 		files = append(files, fs...)
 	}
 	if len(files) == 0 {
-		return &Engine{}, nil
+		return e, nil
 	}
 	c, err := loadCedar(files)
 	if err != nil {
 		return nil, err
 	}
-	return &Engine{checkers: []Checker{c}}, nil
+	e.checkers = append(e.checkers, c)
+	return e, nil
 }
 
 // NewInput fills the derived fields of the input for a tool call.

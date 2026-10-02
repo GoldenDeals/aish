@@ -56,6 +56,44 @@ func TestProject(t *testing.T) {
 	}
 }
 
+func TestProjectPolicy(t *testing.T) {
+	// A project can only make the policy stricter: its lists are added to
+	// the global ones, and the stricter write_outside_home wins.
+	for _, tc := range []struct{ global, project, want string }{
+		{"", "deny", "deny"},
+		{"ask", "allow", "ask"},
+		{"deny", "ask", "deny"},
+		{"ask", "", "ask"},
+	} {
+		root := t.TempDir()
+		t.Setenv("HOME", filepath.Join(root, "home"))
+		repo(t, root, "[policy]\ndeny = [\"make deploy*\"]\nask = [\"docker *\"]\nwrite_outside_home = \""+tc.project+"\"\n")
+		base := Default()
+		base.Policy = Policy{Deny: []string{"sudo *"}, Ask: []string{"git push*"}, WriteOutsideHome: tc.global}
+		cfg, _, err := Project(base, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := Policy{
+			Deny:             []string{"sudo *", "make deploy*"},
+			Ask:              []string{"git push*", "docker *"},
+			WriteOutsideHome: tc.want,
+		}
+		if !reflect.DeepEqual(cfg.Policy, want) {
+			t.Errorf("global %q, project %q: %+v, want %+v", tc.global, tc.project, cfg.Policy, want)
+		}
+	}
+	// Without [policy] the global one stays as it is.
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	repo(t, root, "max_steps = 3\n")
+	base := Default()
+	base.Policy = Policy{Deny: []string{"sudo *"}}
+	if cfg, _, err := Project(base, root); err != nil || !reflect.DeepEqual(cfg.Policy, base.Policy) {
+		t.Errorf("without [policy]: %+v, %v", cfg.Policy, err)
+	}
+}
+
 func TestProjectStopsAtGit(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
@@ -122,6 +160,8 @@ func TestProjectErrors(t *testing.T) {
 		{"max_steps = 3\nmax_stepz = 4\n", `unknown key "max_stepz"`},
 		{"max_steps = -1\n", "max_steps = -1: must not be negative"},
 		{"max_steps = \"3\"\n", "max_steps"},
+		{"[policy]\nwrite_outside_home = \"never\"\n", `policy.write_outside_home = "never"`},
+		{"[policy]\nallow = [\"sudo *\"]\n", `unknown key "policy.allow"`},
 	} {
 		root := t.TempDir()
 		t.Setenv("HOME", filepath.Join(root, "home"))

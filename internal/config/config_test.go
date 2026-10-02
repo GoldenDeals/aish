@@ -53,6 +53,8 @@ func TestLoadErrors(t *testing.T) {
 		{"max_output_bytes = -5\n", "max_output_bytes = -5: must not be negative"},
 		{"max_tokens = \"1000\"\n", "max_tokens"},
 		{"mask = [\"ok\", \"(\"]\n", `mask "("`},
+		{"[policy]\ndenny = [\"sudo *\"]\n", `unknown key "policy.denny"`},
+		{"[policy]\nwrite_outside_home = \"never\"\n", `policy.write_outside_home = "never"`},
 	} {
 		_, err := load(t, tc.toml)
 		if err == nil {
@@ -63,6 +65,22 @@ func TestLoadErrors(t *testing.T) {
 		if !strings.Contains(msg, tc.want) || !strings.Contains(msg, "config.toml: ") {
 			t.Errorf("%q: %v, want %q and the path", tc.toml, err, tc.want)
 		}
+	}
+}
+
+func TestLoadPolicy(t *testing.T) {
+	cfg, err := load(t, `
+[policy]
+deny = ["sudo *", "rm -rf /"]
+ask  = ["apt install *"]
+write_outside_home = "ask"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Policy{Deny: []string{"sudo *", "rm -rf /"}, Ask: []string{"apt install *"}, WriteOutsideHome: "ask"}
+	if !reflect.DeepEqual(cfg.Policy, want) {
+		t.Errorf("policy %+v, want %+v", cfg.Policy, want)
 	}
 }
 

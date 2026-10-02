@@ -63,6 +63,7 @@ type Config struct {
 	StateIgnore []string `toml:"state_ignore"`
 
 	PolicyDir   string `toml:"policy_dir"`
+	Policy      Policy `toml:"policy"`
 	ToolsDir    string `toml:"tools_dir"`
 	SessionsDir string `toml:"sessions_dir"`
 	// MCPConfig lists MCP servers (YAML).
@@ -73,6 +74,17 @@ type Config struct {
 
 	// SystemPrompt is appended to the built-in system prompt.
 	SystemPrompt string `toml:"system_prompt"`
+}
+
+// Policy is the [policy] table, the simple rules checked next to the
+// Cedar policies of PolicyDir: patterns, where * takes spaces and slashes
+// too, for the commands to deny or to ask about, and what to do with a
+// file tool writing outside the home directory.
+type Policy struct {
+	Deny []string `toml:"deny"`
+	Ask  []string `toml:"ask"`
+	// WriteOutsideHome is "allow", "ask" or "deny"; empty is allow.
+	WriteOutsideHome string `toml:"write_outside_home"`
 }
 
 func Dir() string {
@@ -199,6 +211,11 @@ func (c Config) check() error {
 		if f.n < 0 {
 			return fmt.Errorf("%s = %d: must not be negative", f.key, f.n)
 		}
+	}
+	switch c.Policy.WriteOutsideHome {
+	case "", "allow", "ask", "deny":
+	default:
+		return fmt.Errorf("policy.write_outside_home = %q: want \"allow\", \"ask\" or \"deny\"", c.Policy.WriteOutsideHome)
 	}
 	for _, l := range []struct {
 		key      string

@@ -19,7 +19,7 @@ func load(t *testing.T, files map[string]string) (*Engine, error) {
 			t.Fatal(err)
 		}
 	}
-	return Load(context.Background(), dir)
+	return Load(context.Background(), dir, Rules{})
 }
 
 func mustLoad(t *testing.T, files map[string]string) *Engine {
