@@ -113,8 +113,8 @@ func TestRestoreProfile(t *testing.T) {
 	if p.profile != "local" || p.model != "qwen3:8b" || p.effort != "high" {
 		t.Errorf("a profile config.toml has no more: %q %q %q", p.profile, p.model, p.effort)
 	}
-	// Saved before there were profiles: the top level's.
-	p.restoreModel(session.Saved{Model: "top-model", Effort: "max"})
+	// The top level, as a state saves it now.
+	p.restoreModel(session.Saved{TopLevel: true, Model: "top-model", Effort: "max"})
 	if p.profile != "" || p.model != "top-model" || p.effort != "max" || p.fixedWindow {
 		t.Errorf("the top level: %q %q %q", p.profile, p.model, p.effort)
 	}

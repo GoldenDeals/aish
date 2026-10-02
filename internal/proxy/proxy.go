@@ -135,18 +135,18 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	p.compactAt = cfg.CompactAt
 	p.ignore, p.stateIgnore = cfg.JournalIgnore, cfg.StateIgnore
 	p.fixedWindow = cfg.ContextWindow > 0
-	// Only the models list is asked of it: a wrong effort must not lose it.
-	pc := cfg
-	pc.Effort = ""
-	if prov, err := llm.New(pc); err == nil {
+	if prov, err := p.listProvider(cfg); err == nil {
 		p.prov = prov
 	}
+	// setModel may start a lookup of the window, which takes p.mu.
+	p.mu.Lock()
 	p.profile, p.defProfile = cfg.Profile, cfg.Profile
 	p.effort, p.window = cfg.Effort, cfg.ContextWindow
 	p.setModel(cfg.Model, cfg.ContextWindow)
 	if p.resumed != nil {
 		p.restoreModel(*p.resumed)
 	}
+	p.mu.Unlock()
 	p.out = os.Stdout
 	p.size = func() (int, int) {
 		w, h, err := term.GetSize(int(os.Stdin.Fd()))

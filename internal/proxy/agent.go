@@ -161,11 +161,7 @@ func (p *Proxy) providerFor(cfg config.Config) (llm.Provider, error) {
 	if p.agentProv != nil && p.agentProvKey == key {
 		return p.agentProv, nil
 	}
-	newProvider := p.newProvider
-	if newProvider == nil {
-		newProvider = llm.New
-	}
-	prov, err := newProvider(cfg)
+	prov, err := p.makeProvider(cfg)
 	if err != nil {
 		return nil, err
 	}

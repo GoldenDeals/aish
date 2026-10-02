@@ -28,17 +28,17 @@ func (p *Proxy) Resume(st session.Saved) {
 // restoreModel brings back the profile a session used, its model and their
 // effort. A state without a model was saved before aish kept them: the
 // config's stay. So do they when config.toml has the profile no more: the
-// model would go to the endpoint of another. Called under p.mu.
+// model would go to the endpoint of another. A state saved before there
+// were profiles (Profile "" without TopLevel) keeps the shell's profile
+// and brings back the model and the effort over it: they were of the one
+// endpoint aish had then, which is now most likely the profile chosen.
+// Called under p.mu.
 func (p *Proxy) restoreModel(st session.Saved) {
 	if st.Model == "" {
 		return
 	}
-	if st.Profile != p.profile {
-		cfg, err := config.LoadProfile(st.Profile)
-		if err != nil {
-			return
-		}
-		prov, err := p.listProvider(cfg)
+	if st.Profile != p.profile && (st.Profile != "" || st.TopLevel) {
+		cfg, prov, err := p.toProfile(st.Profile)
 		if err != nil {
 			return
 		}
@@ -60,10 +60,7 @@ func (p *Proxy) switchModel(mp rpc.ModelParams) (rpc.Info, error) {
 	var cfg config.Config
 	if other {
 		var err error
-		if cfg, err = config.LoadProfile(mp.Profile); err != nil {
-			return rpc.Info{}, err
-		}
-		if prov, err = p.listProvider(cfg); err != nil {
+		if cfg, prov, err = p.toProfile(mp.Profile); err != nil {
 			return rpc.Info{}, err
 		}
 	}
@@ -99,10 +96,29 @@ func (p *Proxy) setProfile(cfg config.Config, prov llm.Provider) {
 // need fixing.
 func (p *Proxy) listProvider(cfg config.Config) (llm.Provider, error) {
 	cfg.Effort = ""
+	return p.makeProvider(cfg)
+}
+
+// makeProvider is p.newProvider, which tests set, or else llm.New.
+func (p *Proxy) makeProvider(cfg config.Config) (llm.Provider, error) {
 	if p.newProvider != nil {
 		return p.newProvider(cfg)
 	}
 	return llm.New(cfg)
+}
+
+// toProfile reads profile name of config.toml and makes its provider for
+// the models list and the levels of effort.
+func (p *Proxy) toProfile(name string) (config.Config, llm.Provider, error) {
+	cfg, err := config.LoadProfile(name)
+	if err != nil {
+		return config.Config{}, nil, err
+	}
+	prov, err := p.listProvider(cfg)
+	if err != nil {
+		return config.Config{}, nil, err
+	}
+	return cfg, prov, nil
 }
 
 // setModel switches the model; window 0 has its size looked up. Called under
@@ -123,6 +139,12 @@ func (p *Proxy) setModel(model string, window int) {
 func (p *Proxy) info() rpc.Info {
 	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Saved: p.sess.Saved(),
 		Profile: p.profile, Model: p.model, Effort: p.effort, Window: p.window}
+}
+
+// modelState is the profile, the model and the effort of the shell, as
+// a session keeps them. Called under p.mu.
+func (p *Proxy) modelState() session.Saved {
+	return session.Saved{Profile: p.profile, TopLevel: p.profile == "", Model: p.model, Effort: p.effort}
 }
 
 // saveState records how the shell differs from the one that started, from
@@ -154,7 +176,8 @@ func (p *Proxy) saveState(cwd string) {
 	if !p.sess.Saved() {
 		return // an unsaved session leaves nothing on disk, its state neither
 	}
-	saved := session.Saved{Shell: bashstate.Diff(*p.base, cur), Profile: p.profile, Model: p.model, Effort: p.effort}
+	saved := p.modelState()
+	saved.Shell = bashstate.Diff(*p.base, cur)
 	data, _ := json.Marshal(saved)
 	key := append([]byte(p.sess.ID), data...)
 	if bytes.Equal(key, p.lastSaved) {

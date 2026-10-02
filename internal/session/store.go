@@ -25,11 +25,14 @@ type Saved struct {
 	// Shell is how the shell differs from the one aish started with.
 	Shell bashstate.State `json:"shell"`
 	// Profile is the one of config.toml the model is of, "" for the top
-	// level: a state saved before there were profiles has a model of the
-	// top level too.
+	// level when TopLevel says so.
 	Profile string `json:"profile,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Effort  string `json:"effort,omitempty"`
+	// TopLevel tells a Profile "" of the top level of config.toml from that
+	// of a state saved before there were profiles, whose model is of the
+	// profile the shell has.
+	TopLevel bool   `json:"top_level,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
 }
 
 func statePath(dir, id string) string { return filepath.Join(dir, id+".state") }
