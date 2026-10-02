@@ -293,7 +293,16 @@ func sessionCmd(cfg config.Config, args []string) int {
 		if err != nil {
 			return fail(err)
 		}
+		// The last reply that named its model: one the agent wrote itself
+		// (Ctrl+C, out of steps) names none and changes nothing.
+		var prev session.Entry
 		for _, e := range es {
+			if l := modelLine(prev, e); l != "" {
+				fmt.Println(l)
+			}
+			if e.Kind == session.KindAssistant && e.Model != "" {
+				prev = e
+			}
 			printEntry(e)
 		}
 	case "rm":
