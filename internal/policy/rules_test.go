@@ -84,7 +84,7 @@ func TestRules(t *testing.T) {
 		{"edit_file", map[string]any{"path": "../outside.txt"}, Deny, "writes outside home: " + resolve(filepath.Join(filepath.Dir(home), "outside.txt"))},
 		{"read_file", map[string]any{"path": "/etc/hosts"}, Allow, ""},
 	} {
-		d, err := e.Check(ctx, NewInput(c.tool, c.args, home))
+		d, err := e.Check(ctx, callInput(c.tool, c.args, home))
 		if err != nil {
 			t.Fatal(err)
 		}

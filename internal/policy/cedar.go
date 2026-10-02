@@ -141,15 +141,15 @@ var (
 )
 
 // requests maps a tool call to Cedar: one request per simple command of a
-// bash call, one for a file tool, one for anything else; the entities are
-// shared by all of them.
+// call handing a command to the shell, one for a file tool, one for
+// anything else; the entities are shared by all of them. The tool stays in
+// the context of a command, so a policy can tell ssh from bash.
 func requests(in Input) ([]types.Request, types.EntityMap) {
 	principal := types.NewEntityUID("Model", types.String(in.Model))
 	ents := types.EntityMap{}
 	cwd, home := types.String(in.Cwd), types.String(in.Home)
-	switch in.Tool {
-	case "bash":
-		line, _ := in.Args["command"].(string)
+	switch {
+	case in.Line != "":
 		var reqs []types.Request
 		run := func(argv []string) {
 			c := Analyze(argv, in.Cwd, in.Home)
@@ -161,7 +161,7 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 				"operands": stringSet(c.Operands),
 				"paths":    stringSet(c.Paths),
 				"text":     types.String(c.Text),
-				"line":     types.String(line),
+				"line":     types.String(in.Line),
 				"cwd":      cwd,
 				"home":     home,
 			}
@@ -182,7 +182,7 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 			run(nil)
 		}
 		return reqs, ents
-	case "read_file", "write_file", "edit_file":
+	case in.Tool == "read_file", in.Tool == "write_file", in.Tool == "edit_file":
 		action := actionWrite
 		if in.Tool == "read_file" {
 			action = actionRead

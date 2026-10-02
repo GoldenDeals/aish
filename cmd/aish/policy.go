@@ -45,6 +45,11 @@ func policyCmd(cfg config.Config, args []string) int {
 		return fail(err)
 	}
 	in := policy.NewInput(t.Name(), targs, cwd)
+	if h, ok := t.(tools.HandsOff); ok {
+		if line, ok := h.Command(targs); ok {
+			in.HandOff(line)
+		}
+	}
 	in.Server = tools.ServerOf(t)
 	in.Model = cfg.Model
 	if client, err := rpc.FromEnv(); err == nil {

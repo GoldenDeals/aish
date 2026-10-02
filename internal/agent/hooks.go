@@ -147,6 +147,11 @@ func (a *Agent) preTool(ctx context.Context, t tools.Tool, c session.ToolCall, i
 		}
 		if r.Reply.Args != nil {
 			cur = policy.NewInput(in.Tool, r.Reply.Args, in.Cwd)
+			if ho, ok := t.(tools.HandsOff); ok {
+				if line, ok := ho.Command(r.Reply.Args); ok {
+					cur.HandOff(line)
+				}
+			}
 			cur.Server, cur.Model = in.Server, in.Model
 			v.replaced = true
 			fmt.Fprintf(a.UI, "%s  (arguments replaced by %s)%s\n", dim, h, reset)

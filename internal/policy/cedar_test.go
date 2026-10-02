@@ -41,7 +41,7 @@ func check(t *testing.T, e *Engine, in Input) Decision {
 }
 
 func bash(cmd string) Input {
-	return NewInput("bash", map[string]any{"command": cmd}, "/")
+	return callInput("bash", map[string]any{"command": cmd}, "/")
 }
 
 func TestTypoIsLoadError(t *testing.T) {

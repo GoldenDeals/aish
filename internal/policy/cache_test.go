@@ -16,7 +16,7 @@ func TestCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ls := NewInput("bash", map[string]any{"command": "ls"}, dir)
+	ls := callInput("bash", map[string]any{"command": "ls"}, dir)
 	if d, _ := first.Check(ctx, ls); d.Action != Allow {
 		t.Fatalf("no policies: %+v", d)
 	}
@@ -69,7 +69,7 @@ func TestCacheRules(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	var c Cache
-	sudo := NewInput("bash", map[string]any{"command": "sudo ls"}, dir)
+	sudo := callInput("bash", map[string]any{"command": "sudo ls"}, dir)
 	first, err := c.Engine(ctx, dir, Rules{Ask: []string{"sudo *"}})
 	if err != nil {
 		t.Fatal(err)

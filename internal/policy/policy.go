@@ -1,10 +1,10 @@
 // Package policy decides whether the agent may run a tool call. The policies
 // are Cedar files in policy_dir, validated against a built-in schema when
 // loaded, and the deny/ask patterns of [policy] in config.toml; every simple
-// command of a bash call is one authorization request, and the verdict is
-// the strictest answer of every Checker. The engine is fail-closed: an
-// evaluation error, a call no permit covers and a leftover Rego file are
-// all a deny or a load error, never an allow.
+// command a call hands to the shell is one authorization request, and the
+// verdict is the strictest answer of every Checker. The engine is
+// fail-closed: an evaluation error, a call no permit covers and a leftover
+// Rego file are all a deny or a load error, never an allow.
 package policy
 
 import (
@@ -36,8 +36,11 @@ type Input struct {
 	Home   string         `json:"home"`
 	// Path is args.path resolved against Cwd, for file tools.
 	Path string `json:"path,omitempty"`
-	// Commands holds the argv of every simple command in a bash tool call,
-	// including those in pipelines, $(...), subshells and `bash -c` strings.
+	// Line is the command the call hands to the user's shell (bash, or any
+	// tool doing so); "" when it hands none.
+	Line string `json:"line,omitempty"`
+	// Commands holds the argv of every simple command in Line, including
+	// those in pipelines, $(...), subshells and `bash -c` strings.
 	Commands   [][]string `json:"commands,omitempty"`
 	ParseError string     `json:"parse_error,omitempty"`
 	// Model is the model making the call, the principal of the request.
@@ -98,14 +101,18 @@ func NewInput(tool string, args map[string]any, cwd string) Input {
 		}
 		in.Path = resolve(p)
 	}
-	if c, ok := args["command"].(string); ok && tool == "bash" {
-		cmds, err := Commands(c)
-		in.Commands = cmds
-		if err != nil {
-			in.ParseError = err.Error()
-		}
-	}
 	return in
+}
+
+// HandOff marks the call as one that hands line to the user's shell, so
+// that the policies judge its commands one by one.
+func (in *Input) HandOff(line string) {
+	in.Line = line
+	cmds, err := Commands(line)
+	in.Commands = cmds
+	if err != nil {
+		in.ParseError = err.Error()
+	}
 }
 
 // maxLinks is MAXSYMLINKS of Linux: after as many links on one path the

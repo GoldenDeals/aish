@@ -39,7 +39,7 @@ func TestExampleCommands(t *testing.T) {
 		{"ls", Allow, ""},
 		{"echo 'x", Ask, "could not parse the command"},
 	} {
-		d, err := e.Check(ctx, NewInput("bash", map[string]any{"command": c.cmd}, home))
+		d, err := e.Check(ctx, callInput("bash", map[string]any{"command": c.cmd}, home))
 		if err != nil {
 			t.Fatal(err)
 		}

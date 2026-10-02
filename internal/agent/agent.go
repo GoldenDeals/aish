@@ -358,6 +358,11 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	}
 
 	in := policy.NewInput(t.Name(), args, a.exec.Dir)
+	if h, ok := t.(tools.HandsOff); ok {
+		if line, ok := h.Command(args); ok {
+			in.HandOff(line)
+		}
+	}
 	in.Server = tools.ServerOf(t)
 	in.Model = a.Cfg.Model
 	d, err := a.Policy.Check(ctx, in)

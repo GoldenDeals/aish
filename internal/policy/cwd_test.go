@@ -36,7 +36,7 @@ unless { context.paths == [context.cwd] };
 			{"cd $PWD/..", Ask},
 			{"cd /", Ask},
 		} {
-			d := check(t, e, NewInput("bash", map[string]any{"command": c.cmd}, cwd))
+			d := check(t, e, callInput("bash", map[string]any{"command": c.cmd}, cwd))
 			if d.Action != c.want {
 				t.Errorf("in %s: %q: %s (%s), want %s", cwd, c.cmd, d.Action, d.Reason, c.want)
 			}

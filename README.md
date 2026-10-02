@@ -430,7 +430,7 @@ write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
 
 | инструмент | action | resource | context |
 |---|---|---|---|
-| `bash`, на каждую простую команду | `Action::"run"` | `Command::"rm"` (basename) | `program`, `args`, `flags` (`-rf` → `r`, `f`; `--force` → `force`), `operands`, `paths`, `text`, `line`, `cwd`, `home`, `parse_error` |
+| `bash` и любой инструмент, который отдаёт команду shell, — на каждую простую команду | `Action::"run"` | `Command::"rm"` (basename) | `program`, `args`, `flags` (`-rf` → `r`, `f`; `--force` → `force`), `operands`, `paths`, `text`, `line`, `cwd`, `home`, `parse_error` |
 | `read_file` / `write_file`, `edit_file` | `Action::"read"` / `Action::"write"` | `File::"/abs/path"` | `path`, `exists`, `cwd`, `home` |
 | остальные (внешние, MCP, скиллы) | `Action::"call"` | `Tool::"имя"` | `server`, `path`, `cwd`, `home` |
 

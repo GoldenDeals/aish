@@ -41,22 +41,22 @@ type rulesChecker struct{ Rules }
 
 func (c rulesChecker) Check(ctx context.Context, in Input) (Decision, error) {
 	var ds []Decision
-	switch in.Tool {
-	case "bash":
+	switch {
+	case in.Line != "":
 		var texts []string
 		for _, argv := range in.Commands {
 			texts = append(texts, Analyze(argv, in.Cwd, in.Home).Text)
 		}
 		// What could not be parsed is matched as one command: a rule must
 		// not stop working because of a stray quote.
-		if line, _ := in.Args["command"].(string); in.ParseError != "" && line != "" {
-			texts = append(texts, line)
+		if in.ParseError != "" {
+			texts = append(texts, in.Line)
 		}
 		for _, text := range texts {
 			ds = append(ds, matches(Deny, c.Deny, text)...)
 			ds = append(ds, matches(Ask, c.Ask, text)...)
 		}
-	case "write_file", "edit_file":
+	case in.Tool == "write_file", in.Tool == "edit_file":
 		if a := c.WriteOutsideHome; a != "" && a != Allow && !under(in.Path, in.Home) {
 			ds = append(ds, Decision{Action: a, Reason: fmt.Sprintf("writes outside home: %s", in.Path)})
 		}

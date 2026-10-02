@@ -55,7 +55,7 @@ func TestExamplePolicy(t *testing.T) {
 		{"write_file", map[string]any{"path": "/etc/hosts"}, Deny},
 		{"read_file", map[string]any{"path": "/etc/hosts"}, Allow},
 	} {
-		d, err := e.Check(ctx, NewInput(c.tool, c.args, home))
+		d, err := e.Check(ctx, callInput(c.tool, c.args, home))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,7 +70,7 @@ func TestNoPolicies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, _ := e.Check(context.Background(), NewInput("bash", map[string]any{"command": "sudo x"}, "/"))
+	d, _ := e.Check(context.Background(), callInput("bash", map[string]any{"command": "sudo x"}, "/"))
 	if d.Action != Allow {
 		t.Fatal(d)
 	}
@@ -87,7 +87,7 @@ func TestRulesWithoutCedar(t *testing.T) {
 	}
 	// Rules are not default deny: what they do not name is allowed.
 	for cmd, want := range map[string]string{"sudo ls": Deny, "git push origin": Ask, "git status": Allow} {
-		d, err := e.Check(ctx, NewInput("bash", map[string]any{"command": cmd}, "/"))
+		d, err := e.Check(ctx, callInput("bash", map[string]any{"command": cmd}, "/"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,7 +113,7 @@ func TestRulesAndCedar(t *testing.T) {
 		{"sudo git status", Deny, "sudo is not allowed for the agent"}, // Cedar denies, the rules ask
 		{"cat README.md", Allow, ""},                                   // neither has anything against it
 	} {
-		d, err := e.Check(ctx, NewInput("bash", map[string]any{"command": c.cmd}, home))
+		d, err := e.Check(ctx, callInput("bash", map[string]any{"command": c.cmd}, home))
 		if err != nil {
 			t.Fatal(err)
 		}
