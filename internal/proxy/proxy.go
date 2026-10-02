@@ -110,6 +110,7 @@ type Proxy struct {
 	reqMu        sync.Mutex
 	ag           *agent.Agent
 	cancelReq    context.CancelFunc
+	cancelGen    uint64 // agent_cancel calls so far, under p.mu
 	policies     policy.Cache
 	project      string // the .aish.toml of the last request, "" if none
 	untrusted    map[string]bool

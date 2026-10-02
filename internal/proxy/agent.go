@@ -35,13 +35,16 @@ import (
 // closing when the next one arrives. A panic in the agent must not take
 // the shell down.
 func (p *Proxy) request(ctx context.Context, ex tools.Exec, fresh bool, fn func(context.Context, *agent.Agent) error) (err error) {
-	p.reqMu.Lock()
-	defer p.reqMu.Unlock()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	p.mu.Lock()
-	p.cancelReq = cancel
+	gen := p.cancelGen
 	p.mu.Unlock()
+	ctx, cancel := context.WithCancel(ctx)
+	if !p.takeTurn(gen, cancel) {
+		cancel()
+		return context.Canceled
+	}
+	defer p.reqMu.Unlock()
+	defer cancel()
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("agent: %v", r)
@@ -59,6 +62,23 @@ func (p *Proxy) request(ctx context.Context, ex tools.Exec, fresh bool, fn func(
 		return err
 	}
 	return fn(ctx, a)
+}
+
+// takeTurn waits for the request before this one to end and makes this
+// one the request in progress, the one agent_cancel stops with cancel. gen
+// is how many times agent_cancel had been called when this request came:
+// one since then was Ctrl+C on it, which reached only the request it was
+// waiting for, so it gets no turn (false).
+func (p *Proxy) takeTurn(gen uint64, cancel context.CancelFunc) bool {
+	p.reqMu.Lock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cancelGen != gen {
+		p.reqMu.Unlock()
+		return false
+	}
+	p.cancelReq = cancel
+	return true
 }
 
 // agentStart begins a request; it does what the ask-start marker does too,
@@ -91,11 +111,13 @@ func (p *Proxy) compact(ctx context.Context, ap rpc.AgentParams) error {
 
 func execOf(ap rpc.AgentParams) tools.Exec { return tools.Exec{Dir: ap.Cwd, Env: ap.Env} }
 
-// cancelRequest stops the request in progress, if any: Ctrl+C reached the
-// `aish agent` holding it, which asks for this and waits for the agent to
-// finish before the shell goes on to its prompt.
+// cancelRequest stops the request in progress, if any, and those waiting
+// for it: Ctrl+C reached the `aish agent` holding one of them, which asks
+// for this and waits for the agent to finish before the shell goes on to
+// its prompt.
 func (p *Proxy) cancelRequest() {
 	p.mu.Lock()
+	p.cancelGen++
 	cancel := p.cancelReq
 	p.mu.Unlock()
 	if cancel != nil {
