@@ -447,7 +447,7 @@ func (p *Proxy) marker(m Marker) {
 		// sent agent-end. Keep what it printed for the next `agent start`.
 		for id, seg := range p.agent {
 			out, tui := render(seg.buf)
-			p.done[id] = rpc.Output{Output: out, Exit: 130, TUI: tui}
+			p.finish(id, rpc.Output{Output: out, Exit: 130, TUI: tui})
 			if seg.fold != nil {
 				p.finishFold(seg.fold, 130)
 			}
@@ -504,11 +504,17 @@ func (p *Proxy) marker(m Marker) {
 			p.finishFold(seg.fold, exit)
 		}
 		out, tui := render(seg.buf)
-		p.done[id] = rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui}
-		if ch, ok := p.waiters[id]; ok {
-			close(ch)
-			delete(p.waiters, id)
-		}
+		p.finish(id, rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui})
+	}
+}
+
+// finish keeps an agent command's output for `wait_output`, waking the
+// `aish agent resume` that may already be waiting for it.
+func (p *Proxy) finish(id string, out rpc.Output) {
+	p.done[id] = out
+	if ch, ok := p.waiters[id]; ok {
+		close(ch)
+		delete(p.waiters, id)
 	}
 }
 
@@ -624,14 +630,17 @@ func (p *Proxy) wait(id string, timeout time.Duration) (rpc.Output, error) {
 	select {
 	case <-ch:
 	case <-time.After(timeout):
-		p.mu.Lock()
-		delete(p.waiters, id)
-		p.mu.Unlock()
-		return rpc.Output{}, fmt.Errorf("no output recorded for %s", id)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	out := p.done[id]
+	// The output may have come while the timer fired.
+	out, ok := p.done[id]
+	if !ok {
+		if p.waiters[id] == ch {
+			delete(p.waiters, id)
+		}
+		return rpc.Output{}, fmt.Errorf("no output recorded for %s", id)
+	}
 	delete(p.done, id)
 	return out, nil
 }
