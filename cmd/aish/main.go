@@ -220,9 +220,14 @@ func loadTools(cfg config.Config, warn func(string)) *tools.Registry {
 func toolCmd(cfg config.Config, args []string) int {
 	// The project's tools too, as the agent would have them here.
 	cwd, _ := os.Getwd()
-	cfg, _, err := config.Project(cfg, cwd)
+	cfg, project, err := config.Project(cfg, cwd)
 	if err != nil {
 		return fail(err)
+	}
+	// Not on every run: a tool's wrapper on PATH is aish tool NAME, and the
+	// note would land in the output of each call, the agent's too.
+	if len(args) == 0 {
+		fmt.Fprint(os.Stderr, untrustedNote(cfg, project))
 	}
 	var problems []string
 	reg := loadTools(cfg, func(s string) { problems = append(problems, s) })
@@ -240,6 +245,9 @@ func toolCmd(cfg config.Config, args []string) int {
 		return 0
 	}
 	t, ok := reg.Get(args[0])
+	if !ok {
+		fmt.Fprint(os.Stderr, untrustedNote(cfg, project))
+	}
 	// A command for the shell is typed as one, not through aish; questions
 	// for the user are the agent's to ask.
 	if _, handsOff := t.(tools.HandsOff); !ok || handsOff || tools.IsDialog(t) {

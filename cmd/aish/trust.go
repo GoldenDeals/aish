@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/inebotov/aish/internal/config"
 )
@@ -60,6 +61,17 @@ func trustCmd(cfg config.Config, args []string) int {
 		fmt.Println("  " + k)
 	}
 	return 0
+}
+
+// untrustedNote is the dim line, with its newline, for a command that
+// loads the project's tools when cfg went without keys of the project
+// file: a tool of the repository is then not there, and nothing else
+// would say why. "" when cfg has all the file sets.
+func untrustedNote(cfg config.Config, project string) string {
+	if len(cfg.Untrusted) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\x1b[2m%s: %s not trusted; aish trust\x1b[0m\n", home(project), strings.Join(cfg.Untrusted, ", "))
 }
 
 // trustList prints the files trusted, with those changed since, or their

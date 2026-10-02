@@ -25,6 +25,7 @@ func policyCmd(cfg config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	fmt.Fprint(os.Stderr, untrustedNote(cfg, project))
 	ctx := context.Background()
 	rules := rulesOf(cfg)
 	eng, err := policy.Load(ctx, cfg.PolicyDir, rules)
