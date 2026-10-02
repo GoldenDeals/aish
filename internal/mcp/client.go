@@ -25,8 +25,9 @@ import (
 
 const protocolVersion = "2025-06-18"
 
-// cancelTimeout bounds telling a server about a request nobody waits for:
-// it is a courtesy, the caller has already gone.
+// cancelTimeout bounds what is said to a server only as a courtesy, with
+// nobody waiting for the outcome: the cancellation of a request the caller
+// has gone from, the end of a session.
 const cancelTimeout = 2 * time.Second
 
 // Server is one entry of mcp.yaml: a command speaking MCP on stdio, or the
@@ -156,6 +157,12 @@ type stdio struct {
 	dead    chan struct{}
 	err     error
 	closed  bool // given up on, though the process may still be exiting
+	// orphan is set while wmu is held by a notification given up on, its
+	// line still not taken by the server: nobody waits for it to give the
+	// server up.
+	orphan bool
+
+	stop sync.Once
 }
 
 func startStdio(s Server) (*stdio, error) {
@@ -203,7 +210,7 @@ func (c *stdio) read(r io.Reader) {
 			}
 			// Not in this goroutine: a server that does not read would stop
 			// the reading too, and with it the answers to the calls that wait.
-			go c.write(context.Background(), reply)
+			go c.write(context.Background(), reply, false)
 		case m.Method == "":
 			c.mu.Lock()
 			ch := c.pending[string(m.ID)]
@@ -221,18 +228,21 @@ func (c *stdio) read(r io.Reader) {
 	close(c.dead)
 }
 
-// write sends m unless ctx ends first. A write the server does not take is
-// given up by closing the server: the line it got may be cut short, and
-// nothing can be said to it after that.
-func (c *stdio) write(ctx context.Context, m message) error {
+// write sends m unless ctx ends first. A call whose line the server does
+// not take is given up with the server: the line it got may be cut short,
+// and nothing can be said to it after that. A notification is not worth
+// the server, which may be busy rather than deaf: its line is left to go
+// through when the server reads again, and only a call stuck behind it
+// gives the server up.
+func (c *stdio) write(ctx context.Context, m message, call bool) error {
 	m.JSONRPC = "2.0"
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
 	var (
-		mu              sync.Mutex
-		started, gaveUp bool
+		mu                        sync.Mutex
+		started, gaveUp, finished bool
 	)
 	done := make(chan error, 1)
 	go func() {
@@ -241,10 +251,17 @@ func (c *stdio) write(ctx context.Context, m message) error {
 		mu.Lock()
 		started = !gaveUp
 		mu.Unlock()
-		if started {
-			_, err := c.in.Write(append(b, '\n'))
-			done <- err
+		if !started {
+			return
 		}
+		_, err := c.in.Write(append(b, '\n'))
+		mu.Lock()
+		finished = true
+		if gaveUp {
+			c.setOrphan(false)
+		}
+		mu.Unlock()
+		done <- err
 	}()
 	wrote := func(err error) error {
 		if err != nil {
@@ -263,18 +280,32 @@ func (c *stdio) write(ctx context.Context, m message) error {
 	}
 	mu.Lock()
 	gaveUp = true
-	hung := started
+	hung := started && !finished
+	if hung && !call {
+		c.setOrphan(true)
+	}
 	mu.Unlock()
-	if !hung {
-		return stop // waited for another write and sent nothing
-	}
-	select {
-	case err := <-done:
-		return wrote(err) // it got through after all
-	default:
+	switch {
+	case started && !hung:
+		return wrote(<-done) // it got through after all
+	case call && (hung || c.orphaned()):
+		// Not when it waited for another call's line: that call gives the
+		// server up itself if it has to.
 		c.abandon()
-		return stop
 	}
+	return stop
+}
+
+func (c *stdio) setOrphan(v bool) {
+	c.mu.Lock()
+	c.orphan = v
+	c.mu.Unlock()
+}
+
+func (c *stdio) orphaned() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.orphan
 }
 
 func (c *stdio) call(ctx context.Context, method string, params any) (json.RawMessage, error) {
@@ -289,7 +320,7 @@ func (c *stdio) call(ctx context.Context, method string, params any) (json.RawMe
 		delete(c.pending, string(id))
 		c.mu.Unlock()
 	}()
-	if err := c.write(ctx, message{ID: id, Method: method, Params: params}); err != nil {
+	if err := c.write(ctx, message{ID: id, Method: method, Params: params}, true); err != nil {
 		return nil, err
 	}
 	select {
@@ -315,7 +346,7 @@ func (c *stdio) failure(err error) error {
 }
 
 func (c *stdio) notify(ctx context.Context, method string, params any) error {
-	return c.write(ctx, message{Method: method, Params: params})
+	return c.write(ctx, message{Method: method, Params: params}, false)
 }
 
 func (c *stdio) alive() bool {
@@ -346,16 +377,20 @@ func (c *stdio) close() {
 	c.mu.Lock()
 	c.closed = true
 	c.mu.Unlock()
-	// Also wakes up a write blocked on the pipe.
-	c.in.Close()
-	if c.cmd.Process != nil {
-		syscall.Kill(-c.cmd.Process.Pid, syscall.SIGTERM)
-		select {
-		case <-c.dead:
-		case <-time.After(time.Second):
-			syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL)
+	// Once: a server given up on is closed again when it is replaced, and
+	// its process group may be another one's by then.
+	c.stop.Do(func() {
+		// Also wakes up a write blocked on the pipe.
+		c.in.Close()
+		if c.cmd.Process != nil {
+			syscall.Kill(-c.cmd.Process.Pid, syscall.SIGTERM)
+			select {
+			case <-c.dead:
+			case <-time.After(time.Second):
+				syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL)
+			}
 		}
-	}
+	})
 }
 
 // tail keeps the end of a server's stderr for error messages.
@@ -504,4 +539,30 @@ func (c *httpConn) alive() bool {
 	return !c.expired
 }
 
-func (c *httpConn) close() {}
+// close ends the session at the server, which would keep it until it
+// expires otherwise. Even one the server answered 404 to: another instance
+// behind the URL may keep it. Whatever the answer, nothing more is to be
+// done.
+func (c *httpConn) close() {
+	c.mu.Lock()
+	session := c.session
+	c.session = ""
+	c.mu.Unlock()
+	if session == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.url, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("MCP-Protocol-Version", protocolVersion)
+	for k, v := range c.headers {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("Mcp-Session-Id", session)
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp.Body.Close()
+	}
+}

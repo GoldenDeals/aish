@@ -32,7 +32,8 @@ type ToolInfo struct {
 	Schema      json.RawMessage `json:"schema,omitempty"`
 	Expose      string          `json:"expose,omitempty"`
 	// Timeout is how long a call may take in the proxy, the server's start
-	// included: the client waits as long. Set by List, not cached.
+	// included, and for an HTTP server its repeat in a new session: the
+	// client waits as long. Set by List, not cached.
 	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
@@ -157,6 +158,9 @@ func (m *Manager) List(ctx context.Context, wait bool) ListResult {
 		s.mu.Lock()
 		for _, t := range s.tools {
 			t.Timeout = startTimeout + s.timeout()
+			if s.cfg.URL != "" {
+				t.Timeout += s.timeout() // Call repeats it once in a new session
+			}
 			res.Tools = append(res.Tools, t)
 		}
 		s.mu.Unlock()
@@ -241,6 +245,12 @@ func (m *Manager) ensure(ctx context.Context, s *server, force bool) (conn, erro
 			if s.err != nil && !force && time.Since(s.failed) < retryAfter {
 				defer s.mu.Unlock()
 				return nil, s.err
+			}
+			if s.conn != nil {
+				// What the old one holds, a process or a session at the
+				// server, is let go without anyone waiting for it.
+				go s.conn.close()
+				s.conn = nil
 			}
 			st, mine = &startup{done: make(chan struct{})}, true
 			s.starting = st
@@ -378,15 +388,18 @@ func (m *Manager) wrap() {
 	}
 }
 
-// Close stops the servers.
+// Close stops the servers and ends the HTTP sessions, all at once: each may
+// take a couple of seconds.
 func (m *Manager) Close() {
+	var wg sync.WaitGroup
 	for _, s := range m.servers {
 		s.mu.Lock()
 		if s.conn != nil {
-			s.conn.close()
+			wg.Go(s.conn.close)
 		}
 		s.mu.Unlock()
 	}
+	wg.Wait()
 }
 
 // Status is how one server is doing, for `aish mcp`.
