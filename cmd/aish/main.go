@@ -8,6 +8,9 @@
 //	aish init bash               print the bash integration script
 //	aish tool [NAME ARGS...]     list tools or run one
 //	aish session show            print the current session
+//	aish session rm ID|NAME...   remove saved sessions
+//	aish session prune [--older AGE]
+//	                             remove the sessions not used for AGE or sessions_ttl
 //	aish clear [save [NAME]]     start a new session; the current one is dropped unless saved
 //	aish new [NAME]              start a new session that is saved
 //	aish compact [FOCUS]         replace the session with a summary
@@ -45,6 +48,10 @@ const usage = `usage:
   aish init bash             print the bash integration script
   aish tool [NAME ARGS...]   list tools, or run one
   aish session show          print the current session
+  aish session rm ID|NAME... remove saved sessions, not the one of this shell
+  aish session prune [--older AGE]
+                             remove the sessions not used for AGE (30d, 12h),
+                             sessions_ttl by default; open ones are kept
   aish clear [save [NAME]]   start a new session; the current one is dropped unless
                              saved, as NAME if given
   aish new [NAME]            start a new session that is saved, as NAME if given
@@ -84,7 +91,7 @@ func run(args []string) int {
 	case "tool":
 		return toolCmd(cfg, args[1:])
 	case "session":
-		return sessionCmd(args[1:])
+		return sessionCmd(cfg, args[1:])
 	case "compact":
 		return compactCmd(args[1:])
 	case "status":
@@ -248,16 +255,20 @@ func toolCmd(cfg config.Config, args []string) int {
 	return 0
 }
 
-func sessionCmd(args []string) int {
-	client, err := rpc.FromEnv()
-	if err != nil {
-		return fail(err)
-	}
-	if len(args) != 1 {
-		return fail(errors.New("usage: aish session show"))
+func sessionCmd(cfg config.Config, args []string) int {
+	const sessionUsage = "usage: aish session show | rm ID|NAME... | prune [--older AGE]"
+	if len(args) == 0 {
+		return fail(errors.New(sessionUsage))
 	}
 	switch args[0] {
 	case "show":
+		if len(args) != 1 {
+			return fail(errors.New(sessionUsage))
+		}
+		client, err := rpc.FromEnv()
+		if err != nil {
+			return fail(err)
+		}
 		es, err := client.History()
 		if err != nil {
 			return fail(err)
@@ -265,8 +276,12 @@ func sessionCmd(args []string) int {
 		for _, e := range es {
 			printEntry(e)
 		}
+	case "rm":
+		return sessionRmCmd(cfg, args[1:])
+	case "prune":
+		return sessionPruneCmd(cfg, args[1:])
 	default:
-		return fail(errors.New("usage: aish session show"))
+		return fail(errors.New(sessionUsage))
 	}
 	return 0
 }

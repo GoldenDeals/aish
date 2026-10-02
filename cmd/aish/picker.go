@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -24,7 +25,9 @@ type picker struct {
 
 	editing bool
 	edit    []rune
-	msg     string
+	// deleting: the next key is y to delete the session chosen, or not.
+	deleting bool
+	msg      string
 }
 
 func pickSession(dir string, list []session.Info, cur string) (session.Info, bool, error) {
@@ -51,7 +54,10 @@ func pickSession(dir string, list []session.Info, cur string) (session.Info, boo
 		}
 		for _, k := range keys(buf[:n]) {
 			if done, ok := p.key(k); done {
-				return p.list[p.sel], ok, nil
+				if !ok { // the list may be empty, all deleted
+					return session.Info{}, false, nil
+				}
+				return p.list[p.sel], true, nil
 			}
 		}
 	}
@@ -106,6 +112,19 @@ func (p *picker) key(k string) (done, ok bool) {
 		return false, false
 	}
 	p.msg = ""
+	if p.deleting {
+		p.deleting = false
+		if k != "y" {
+			return false, false
+		}
+		if err := session.Remove(p.dir, p.list[p.sel].ID); err != nil {
+			p.msg = err.Error()
+			return false, false
+		}
+		p.list = slices.Delete(p.list, p.sel, p.sel+1)
+		p.sel = min(p.sel, len(p.list)-1)
+		return len(p.list) == 0, false
+	}
 	page := p.rows()
 	switch k {
 	case "\x1b[A", "\x1bOA", "k", "\x10":
@@ -123,6 +142,15 @@ func (p *picker) key(k string) (done, ok bool) {
 	case "r":
 		p.editing = true
 		p.edit = []rune(p.list[p.sel].Name)
+	case "d":
+		switch i := p.list[p.sel]; {
+		case i.ID == p.cur:
+			p.msg = "this shell is in this session; aish clear leaves it"
+		case i.Open:
+			p.msg = "open in another aish"
+		default:
+			p.deleting = true
+		}
 	case "\r":
 		i := p.list[p.sel]
 		switch {
@@ -162,7 +190,7 @@ func (p *picker) render() string {
 	b.WriteString("\x1b[H\x1b[2J")
 	fit := func(s string) string { return runewidth.Truncate(s, p.w-1, "…") }
 	fmt.Fprintf(&b, "\x1b[1msessions\x1b[0m\x1b[2m%s\x1b[0m\r\n\r\n",
-		runewidth.Truncate("   ↑↓ choose · enter resume · r rename · q quit", p.w-9, "…"))
+		runewidth.Truncate("   ↑↓ choose · enter resume · r rename · d delete · q quit", p.w-9, "…"))
 
 	rows := p.rows()
 	if p.sel < p.top {
@@ -215,6 +243,8 @@ func (p *picker) render() string {
 	switch {
 	case p.editing:
 		fmt.Fprintf(&b, "\x1b[2m%s\x1b[0m", fit("rename: enter save · esc cancel · empty name removes it"))
+	case p.deleting:
+		fmt.Fprintf(&b, "\x1b[33m%s\x1b[0m", fit("delete "+p.list[p.sel].Title()+"? y deletes, any other key keeps it"))
 	case p.msg != "":
 		fmt.Fprintf(&b, "\x1b[33m%s\x1b[0m", fit(p.msg))
 	case len(p.list) > rows:

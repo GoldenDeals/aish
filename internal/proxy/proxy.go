@@ -160,6 +160,16 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 		return 1, err
 	}
 	defer func() { p.session().Unlock() }()
+	// After Lock: the session resumed is as old as it was left.
+	if ttl := cfg.SessionsMaxAge(); ttl > 0 {
+		pruned, err := session.Prune(cfg.SessionsDir, ttl)
+		if len(pruned) > 0 {
+			fmt.Fprintf(os.Stderr, "\x1b[2maish: pruned the sessions not used for %s: %d\x1b[0m\n", cfg.SessionsTTL, len(pruned))
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "aish: pruning sessions: %v\n", err)
+		}
+	}
 	nonce := rand.Text()
 	run, err := makeRunDir(reg, p.Commands, self, nonce, cfg.Route)
 	if err != nil {

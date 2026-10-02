@@ -70,6 +70,9 @@ type Config struct {
 	Policy      Policy `toml:"policy"`
 	ToolsDir    string `toml:"tools_dir"`
 	SessionsDir string `toml:"sessions_dir"`
+	// SessionsTTL is how long a saved session lives unmodified before aish
+	// removes it at start: days (30d) or hours (720h); "0" keeps them all.
+	SessionsTTL string `toml:"sessions_ttl"`
 	// MCPConfig lists MCP servers (YAML).
 	MCPConfig string `toml:"mcp_config"`
 	// Shell is the bash to run. Empty: $SHELL if it is a bash, else the
@@ -135,6 +138,7 @@ func Default() Config {
 		PolicyDir:      filepath.Join(Dir(), "policy"),
 		ToolsDir:       filepath.Join(Dir(), "tools"),
 		SessionsDir:    filepath.Join(dataDir(), "sessions"),
+		SessionsTTL:    "0",
 		MCPConfig:      filepath.Join(Dir(), "mcp.yaml"),
 		Route:          Route{Capital: true, NotFound: true, Suffix: "?", MinWords: 2},
 	}
@@ -222,6 +226,9 @@ func (c Config) check() error {
 		if f.n < 0 {
 			return fmt.Errorf("%s = %d: must not be negative", f.key, f.n)
 		}
+	}
+	if _, err := ParseAge(c.SessionsTTL); err != nil {
+		return fmt.Errorf("sessions_ttl = %q: %w", c.SessionsTTL, err)
 	}
 	switch c.Policy.WriteOutsideHome {
 	case "", "allow", "ask", "deny":
