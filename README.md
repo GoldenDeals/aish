@@ -316,6 +316,43 @@ $ aish tool release-notes v2.1       # просто напечатать инс�
   недопустимыми символами (можно буквы, цифры, `-` и `_`), `name` не совпадает с каталогом, имя
   занято инструментом или командой в `PATH`.
 
+## Сабагенты
+
+aish читает описания сабагентов Claude Code: файлы `NAME.md` в `~/.claude/agents/`,
+`~/.config/aish/agents/` и `.claude/agents/` каждой папки от `/` до текущей (только прямо в каталоге,
+без подкаталогов). Как и у скиллов, одноимённое описание ближе к текущей папке перекрывает дальнее.
+
+```markdown
+---
+name: reviewer
+description: Reviews the diff before a commit and points out bugs
+tools: Read, Grep, Bash
+model: inherit
+---
+You are a code reviewer. Read the diff, then …
+```
+
+- `name` — имя сабагента (буквы, цифры, `-` и `_`); если его нет — имя файла без `.md`.
+- `description` — когда ассистенту стоит поручить задачу этому сабагенту; обязательно.
+- Тело после фронтматтера — системный промпт сабагента; обязательно.
+- `tools` — имена инструментов, которыми сабагент ограничен: строка через запятую или список YAML.
+  Нет поля — доступны все инструменты.
+- `model` — модель сабагента. `inherit` и псевдонимы Claude Code (`sonnet`, `opus`, `haiku`) значат
+  «модель этого shell»: aish не привязан к одному провайдеру. Любое другое значение — имя модели
+  провайдера как есть (`gpt-5`). Нет поля — тоже модель shell.
+
+Остальные поля фронтматтера не читаются. `aish agents` (внутри aish — и просто `agents`) показывает
+найденных сабагентов — имя, откуда, модель, инструменты, описание — и проблемы с файлами: битый
+фронтматтер, нет `description` или промпта, имя с недопустимыми символами, `name` не совпадает с
+именем файла.
+
+```
+$ aish agents
+reviewer  ./.claude  inherit  tools: Read, Grep, Bash  Reviews the diff before a commit and points…
+tester    ~/.claude  gpt-5                             Writes tests for the changed code
+problem: ~/proj/.claude/agents/notes.md: no frontmatter: the file must start with ---
+```
+
 ## MCP-серверы
 
 Инструменты MCP-серверов становятся командами shell вида `<сервер>_<инструмент>`:
