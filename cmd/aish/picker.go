@@ -208,6 +208,9 @@ func (p *picker) render() string {
 		if i.Cwd != "" {
 			where += "  " + home(i.Cwd)
 		}
+		if m := sessionModel(i); m != "" {
+			where += "  " + m
+		}
 		switch {
 		case i.ID == p.cur:
 			where += "  [this shell]"

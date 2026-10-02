@@ -141,6 +141,9 @@ type Info struct {
 	Last     string // the last request
 	Requests int
 	Cwd      string
+	// Profile, TopLevel and Model are as the session's Saved has them.
+	Profile  string
+	TopLevel bool
 	Model    string
 	Open     bool // in another aish, or in this one
 }
@@ -167,7 +170,7 @@ func List(dir string) ([]Info, error) {
 			info.Name = strings.TrimSpace(string(b))
 		}
 		if st, err := LoadState(dir, id); err == nil {
-			info.Cwd, info.Model = st.Shell.Cwd, st.Model
+			info.Cwd, info.Profile, info.TopLevel, info.Model = st.Shell.Cwd, st.Profile, st.TopLevel, st.Model
 		}
 		info.Last, info.Requests = requests(f)
 		list = append(list, info)

@@ -124,6 +124,9 @@ func printResumed(i session.Info, sess *session.Session) {
 	if i.Cwd != "" {
 		parts = append(parts, home(i.Cwd))
 	}
+	if m := sessionModel(i); m != "" {
+		parts = append(parts, m)
+	}
 	fmt.Printf("\x1b[1mresumed %s\x1b[0m \x1b[2m(%s)\x1b[0m\n", i.Title(), strings.Join(parts, " · "))
 	const tail = 8
 	if len(es) > tail {
@@ -133,6 +136,20 @@ func printResumed(i session.Info, sess *session.Session) {
 	for _, e := range es {
 		printEntry(e)
 	}
+}
+
+// sessionModel is where a session's requests go: the profile and the
+// model, "local · qwen3:8b", config.Root for the top level; the model alone
+// for a state saved before there were profiles, whose profile is the
+// shell's; "" when the session has no model saved.
+func sessionModel(i session.Info) string {
+	switch {
+	case i.Model == "":
+		return ""
+	case i.Profile != "" || i.TopLevel:
+		return profileName(i.Profile) + " · " + i.Model
+	}
+	return i.Model
 }
 
 func ago(t time.Time) string {
