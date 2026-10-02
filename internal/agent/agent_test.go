@@ -27,8 +27,10 @@ type fakeProvider struct {
 	before func(ctx context.Context, n int, onText func(string))
 }
 
-func (f *fakeProvider) Name() string  { return "fake" }
-func (f *fakeProvider) Model() string { return "m" }
+func (f *fakeProvider) Name() string           { return "fake" }
+func (f *fakeProvider) Model() string          { return "m" }
+func (f *fakeProvider) Efforts() []string      { return nil }
+func (f *fakeProvider) MaxTokens(string) int64 { return 0 }
 func (f *fakeProvider) Models(context.Context) ([]llm.ModelInfo, error) {
 	return nil, nil
 }

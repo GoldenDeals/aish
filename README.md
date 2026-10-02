@@ -391,7 +391,7 @@ Cedar — default deny: без `permit` запрещено всё, поэтом�
 `~/.config/aish/config.toml` (путь — `$AISH_CONFIG`), все ключи необязательны:
 
 ```toml
-provider = "anthropic"            # или "openai" (Chat Completions)
+provider = "anthropic"            # или "openai" (Chat Completions), "openai-responses" (Responses API)
 base_url = "http://127.0.0.1:8317" # прокси, например cliproxyapi; нет — официальный API провайдера
 api_key_env = "AISH_API_KEY"
 model = "claude-opus-5"           # или $AISH_MODEL
@@ -413,6 +413,14 @@ mcp_config = "~/.config/aish/mcp.yaml"
 shell = "/opt/bash/bin/bash"      # какой bash запускать; нет — $SHELL, если это bash, иначе первый bash в PATH
 system_prompt = "Дополнение к системному промпту"
 ```
+
+Провайдер — это протокол API. `openai` (Chat Completions) понимают и совместимые серверы —
+Ollama, vLLM, LM Studio (`base_url` можно без `/v1`), но рассуждения модели между ходами он
+теряет. `openai-responses` — Responses API OpenAI для моделей с рассуждением (gpt-5, o-серия):
+рассуждения приходят зашифрованными, лежат в журнале и уходят обратно со следующим ходом, как
+thinking-блоки у `anthropic`; у OpenAI при этом ничего не хранится (`store: false`). Ключ, если
+нет ни `api_key`, ни переменной из `api_key_env`, берётся из переменной провайдера:
+`ANTHROPIC_API_KEY` или `OPENAI_API_KEY`.
 
 Опечатка в имени ключа или отрицательный лимит — ошибка при запуске с указанием ключа и файла,
 а не молчаливое значение по умолчанию.

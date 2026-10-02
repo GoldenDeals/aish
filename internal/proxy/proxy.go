@@ -64,7 +64,7 @@ type Proxy struct {
 	ignore       []string     // journal_ignore: commands recorded without their output
 	stateIgnore  []string     // state_ignore: variables kept out of the shell state
 	fixedWindow  bool         // context_window is set in the config
-	prov         llm.Provider // for the models list
+	prov         llm.Provider // for the models list and the levels of effort; nil if unknown
 	out          io.Writer    // the terminal
 	size         func() (w, h int)
 
@@ -72,24 +72,23 @@ type Proxy struct {
 	// own (`status` for `aish status`); set before Run.
 	Commands []string
 
-	mu       sync.Mutex
-	screen   Screen
-	asking   bool                // inside __aish_ask, between ask-start and the next prompt
-	user     *segment            // command typed by the user, between cmd-start and cmd-end
-	agent    map[string]*segment // commands run on behalf of the agent, by call id
-	tool     *fold               // live output of an external tool, while it runs
-	at       *statusAt           // where the agent left the cursor after printing its next command
-	folds    []Fold              // folded outputs of the last request, for Ctrl+O
-	view     *viewer             // open while Ctrl+O shows the folds
-	held     []byte              // shell output that arrived while the viewer was open
-	ask      *prompt             // a question the agent waits for the user to answer
-	done     map[string]rpc.Output
-	waiters  map[string]chan struct{}
-	mcp      *mcp.Manager
-	model    string // `aish model` switches it for this shell
-	effort   string // and this, "" being the model's default
-	window   int    // its context size, 0 if unknown
-	provName string
+	mu      sync.Mutex
+	screen  Screen
+	asking  bool                // inside __aish_ask, between ask-start and the next prompt
+	user    *segment            // command typed by the user, between cmd-start and cmd-end
+	agent   map[string]*segment // commands run on behalf of the agent, by call id
+	tool    *fold               // live output of an external tool, while it runs
+	at      *statusAt           // where the agent left the cursor after printing its next command
+	folds   []Fold              // folded outputs of the last request, for Ctrl+O
+	view    *viewer             // open while Ctrl+O shows the folds
+	held    []byte              // shell output that arrived while the viewer was open
+	ask     *prompt             // a question the agent waits for the user to answer
+	done    map[string]rpc.Output
+	waiters map[string]chan struct{}
+	mcp     *mcp.Manager
+	model   string // `aish model` switches it for this shell
+	effort  string // and this, "" being the model's default
+	window  int    // its context size, 0 if unknown
 
 	// The shell's state: how it started, how it was at the last prompt, and
 	// what of it was saved last (session id and all).
@@ -130,7 +129,6 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	p.promptStatus = cfg.PromptStatus
 	p.compactAt = cfg.CompactAt
 	p.ignore, p.stateIgnore = cfg.JournalIgnore, cfg.StateIgnore
-	p.provName = cfg.Provider
 	p.fixedWindow = cfg.ContextWindow > 0
 	// Only the models list is asked of it: a wrong effort must not lose it.
 	pc := cfg
@@ -618,7 +616,7 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 		}
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if err := llm.CheckEffort(p.provName, mp.Effort); err != nil {
+		if err := llm.CheckEffort(p.prov, mp.Effort); err != nil {
 			return nil, err
 		}
 		if mp.Model != p.model || mp.Window > 0 {

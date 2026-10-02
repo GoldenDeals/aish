@@ -15,7 +15,7 @@ func TestModelEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := New(sess)
-	p.provName, p.model, p.window, p.fixedWindow = "anthropic", "a", 1000, true
+	p.prov, p.model, p.window, p.fixedWindow = &scripted{}, "a", 1000, true
 
 	set := func(mp rpc.ModelParams) (rpc.Info, error) {
 		b, _ := json.Marshal(mp)
@@ -29,7 +29,7 @@ func TestModelEffort(t *testing.T) {
 		t.Fatalf("effort only: %+v %v", i, err)
 	}
 	if _, err := set(rpc.ModelParams{Model: "a", Effort: "minimal"}); err == nil || p.effort != "xhigh" {
-		t.Fatalf("an OpenAI level for Anthropic: %v, effort %q", err, p.effort)
+		t.Fatalf("a level the provider does not take: %v, effort %q", err, p.effort)
 	}
 	if text, _ := p.statusText(); text != "a · xhigh" {
 		t.Errorf("status %q", text)

@@ -29,6 +29,8 @@ type scripted struct {
 
 func (s *scripted) Name() string                                    { return "fake" }
 func (s *scripted) Model() string                                   { return "m" }
+func (s *scripted) Efforts() []string                               { return []string{"low", "high", "xhigh", "max"} }
+func (s *scripted) MaxTokens(string) int64                          { return 0 }
 func (s *scripted) Models(context.Context) ([]llm.ModelInfo, error) { return nil, nil }
 func (s *scripted) Complete(ctx context.Context, _ llm.Request, onText func(string)) (*llm.Response, error) {
 	s.mu.Lock()

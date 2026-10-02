@@ -162,48 +162,25 @@ mcp_config = "/etc/aish/mcp.yaml"
 }
 
 func TestKey(t *testing.T) {
-	t.Setenv("AISH_API_KEY", "")
-	t.Setenv("MY_KEY", "")
-	t.Setenv("ANTHROPIC_API_KEY", "anthropic")
-	t.Setenv("OPENAI_API_KEY", "openai")
+	env := map[string]string{"PROVIDER_KEY": "provider"}
+	getenv := func(k string) string { return env[k] }
 	cfg := Default()
-	if k := cfg.Key(); k != "anthropic" {
-		t.Errorf("anthropic fallback: %q", k)
+	if k := cfg.KeyFrom(getenv, "PROVIDER_KEY"); k != "provider" {
+		t.Errorf("the provider's variable: %q", k)
 	}
-	cfg.Provider = "openai"
-	if k := cfg.Key(); k != "openai" {
-		t.Errorf("openai fallback: %q", k)
-	}
-	t.Setenv("AISH_API_KEY", "aish")
-	if k := cfg.Key(); k != "aish" {
+	env["AISH_API_KEY"] = "aish"
+	if k := cfg.KeyFrom(getenv, "PROVIDER_KEY"); k != "aish" {
 		t.Errorf("api_key_env: %q", k)
 	}
 	cfg.APIKeyEnv = "MY_KEY"
-	if k := cfg.Key(); k != "openai" {
+	if k := cfg.KeyFrom(getenv, "PROVIDER_KEY"); k != "provider" {
 		t.Errorf("an empty api_key_env falls back: %q", k)
 	}
-	cfg.APIKey = "literal"
-	if k := cfg.Key(); k != "literal" {
-		t.Errorf("api_key: %q", k)
+	if k := cfg.KeyFrom(getenv, ""); k != "" {
+		t.Errorf("a provider with no variable: %q", k)
 	}
-}
-
-func TestReplyTokens(t *testing.T) {
-	for _, tc := range []struct {
-		max    int64
-		effort string
-		want   int64
-	}{
-		{0, "", 32000},
-		{0, "high", 32000},
-		{0, "xhigh", 64000},
-		{0, "max", 64000},
-		{1000, "max", 1000},
-		{100000, "", 100000},
-	} {
-		c := Config{MaxTokens: tc.max, Effort: tc.effort}
-		if got := c.ReplyTokens(); got != tc.want {
-			t.Errorf("max_tokens %d, effort %q: %d, want %d", tc.max, tc.effort, got, tc.want)
-		}
+	cfg.APIKey = "literal"
+	if k := cfg.KeyFrom(getenv, "PROVIDER_KEY"); k != "literal" {
+		t.Errorf("api_key: %q", k)
 	}
 }

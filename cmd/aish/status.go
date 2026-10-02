@@ -62,7 +62,16 @@ func statusCmd(cfg config.Config) int {
 	row("journal", journal)
 
 	head("model")
-	row("provider", cfg.Provider)
+	// Without the effort: it can only be wrong for the provider, and is
+	// shown below.
+	pc := cfg
+	pc.Effort = ""
+	prov, err := llm.New(pc)
+	if err != nil {
+		row("provider", err.Error())
+	} else {
+		row("provider", prov.Name())
+	}
 	base := cfg.BaseURL
 	if base == "" {
 		base = "the provider's API"
@@ -89,11 +98,12 @@ func statusCmd(cfg config.Config) int {
 		effort += fmt.Sprintf(" (switched in this shell; config: %s)", effortName(cfg.Effort))
 	}
 	row("effort", effort)
-	sc := cfg
-	sc.Effort = info.Effort
-	maxTokens := fmt.Sprint(sc.ReplyTokens())
-	if cfg.MaxTokens == 0 {
-		maxTokens += " (by the effort; max_tokens sets it)"
+	maxTokens := "unknown"
+	if prov != nil {
+		maxTokens = fmt.Sprint(prov.MaxTokens(info.Effort))
+		if cfg.MaxTokens == 0 {
+			maxTokens += " (by the effort; max_tokens sets it)"
+		}
 	}
 	row("max_tokens", maxTokens)
 
@@ -150,9 +160,8 @@ type modelArgs struct {
 }
 
 // parseModelArgs reads aish model [NAME] [EFFORT|default], where a lone
-// EFFORT keeps the model.
-func parseModelArgs(provider string, args []string) (modelArgs, error) {
-	levels := llm.Efforts(provider)
+// EFFORT keeps the model; levels are those of the provider.
+func parseModelArgs(provider string, levels []string, args []string) (modelArgs, error) {
 	isEffort := func(s string) bool { return s == "default" || slices.Contains(levels, s) }
 	var m modelArgs
 	switch {
@@ -181,17 +190,17 @@ func modelCmd(cfg config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	want, err := parseModelArgs(cfg.Provider, args)
-	if err != nil {
-		return fail(err)
-	}
-	levels := llm.Efforts(cfg.Provider)
 	conf := cfg
 	cfg = shellConfig(cfg, client)
 	// The list is asked without the effort: a wrong one is what may need fixing.
 	lc := cfg
 	lc.Effort = ""
 	prov, err := llm.New(lc)
+	if err != nil {
+		return fail(err)
+	}
+	levels := prov.Efforts()
+	want, err := parseModelArgs(prov.Name(), levels, args)
 	if err != nil {
 		return fail(err)
 	}

@@ -17,7 +17,8 @@ import (
 )
 
 type Config struct {
-	// Provider selects the wire protocol: "anthropic" or "openai".
+	// Provider names the API, one that package llm registers. Empty: its
+	// default.
 	Provider string `toml:"provider"`
 	// BaseURL of the API. Empty: the provider's own.
 	BaseURL string `toml:"base_url"`
@@ -25,10 +26,10 @@ type Config struct {
 	APIKey    string `toml:"api_key"`
 	APIKeyEnv string `toml:"api_key_env"`
 	Model     string `toml:"model"`
-	// Effort is how hard the model thinks: "low" … "max" (and "none",
-	// "minimal" for OpenAI). Empty leaves it to the model.
+	// Effort is how hard the model thinks, one of the provider's levels.
+	// Empty leaves it to the model.
 	Effort string `toml:"effort"`
-	// MaxTokens bounds a reply; 0 picks it by the effort (see ReplyTokens).
+	// MaxTokens bounds a reply; 0 leaves it to the provider, by the effort.
 	MaxTokens int64 `toml:"max_tokens"`
 
 	// MaxSteps bounds the number of LLM round-trips per user request.
@@ -119,7 +120,6 @@ func dataDir() string {
 
 func Default() Config {
 	return Config{
-		Provider:       "anthropic",
 		APIKeyEnv:      "AISH_API_KEY",
 		Model:          "claude-opus-5",
 		MaxSteps:       50,
@@ -248,34 +248,18 @@ func (c Config) check() error {
 	return nil
 }
 
-// Key returns the API key, falling back to the provider's conventional env var.
-func (c Config) Key() string { return c.KeyFrom(os.Getenv) }
-
-// KeyFrom is Key with the environment read through getenv: the shell's,
-// which the proxy's own stops matching once the user exports the key there.
-func (c Config) KeyFrom(getenv func(string) string) string {
+// KeyFrom returns the API key: api_key as is, or else the variable
+// api_key_env names, or else fallback, the provider's own variable (llm.Key
+// knows it). The variables are read through getenv: the shell's, which the
+// proxy's own stops matching once the user exports the key there.
+func (c Config) KeyFrom(getenv func(string) string, fallback string) string {
 	if c.APIKey != "" {
 		return c.APIKey
 	}
 	if k := getenv(c.APIKeyEnv); k != "" {
 		return k
 	}
-	if c.Provider == "openai" {
-		return getenv("OPENAI_API_KEY")
-	}
-	return getenv("ANTHROPIC_API_KEY")
-}
-
-// ReplyTokens is MaxTokens, or when it is 0 enough for the effort: at xhigh
-// and max the model thinks long, and a reply cut short in thinking is lost.
-func (c Config) ReplyTokens() int64 {
-	switch {
-	case c.MaxTokens > 0:
-		return c.MaxTokens
-	case c.Effort == "xhigh" || c.Effort == "max":
-		return 64000
-	}
-	return 32000
+	return getenv(fallback)
 }
 
 func expand(p string) string {

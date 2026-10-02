@@ -10,26 +10,38 @@ import (
 	"github.com/inebotov/aish/internal/config"
 )
 
+func init() {
+	Register("anthropic", "ANTHROPIC_API_KEY", func(cfg config.Config) (Provider, error) {
+		return newAnthropic(cfg), nil
+	})
+}
+
 type anthropicProvider struct {
 	client    anthropic.Client
 	model     string
 	effort    string
-	maxTokens int64
+	maxTokens int64 // max_tokens, 0 to go by the effort
 }
 
 func newAnthropic(cfg config.Config) *anthropicProvider {
-	opts := []option.RequestOption{option.WithAPIKey(cfg.Key())}
+	opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}
 	return &anthropicProvider{
 		client: anthropic.NewClient(opts...), model: cfg.Model,
-		effort: cfg.Effort, maxTokens: cfg.ReplyTokens(),
+		effort: cfg.Effort, maxTokens: cfg.MaxTokens,
 	}
 }
 
 func (p *anthropicProvider) Name() string  { return "anthropic" }
 func (p *anthropicProvider) Model() string { return p.model }
+
+func (p *anthropicProvider) Efforts() []string {
+	return []string{"low", "medium", "high", "xhigh", "max"}
+}
+
+func (p *anthropicProvider) MaxTokens(effort string) int64 { return replyTokens(p.maxTokens, effort) }
 
 func (p *anthropicProvider) Models(ctx context.Context) ([]ModelInfo, error) {
 	var out []ModelInfo
@@ -58,7 +70,7 @@ func (p *anthropicProvider) Models(ctx context.Context) ([]ModelInfo, error) {
 func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText func(string)) (*Response, error) {
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.Model(p.model),
-		MaxTokens: p.maxTokens,
+		MaxTokens: p.MaxTokens(p.effort),
 		Messages:  p.messages(req.Messages),
 	}
 	if p.effort != "" {

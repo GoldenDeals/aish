@@ -2,7 +2,9 @@ package llm
 
 import (
 	"encoding/json"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,28 +72,34 @@ func TestSchemaParts(t *testing.T) {
 }
 
 func TestCheckEffort(t *testing.T) {
+	anthropic := newAnthropic(config.Config{})
+	openai := newOpenAI(config.Config{})
 	for _, tc := range []struct {
-		provider, effort, err string
+		p           Provider
+		effort, err string
 	}{
-		{"anthropic", "", ""},
-		{"anthropic", "max", ""},
-		{"anthropic", "minimal", `unknown effort "minimal" for anthropic (want low, medium, high, xhigh, max)`},
-		{"openai", "minimal", ""},
-		{"openai", "none", ""},
-		{"openai", "extreme", `unknown effort "extreme" for openai (want none, minimal, low`},
-		{"gemini", "", ""},
-		{"gemini", "high", `unknown effort "high" for gemini`},
+		{anthropic, "", ""},
+		{anthropic, "max", ""},
+		{anthropic, "minimal", `unknown effort "minimal" for anthropic (want low, medium, high, xhigh, max)`},
+		{openai, "minimal", ""},
+		{openai, "none", ""},
+		{openai, "extreme", `unknown effort "extreme" for openai (want none, minimal, low`},
+		// A provider the config names but aish does not know.
+		{nil, "", ""},
+		{nil, "high", `unknown effort "high": no provider`},
 	} {
-		err := CheckEffort(tc.provider, tc.effort)
+		err := CheckEffort(tc.p, tc.effort)
 		if (err == nil) != (tc.err == "") || err != nil && !strings.Contains(err.Error(), tc.err) {
-			t.Errorf("%s %q: %v, want %q", tc.provider, tc.effort, err, tc.err)
+			t.Errorf("%v %q: %v, want %q", tc.p, tc.effort, err, tc.err)
 		}
 	}
 }
 
+// Every provider registered is made by its name and tells that name, which
+// replay compares with the one in the journal.
 func TestNew(t *testing.T) {
-	for _, name := range []string{"anthropic", "openai"} {
-		p, err := New(config.Config{Provider: name, Model: "m", Effort: "high"})
+	for _, name := range slices.Sorted(maps.Keys(kinds)) {
+		p, err := New(config.Config{Provider: name, Model: "m"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,10 +107,62 @@ func TestNew(t *testing.T) {
 			t.Errorf("%s: got %s %s", name, p.Name(), p.Model())
 		}
 	}
-	if _, err := New(config.Config{Provider: "gemini"}); err == nil || err.Error() != `unknown provider "gemini" (want anthropic or openai)` {
+	if _, err := New(config.Config{Provider: "openai-responses", Effort: "minimal"}); err != nil {
+		t.Errorf("a level of the provider: %v", err)
+	}
+	if p, err := New(config.Config{}); err != nil || p.Name() != defaultProvider {
+		t.Errorf("no provider: %v %v", p, err)
+	}
+	if _, err := New(config.Config{Provider: "gemini"}); err == nil || err.Error() != `unknown provider "gemini" (want anthropic, openai, openai-responses)` {
 		t.Errorf("unknown provider: %v", err)
 	}
 	if _, err := New(config.Config{Provider: "anthropic", Effort: "minimal"}); err == nil || !strings.Contains(err.Error(), "unknown effort") {
 		t.Errorf("bad effort: %v", err)
+	}
+}
+
+func TestKey(t *testing.T) {
+	env := map[string]string{"ANTHROPIC_API_KEY": "a", "OPENAI_API_KEY": "o", "AISH_API_KEY": ""}
+	getenv := func(k string) string { return env[k] }
+	for _, tc := range []struct{ provider, want string }{
+		{"", "a"},
+		{"anthropic", "a"},
+		{"openai", "o"},
+		{"openai-responses", "o"},
+		{"gemini", ""},
+	} {
+		cfg := config.Default()
+		cfg.Provider = tc.provider
+		if k := Key(cfg, getenv); k != tc.want {
+			t.Errorf("%q: %q, want %q", tc.provider, k, tc.want)
+		}
+	}
+	env["AISH_API_KEY"] = "aish"
+	if k := Key(config.Default(), getenv); k != "aish" {
+		t.Errorf("api_key_env: %q", k)
+	}
+}
+
+func TestReplyTokens(t *testing.T) {
+	for _, tc := range []struct {
+		limit  int64
+		effort string
+		want   int64
+	}{
+		{0, "", 32000},
+		{0, "high", 32000},
+		{0, "xhigh", 64000},
+		{0, "max", 64000},
+		{1000, "max", 1000},
+		{100000, "", 100000},
+	} {
+		if got := replyTokens(tc.limit, tc.effort); got != tc.want {
+			t.Errorf("max_tokens %d, effort %q: %d, want %d", tc.limit, tc.effort, got, tc.want)
+		}
+	}
+	// The provider applies it to its config's max_tokens.
+	p := newAnthropic(config.Config{MaxTokens: 1000})
+	if got := p.MaxTokens("max"); got != 1000 {
+		t.Errorf("max_tokens 1000: %d", got)
 	}
 }

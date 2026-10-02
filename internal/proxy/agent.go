@@ -129,7 +129,7 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	}
 	p.mu.Unlock()
 	// The key as the shell has it: the user may have exported it there.
-	cfg.APIKey = cfg.KeyFrom(ex.Getenv)
+	cfg.APIKey = llm.Key(cfg, ex.Getenv)
 	prov, err := p.providerFor(cfg)
 	if err != nil {
 		return nil, err

@@ -1,10 +1,15 @@
-// Package llm is a provider-neutral chat interface with tool calling.
+// Package llm is a provider-neutral chat interface with tool calling. Each
+// provider is a file here that registers itself by name (Register): the rest
+// of aish knows a provider by the config's name and what its Provider tells,
+// never by a name of its own.
 package llm
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"os"
 	"slices"
 	"strings"
 
@@ -76,32 +81,100 @@ type ModelInfo struct {
 	EffortsKnown bool
 }
 
-// Efforts are the levels a provider's API takes, from the lightest.
-func Efforts(provider string) []string {
-	switch provider {
-	case "anthropic":
-		return []string{"low", "medium", "high", "xhigh", "max"}
-	case "openai":
-		return []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+type Provider interface {
+	// Name is the one the provider is registered with.
+	Name() string
+	Model() string
+	// Efforts are the levels of effort the API takes, from the lightest;
+	// nil if it takes none.
+	Efforts() []string
+	// MaxTokens bounds a reply at effort: max_tokens when the config sets
+	// it, otherwise what the provider deems enough for the effort.
+	MaxTokens(effort string) int64
+	// Complete streams the reply, calling onText for each text delta.
+	Complete(ctx context.Context, req Request, onText func(string)) (*Response, error)
+	Models(ctx context.Context) ([]ModelInfo, error)
+}
+
+// defaultProvider is the one a config that names none gets.
+const defaultProvider = "anthropic"
+
+type kind struct {
+	keyEnv      string
+	newProvider func(config.Config) (Provider, error)
+}
+
+var kinds = map[string]kind{}
+
+// Register makes a provider known by name, the config's provider; each
+// registers itself from init in its own file. keyEnv is the variable its
+// key is read from when the config gives none: the key is wanted before
+// there is a provider to ask, since one is made with it.
+func Register(name, keyEnv string, newProvider func(config.Config) (Provider, error)) {
+	if _, ok := kinds[name]; ok {
+		panic("llm: provider " + name + " registered twice")
+	}
+	kinds[name] = kind{keyEnv, newProvider}
+}
+
+func providerName(cfg config.Config) string {
+	if cfg.Provider == "" {
+		return defaultProvider
+	}
+	return cfg.Provider
+}
+
+// Key is the API key for cfg, its variables read through getenv: api_key,
+// the variable api_key_env names, or else the provider's own one.
+func Key(cfg config.Config, getenv func(string) string) string {
+	return cfg.KeyFrom(getenv, kinds[providerName(cfg)].keyEnv)
+}
+
+// New makes the provider cfg names. A key cfg does not carry is read from
+// the environment.
+func New(cfg config.Config) (Provider, error) {
+	cfg.Provider = providerName(cfg)
+	k, ok := kinds[cfg.Provider]
+	if !ok {
+		return nil, fmt.Errorf("unknown provider %q (want %s)", cfg.Provider, strings.Join(slices.Sorted(maps.Keys(kinds)), ", "))
+	}
+	cfg.APIKey = Key(cfg, os.Getenv)
+	p, err := k.newProvider(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := CheckEffort(p, cfg.Effort); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// CheckEffort tells why effort is not a level of p; "" is the model's
+// default and always fits. A nil p, a provider aish does not know, takes
+// no level.
+func CheckEffort(p Provider, effort string) error {
+	switch {
+	case effort == "":
+		return nil
+	case p == nil:
+		return fmt.Errorf("unknown effort %q: no provider", effort)
+	case !slices.Contains(p.Efforts(), effort):
+		return fmt.Errorf("unknown effort %q for %s (want %s)", effort, p.Name(), strings.Join(p.Efforts(), ", "))
 	}
 	return nil
 }
 
-// CheckEffort tells why effort is not a level of provider; "" is the
-// model's default and always fits.
-func CheckEffort(provider, effort string) error {
-	if effort == "" || slices.Contains(Efforts(provider), effort) {
-		return nil
+// replyTokens is limit, when the config sets it, or else enough for the
+// effort: at xhigh and max the model thinks long, and a reply cut short in
+// thinking is lost.
+func replyTokens(limit int64, effort string) int64 {
+	switch {
+	case limit > 0:
+		return limit
+	case effort == "xhigh" || effort == "max":
+		return 64000
 	}
-	return fmt.Errorf("unknown effort %q for %s (want %s)", effort, provider, strings.Join(Efforts(provider), ", "))
-}
-
-type Provider interface {
-	Name() string
-	Model() string
-	// Complete streams the reply, calling onText for each text delta.
-	Complete(ctx context.Context, req Request, onText func(string)) (*Response, error)
-	Models(ctx context.Context) ([]ModelInfo, error)
+	return 32000
 }
 
 // replay tells whether an assistant message can be sent in the provider's
@@ -109,19 +182,6 @@ type Provider interface {
 // them.
 func replay(m Message, provider, model string) bool {
 	return len(m.Raw) > 0 && m.Provider == provider && (m.Model == "" || m.Model == model)
-}
-
-func New(cfg config.Config) (Provider, error) {
-	if err := CheckEffort(cfg.Provider, cfg.Effort); err != nil {
-		return nil, err
-	}
-	switch cfg.Provider {
-	case "anthropic":
-		return newAnthropic(cfg), nil
-	case "openai":
-		return newOpenAI(cfg), nil
-	}
-	return nil, fmt.Errorf("unknown provider %q (want anthropic or openai)", cfg.Provider)
 }
 
 func schemaParts(s map[string]any) (props any, required []string) {

@@ -35,7 +35,7 @@ func (p *Proxy) restoreModel(st session.Saved) {
 		p.setModel(st.Model, 0)
 	}
 	// An effort of another provider would fail every request.
-	if llm.CheckEffort(p.provName, st.Effort) == nil {
+	if llm.CheckEffort(p.prov, st.Effort) == nil {
 		p.effort = st.Effort
 	}
 }

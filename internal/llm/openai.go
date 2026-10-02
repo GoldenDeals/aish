@@ -12,37 +12,50 @@ import (
 	"github.com/inebotov/aish/internal/config"
 )
 
-type openaiProvider struct {
+func init() {
+	Register("openai", "OPENAI_API_KEY", func(cfg config.Config) (Provider, error) {
+		return newOpenAI(cfg), nil
+	})
+}
+
+// openaiAPI is what OpenAI's two APIs share: the client, the levels, the
+// models list.
+type openaiAPI struct {
 	client    openai.Client
 	model     string
 	effort    string
-	maxTokens int64
+	maxTokens int64 // max_tokens, 0 to go by the effort
 }
 
-func newOpenAI(cfg config.Config) *openaiProvider {
-	opts := []option.RequestOption{option.WithAPIKey(cfg.Key())}
+func newOpenAIAPI(cfg config.Config) openaiAPI {
+	opts := []option.RequestOption{option.WithAPIKey(cfg.APIKey)}
 	if cfg.BaseURL != "" {
+		// Servers that speak OpenAI's API (Ollama, vLLM, LM Studio, proxies
+		// such as cliproxyapi) serve it under /v1 and are often given
+		// without it.
 		base := strings.TrimRight(cfg.BaseURL, "/")
 		if !strings.HasSuffix(base, "/v1") {
 			base += "/v1"
 		}
 		opts = append(opts, option.WithBaseURL(base+"/"))
 		if strings.HasPrefix(base, "http://") {
-			// A local proxy such as cliproxyapi; the SDK refuses plain HTTP
-			// with a key otherwise (and still only allows it for loopback).
+			// Such a server is local; the SDK refuses plain HTTP with a key
+			// otherwise (and still only allows it for loopback).
 			opts = append(opts, option.WithUnsafeAllowHTTP())
 		}
 	}
-	return &openaiProvider{
-		client: openai.NewClient(opts...), model: cfg.Model,
-		effort: cfg.Effort, maxTokens: cfg.ReplyTokens(),
-	}
+	return openaiAPI{client: openai.NewClient(opts...), model: cfg.Model, effort: cfg.Effort, maxTokens: cfg.MaxTokens}
 }
 
-func (p *openaiProvider) Name() string  { return "openai" }
-func (p *openaiProvider) Model() string { return p.model }
+func (p *openaiAPI) Model() string { return p.model }
 
-func (p *openaiProvider) Models(ctx context.Context) ([]ModelInfo, error) {
+func (p *openaiAPI) Efforts() []string {
+	return []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+}
+
+func (p *openaiAPI) MaxTokens(effort string) int64 { return replyTokens(p.maxTokens, effort) }
+
+func (p *openaiAPI) Models(ctx context.Context) ([]ModelInfo, error) {
 	var out []ModelInfo
 	pages := p.client.Models.ListAutoPaging(ctx)
 	for pages.Next() {
@@ -51,6 +64,15 @@ func (p *openaiProvider) Models(ctx context.Context) ([]ModelInfo, error) {
 	return out, pages.Err()
 }
 
+// openaiProvider speaks Chat Completions, which servers other than
+// OpenAI's speak too. It has no encoding of its own to replay: the model's
+// reasoning is lost between turns (openai-responses keeps it).
+type openaiProvider struct{ openaiAPI }
+
+func newOpenAI(cfg config.Config) *openaiProvider { return &openaiProvider{newOpenAIAPI(cfg)} }
+
+func (p *openaiProvider) Name() string { return "openai" }
+
 func (p *openaiProvider) Complete(ctx context.Context, req Request, onText func(string)) (*Response, error) {
 	params := openai.ChatCompletionNewParams{
 		Model:    shared.ChatModel(p.model),
@@ -58,7 +80,7 @@ func (p *openaiProvider) Complete(ctx context.Context, req Request, onText func(
 		// Without it a stream reports no token counts.
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)},
 	}
-	params.MaxCompletionTokens = openai.Int(p.maxTokens)
+	params.MaxCompletionTokens = openai.Int(p.MaxTokens(p.effort))
 	if p.effort != "" {
 		params.ReasoningEffort = shared.ReasoningEffort(p.effort)
 	}
@@ -132,15 +154,20 @@ func (p *openaiProvider) messages(req Request) []openai.ChatCompletionMessagePar
 			continue
 		}
 		for _, r := range m.ToolResults {
-			content := nonEmpty(r.Content)
-			if r.IsError {
-				content = "ERROR: " + content
-			}
-			out = append(out, openai.ToolMessage(content, r.CallID))
+			out = append(out, openai.ToolMessage(resultText(r), r.CallID))
 		}
 		if m.Text != "" {
 			out = append(out, openai.UserMessage(m.Text))
 		}
 	}
 	return out
+}
+
+// resultText is a tool result for OpenAI's APIs, which have no flag for a
+// failed call.
+func resultText(r ToolResult) string {
+	if r.IsError {
+		return "ERROR: " + nonEmpty(r.Content)
+	}
+	return nonEmpty(r.Content)
 }

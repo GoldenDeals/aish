@@ -39,25 +39,29 @@ func TestTrimDashes(t *testing.T) {
 }
 
 func TestParseModelArgs(t *testing.T) {
+	// Levels differ by provider: minimal is one's only.
+	levels := map[string][]string{
+		"a": {"low", "medium", "high", "xhigh", "max"},
+		"o": {"none", "minimal", "low", "medium", "high", "xhigh", "max"},
+	}
 	for _, tc := range []struct {
 		provider string
 		args     []string
 		want     modelArgs
 		err      string
 	}{
-		{"anthropic", nil, modelArgs{}, ""},
-		{"anthropic", []string{"claude-x"}, modelArgs{name: "claude-x", setName: true}, ""},
-		{"anthropic", []string{"high"}, modelArgs{effort: "high", setEffort: true}, ""},
-		{"anthropic", []string{"default"}, modelArgs{setEffort: true}, ""},
-		{"anthropic", []string{"claude-x", "max"}, modelArgs{name: "claude-x", effort: "max", setName: true, setEffort: true}, ""},
-		{"anthropic", []string{"claude-x", "default"}, modelArgs{name: "claude-x", setName: true, setEffort: true}, ""},
-		// Levels differ by provider: minimal is OpenAI's only.
-		{"anthropic", []string{"minimal"}, modelArgs{name: "minimal", setName: true}, ""},
-		{"openai", []string{"minimal"}, modelArgs{effort: "minimal", setEffort: true}, ""},
-		{"anthropic", []string{"claude-x", "minimal"}, modelArgs{}, `no effort "minimal" for anthropic (want low, medium, high, xhigh, max or default)`},
-		{"anthropic", []string{"a", "high", "b"}, modelArgs{}, "usage: aish model [NAME] [EFFORT|default]"},
+		{"a", nil, modelArgs{}, ""},
+		{"a", []string{"claude-x"}, modelArgs{name: "claude-x", setName: true}, ""},
+		{"a", []string{"high"}, modelArgs{effort: "high", setEffort: true}, ""},
+		{"a", []string{"default"}, modelArgs{setEffort: true}, ""},
+		{"a", []string{"claude-x", "max"}, modelArgs{name: "claude-x", effort: "max", setName: true, setEffort: true}, ""},
+		{"a", []string{"claude-x", "default"}, modelArgs{name: "claude-x", setName: true, setEffort: true}, ""},
+		{"a", []string{"minimal"}, modelArgs{name: "minimal", setName: true}, ""},
+		{"o", []string{"minimal"}, modelArgs{effort: "minimal", setEffort: true}, ""},
+		{"a", []string{"claude-x", "minimal"}, modelArgs{}, `no effort "minimal" for a (want low, medium, high, xhigh, max or default)`},
+		{"a", []string{"a", "high", "b"}, modelArgs{}, "usage: aish model [NAME] [EFFORT|default]"},
 	} {
-		got, err := parseModelArgs(tc.provider, tc.args)
+		got, err := parseModelArgs(tc.provider, levels[tc.provider], tc.args)
 		if tc.err != "" {
 			if err == nil || err.Error() != tc.err {
 				t.Errorf("%s %q: error %v, want %q", tc.provider, tc.args, err, tc.err)
