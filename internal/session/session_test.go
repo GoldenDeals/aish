@@ -38,6 +38,24 @@ func TestClearStartsNewFile(t *testing.T) {
 	}
 }
 
+func TestOpenCountsBadLines(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "x.jsonl")
+	journal := `{"kind":"shell","cmd":"ls"}` + "\n\n" + `{"kind":"user","te` + "\n" + `{"kind":"user","text":"hi"}` + "\n"
+	if err := os.WriteFile(f, []byte(journal), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(s.Entries()); n != 2 {
+		t.Errorf("%d entries, want 2", n)
+	}
+	if n := s.BadLines(); n != 1 {
+		t.Errorf("%d bad lines, want 1 (a blank line is not bad)", n)
+	}
+}
+
 func TestTokens(t *testing.T) {
 	es := []Entry{
 		{Kind: KindShell, Cmd: "cat big", Output: string(make([]byte, 100000))},

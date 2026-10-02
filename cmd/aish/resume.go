@@ -70,7 +70,7 @@ func resumeCmd(cfg config.Config, args []string) int {
 			return fail(err)
 		}
 		if sess, err := session.Load(dir, pick.ID); err == nil {
-			printResumed(pick, sess.Entries())
+			printResumed(pick, sess)
 		}
 		return 0
 	}
@@ -94,7 +94,7 @@ func startShell(cfg config.Config, sess *session.Session, resume bool) int {
 		if list, err := session.List(cfg.SessionsDir); err == nil {
 			for _, i := range list {
 				if i.ID == sess.ID {
-					printResumed(i, sess.Entries())
+					printResumed(i, sess)
 				}
 			}
 		}
@@ -113,8 +113,11 @@ func startShell(cfg config.Config, sess *session.Session, resume bool) int {
 }
 
 // printResumed reminds what the session was about: its last entries.
-func printResumed(i session.Info, es []session.Entry) {
-	es = session.Current(es)
+func printResumed(i session.Info, sess *session.Session) {
+	if n := sess.BadLines(); n > 0 {
+		fmt.Fprintf(os.Stderr, "aish: %s.jsonl: %d bad lines\n", sess.ID, n)
+	}
+	es := session.Current(sess.Entries())
 	var parts []string
 	if i.Name != "" {
 		parts = append(parts, i.ID)

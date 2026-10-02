@@ -6,6 +6,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -82,6 +83,9 @@ type Session struct {
 	path    string
 	entries []Entry
 	lock    *os.File
+	// bad counts the journal lines Open could not parse, so that lost
+	// entries do not go unnoticed.
+	bad int
 }
 
 func New(dir string) (*Session, error) {
@@ -114,13 +118,21 @@ func Open(path string) (*Session, error) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 64<<20)
 	for sc.Scan() {
-		var e Entry
-		if json.Unmarshal(sc.Bytes(), &e) == nil {
-			s.entries = append(s.entries, e)
+		if len(bytes.TrimSpace(sc.Bytes())) == 0 {
+			continue
 		}
+		var e Entry
+		if json.Unmarshal(sc.Bytes(), &e) != nil {
+			s.bad++
+			continue
+		}
+		s.entries = append(s.entries, e)
 	}
 	return s, sc.Err()
 }
+
+// BadLines is how many lines of the journal Open skipped as unparsable.
+func (s *Session) BadLines() int { return s.bad }
 
 func (s *Session) Append(es ...Entry) error {
 	s.mu.Lock()
