@@ -61,20 +61,22 @@ func (a *Agent) hookFailed(r hooks.Result) bool {
 	return true
 }
 
-// userPrompt runs the user-prompt hooks on a request and returns it as
-// the model is to get it, with what they add. False means one turned it
-// down: it is not recorded, the model never sees it.
-func (a *Agent) userPrompt(ctx context.Context, text, cwd string) (string, bool, error) {
+// userPrompt runs the user-prompt hooks on a request and returns what
+// they add to it, one entry per hook: kept apart from what the user typed,
+// it is not taken for their words and goes to the model masked. False
+// means one turned the request down: it is not recorded, the model never
+// sees it.
+func (a *Agent) userPrompt(ctx context.Context, text, cwd string) ([]session.Entry, bool, error) {
 	in := struct {
 		Prompt  string `json:"prompt"`
 		Cwd     string `json:"cwd"`
 		Session string `json:"session"`
 	}{text, cwd, a.Journal.ID()}
-	var added []string
+	var added []session.Entry
 	for _, h := range a.hooks.set.For(hooks.UserPrompt) {
 		r := h.Run(ctx, a.exec, in)
 		if ctx.Err() != nil {
-			return "", false, ctx.Err()
+			return nil, false, ctx.Err()
 		}
 		if a.hookFailed(r) {
 			continue
@@ -85,17 +87,14 @@ func (a *Agent) userPrompt(ctx context.Context, text, cwd string) (string, bool,
 				msg += ": " + *d
 			}
 			fmt.Fprintf(a.UI, "%s  ✗ %s%s\n", red, msg, reset)
-			return "", false, nil
+			return nil, false, nil
 		}
 		if c := strings.TrimSpace(r.Reply.Context); c != "" {
 			fmt.Fprintf(a.UI, "%s  (%s: %s)%s\n", dim, h, summary(c), reset)
-			added = append(added, "Added by the user-prompt hook "+h.Name+":\n"+c)
+			added = append(added, session.Entry{Kind: session.KindContext, Text: c, About: h.Name, Cwd: cwd})
 		}
 	}
-	if len(added) == 0 {
-		return text, true, nil
-	}
-	return text + "\n\n<system-reminder>\n" + strings.Join(added, "\n\n") + "\n</system-reminder>", true, nil
+	return added, true, nil
 }
 
 // verdict is what becomes of a tool call once the policy and the pre-tool

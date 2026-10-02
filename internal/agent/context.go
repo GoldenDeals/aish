@@ -70,13 +70,14 @@ func requestCwd(entries []session.Entry, cwd string) string {
 // Messages converts the session journal into a conversation. User commands
 // and requests between two assistant turns become one user message. What
 // the user did not type themselves (command output, files, instructions,
-// skills, tool results) goes through mask; the journal keeps the original.
+// skills, what hooks added, tool results) goes through mask; the journal
+// keeps the original.
 func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Message {
 	entries = session.Current(entries)
 	var out []llm.Message
 	var user llm.Message
 	var parts []string
-	var inst, files, used []session.Entry
+	var inst, files, used, added []session.Entry
 	flushInst := func() {
 		if len(inst) > 0 {
 			parts = append(parts, instructionsBlock(inst))
@@ -90,6 +91,10 @@ func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Messag
 			parts = append(parts, skillsBlock(used))
 			used = nil
 		}
+		if len(added) > 0 {
+			parts = append(parts, contextBlock(added))
+			added = nil
+		}
 	}
 	flush := func() {
 		flushInst()
@@ -101,7 +106,7 @@ func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Messag
 		user, parts = llm.Message{}, nil
 	}
 	for _, e := range entries {
-		if e.Kind != session.KindInstructions && e.Kind != session.KindFile && e.Kind != session.KindSkill {
+		if e.Kind != session.KindInstructions && e.Kind != session.KindFile && e.Kind != session.KindSkill && e.Kind != session.KindContext {
 			flushInst()
 		}
 		switch e.Kind {
@@ -114,6 +119,9 @@ func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Messag
 		case session.KindSkill:
 			e.Text = mask.Mask(e.Text)
 			used = append(used, e)
+		case session.KindContext:
+			e.Text = mask.Mask(e.Text)
+			added = append(added, e)
 		case session.KindSummary:
 			parts = append(parts, summaryBlock(e))
 		case session.KindShell:
@@ -152,6 +160,20 @@ func shellBlock(e session.Entry, maxOutput int) string {
 		}
 	}
 	b.WriteString("</shell>")
+	return b.String()
+}
+
+// contextBlock is what user-prompt hooks added to the request after it.
+func contextBlock(es []session.Entry) string {
+	var b strings.Builder
+	b.WriteString("<system-reminder>\n")
+	for i, e := range es {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("Added by the user-prompt hook " + e.About + ":\n" + e.Text)
+	}
+	b.WriteString("\n</system-reminder>")
 	return b.String()
 }
 

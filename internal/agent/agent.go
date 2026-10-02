@@ -123,7 +123,7 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	}
 	cwd := ex.Dir
 	a.loadHooks()
-	prompt, ok, err := a.userPrompt(ctx, text, cwd)
+	added, ok, err := a.userPrompt(ctx, text, cwd)
 	if err != nil || !ok {
 		return err
 	}
@@ -148,7 +148,10 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	if err := a.append(used...); err != nil {
 		return err
 	}
-	if err := a.append(session.Entry{Kind: session.KindUser, Text: prompt, Cwd: cwd}); err != nil {
+	if err := a.append(added...); err != nil {
+		return err
+	}
+	if err := a.append(session.Entry{Kind: session.KindUser, Text: text, Cwd: cwd}); err != nil {
 		return err
 	}
 	return a.drive(ctx)

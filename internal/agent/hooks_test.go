@@ -233,8 +233,8 @@ func TestUserPrompt(t *testing.T) {
 	if err := a.Start(context.Background(), "which branch", tools.Exec{Dir: cwd}); err != nil {
 		t.Fatal(err)
 	}
-	if e := j.es[0]; e.Kind != session.KindUser || !strings.HasPrefix(e.Text, "which branch\n\n<system-reminder>") || !strings.Contains(e.Text, "branch: main") {
-		t.Errorf("request %q", e.Text)
+	if c, e := j.es[0], j.es[1]; c.Kind != session.KindContext || c.Text != "branch: main" || e.Kind != session.KindUser || e.Text != "which branch" {
+		t.Errorf("journal %+v", j.es[:2])
 	}
 	if last := prov.requests[0].Messages[0]; !strings.Contains(last.Text, "user-prompt hook branch:\nbranch: main") {
 		t.Errorf("the model got %q", last.Text)

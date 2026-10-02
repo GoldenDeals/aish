@@ -355,6 +355,14 @@ func printEntry(e session.Entry) {
 		}
 	case session.KindInstructions:
 		fmt.Printf("\x1b[2m%s instructions %s, %d bytes\x1b[0m\n", e.Time.Format("15:04:05"), e.Path, len(e.Text))
+	case session.KindContext:
+		// Not the text: the user did not type it, and a hook's output can
+		// be long.
+		lines, s := strings.Count(e.Text, "\n")+1, "s"
+		if lines == 1 {
+			s = ""
+		}
+		fmt.Printf("\x1b[2m%s (context from hook %s, %d line%s)\x1b[0m\n", e.Time.Format("15:04:05"), e.About, lines, s)
 	case session.KindSummary:
 		fmt.Printf("\x1b[2m%s summary of what came before\x1b[0m\n%s\n", e.Time.Format("15:04:05"), e.Text)
 	case session.KindClear:

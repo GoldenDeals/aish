@@ -27,6 +27,9 @@ const (
 	KindFile = "file"
 	// KindSkill is a skill the user invoked as /name in a request.
 	KindSkill = "skill"
+	// KindContext is what a user-prompt hook added to the request (About:
+	// the hook's name): kept apart from what the user typed.
+	KindContext = "context"
 	// KindSummary replaces everything before it: `aish compact` asked the
 	// model to sum the session up, and only the summary is sent from then on.
 	KindSummary = "summary"
@@ -56,7 +59,7 @@ type Entry struct {
 	Cwd    string `json:"cwd,omitempty"`
 	TUI    bool   `json:"tui,omitempty"`
 
-	// user, assistant
+	// user, assistant; context: what the hook added
 	Text string `json:"text,omitempty"`
 
 	// assistant
@@ -77,7 +80,8 @@ type Entry struct {
 	CachedTokens int `json:"cached_tokens,omitempty"`
 	OutputTokens int `json:"output_tokens,omitempty"`
 
-	// instructions, file, skill (About: the skill's name)
+	// instructions, file, skill (About: the skill's name), context (About:
+	// the hook's name)
 	Path  string `json:"path,omitempty"`
 	About string `json:"about,omitempty"`
 
