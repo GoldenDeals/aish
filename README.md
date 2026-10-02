@@ -202,8 +202,8 @@ api_key_env = "AISH_API_KEY"
 model = "claude-opus-5"           # или $AISH_MODEL
 effort = "high"                   # low … max (у OpenAI ещё none, minimal); нет — уровень модели; или $AISH_EFFORT
 max_tokens = 0                    # лимит ответа; 0 — 32000, на effort xhigh/max — 64000
-max_steps = 50                    # шагов агента на один запрос
-max_output_bytes = 16000          # сколько вывода команды видит LLM (голова + хвост)
+max_steps = 50                    # шагов агента на один запрос; 0 — без ограничения
+max_output_bytes = 16000          # сколько вывода команды видит LLM (голова + хвост); 0 — весь
 fold_lines = 0                    # сколько строк вывода агента показывать до сворачивания (-1 — не сворачивать)
 markdown = true                   # рендерить ответы как markdown (false — как есть)
 code_style = "monokai"            # стиль подсветки кода: https://xyproto.github.io/splash/docs/
@@ -212,6 +212,8 @@ context_window = 0                # размер окна модели в ток
 mcp_config = "~/.config/aish/mcp.yaml"
 system_prompt = "Дополнение к системному промпту"
 ```
+
+Неизвестный ключ (скажем, опечатка `max_token`) и отрицательный лимит — ошибка: aish не запускается и называет ключ и файл, а не работает молча на значении по умолчанию.
 
 Сессии — `~/.local/share/aish/sessions/*.jsonl`. `aish session show` / `aish session clear`, `aish resume`, `aish compact`, `aish status`, `aish model`, `aish mcp`, `aish skills`.
 

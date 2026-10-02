@@ -18,7 +18,7 @@ go test ./...
 go vet ./...
 ```
 
-Тесты есть у `agent`, `bashstate`, `capture`, `llm`, `markdown`, `mcp`, `policy`, `proxy`, `session`, `shellinit`, `skills`; они чистые
+Тесты есть у `agent`, `bashstate`, `capture`, `config`, `llm`, `markdown`, `mcp`, `policy`, `proxy`, `session`, `shellinit`, `skills`; они чистые
 (без PTY и сети; `mcp` запускает свой тестовый бинарь как stub-сервер). После изменений в `internal/shellinit/init.bash` обязательно гоняй
 `go test ./internal/shellinit` — он проверяет скрипт реальным bash.
 

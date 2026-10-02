@@ -3,9 +3,13 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -98,15 +102,23 @@ func Default() Config {
 }
 
 // Load reads the config file (if any) over the defaults. The path can be
-// overridden with $AISH_CONFIG.
+// overridden with $AISH_CONFIG. Unknown keys and negative limits are errors:
+// otherwise a typo leaves the default in force without a word.
 func Load() (Config, error) {
 	cfg := Default()
 	path := os.Getenv("AISH_CONFIG")
 	if path == "" {
 		path = filepath.Join(Dir(), "config.toml")
 	}
-	if _, err := toml.DecodeFile(path, &cfg); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return cfg, err
+	md, err := toml.DecodeFile(path, &cfg)
+	if err == nil {
+		err = unknown(md)
+	}
+	if err == nil {
+		err = cfg.check()
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
 	if m := os.Getenv("AISH_MODEL"); m != "" {
 		cfg.Model = m
@@ -119,6 +131,48 @@ func Load() (Config, error) {
 	cfg.SessionsDir = expand(cfg.SessionsDir)
 	cfg.MCPConfig = expand(cfg.MCPConfig)
 	return cfg, nil
+}
+
+// unknown names the keys no field took. A table is named once, not with
+// every key inside it.
+func unknown(md toml.MetaData) error {
+	var keys []toml.Key
+	for _, k := range md.Undecoded() {
+		inside := func(t toml.Key) bool { return len(t) < len(k) && slices.Equal(t, k[:len(t)]) }
+		if !slices.ContainsFunc(keys, inside) {
+			keys = append(keys, k)
+		}
+	}
+	names := make([]string, len(keys))
+	for i, k := range keys {
+		names[i] = strconv.Quote(k.String())
+	}
+	switch len(names) {
+	case 0:
+		return nil
+	case 1:
+		return fmt.Errorf("unknown key %s", names[0])
+	}
+	return fmt.Errorf("unknown keys %s", strings.Join(names, ", "))
+}
+
+// check rejects negative limits, which the code would quietly take for 0.
+// fold_lines is not here: negative there means "do not fold".
+func (c Config) check() error {
+	for _, f := range []struct {
+		key string
+		n   int64
+	}{
+		{"max_tokens", c.MaxTokens},
+		{"max_steps", int64(c.MaxSteps)},
+		{"max_output_bytes", int64(c.MaxOutputBytes)},
+		{"context_window", int64(c.ContextWindow)},
+	} {
+		if f.n < 0 {
+			return fmt.Errorf("%s = %d: must not be negative", f.key, f.n)
+		}
+	}
+	return nil
 }
 
 // Key returns the API key, falling back to the provider's conventional env var.
