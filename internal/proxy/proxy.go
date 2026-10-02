@@ -240,12 +240,10 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	winch <- syscall.SIGWINCH
 	defer signal.Stop(winch)
 
-	hup := make(chan os.Signal, 1)
+	hup := make(chan os.Signal, 2)
 	signal.Notify(hup, syscall.SIGHUP, syscall.SIGTERM)
-	go func() {
-		s := <-hup
-		_ = cmd.Process.Signal(s)
-	}()
+	defer signal.Stop(hup)
+	stopSignals := forwardSignals(hup, cmd.Process, shutdownGrace)
 
 	old, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
@@ -262,6 +260,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	}()
 
 	waitErr := cmd.Wait()
+	stopSignals()
 	// Drain whatever bash wrote last; the PTY reports EIO once it is gone.
 	select {
 	case <-outDone:
