@@ -514,7 +514,8 @@ func (b subBash) Desc() string {
 		"- Avoid cat, head, tail, sed, awk or echo to read, edit or write files when read_file, edit_file or write_file are available."
 	if b.scope != nil {
 		d += "\n\nOnly these commands may run, every command of the line matching one of them (* matches anything): " +
-			b.scope.String() + ". Any other is refused."
+			b.scope.String() + ". Any other is refused, and so is a line that sets a variable but in lower case or of the " +
+			"locale (LC_*, LANG, TZ), or does arithmetic on anything but numbers."
 		if b.scope.readOnly {
 			d += " " + strings.Join(readCommands, ", ") + " are there to search and read: a line with them may not " +
 				"redirect output to a file or set variables; find runs without -delete, -exec, -execdir, -ok, -okdir, " +
@@ -534,7 +535,8 @@ func (b subBash) Title(args map[string]any) string { return tools.Title(b.Tool, 
 // refused tells why cmd, run in cwd with env, is not one a subagent with
 // scope may run; "" when it is. Every simple command of the line, those in
 // $(…) and bash -c included, must match a pattern, and code made at run
-// time cannot be checked, so it does not run.
+// time cannot be checked, so it does not run; nor does a line that sets a
+// variable which may change what they run (setsVariable).
 func refused(s *bashScope, cmd, cwd string, env []string) string {
 	if s == nil {
 		return ""
@@ -566,13 +568,15 @@ func refused(s *bashScope, cmd, cwd string, env []string) string {
 			return fmt.Sprintf("%s is not among the commands this subagent may run: %s", argv[0], s)
 		}
 	}
-	switch {
-	case !reads:
-		return ""
-	case len(in.Writes) > 0:
-		return fmt.Sprintf("writes to %s: the commands of this line may only read", in.Writes[0])
+	if reads {
+		if len(in.Writes) > 0 {
+			return fmt.Sprintf("writes to %s: the commands of this line may only read", in.Writes[0])
+		}
+		if why := onlyReads(cmd); why != "" {
+			return why
+		}
 	}
-	return onlyReads(cmd)
+	return setsVariable(cmd, in.Commands)
 }
 
 // unsafeOption is an option that makes a read command do more than read:
@@ -596,10 +600,10 @@ func unsafeOption(argv []string) string {
 	return ""
 }
 
-// onlyReads tells what in the line cmd, past the options of its commands
-// and the files it writes, makes it do more than read: a variable set,
-// which may change what its commands run (PATH, LD_PRELOAD), a word of
-// find or rg made at run time, which may be an option. "" when nothing.
+// onlyReads tells what in the line cmd, past the options of its commands,
+// the files it writes and the variables it sets (setsVariable), makes it
+// do more than read: declare or export, a word of find or rg made at run
+// time, which may be an option. "" when nothing.
 func onlyReads(cmd string) string {
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(cmd), "")
 	if err != nil {
@@ -613,14 +617,6 @@ func onlyReads(cmd string) string {
 		switch n := n.(type) {
 		case *syntax.DeclClause:
 			why = fmt.Sprintf("%s sets variables, which may change what the commands of this line run", n.Variant.Value)
-		case *syntax.Assign:
-			if n.Name != nil && !harmlessVar(n.Name.Value) {
-				why = fmt.Sprintf("sets %s, which may change what the commands of this line run", n.Name.Value)
-			}
-		case *syntax.WordIter:
-			if !harmlessVar(n.Name.Value) {
-				why = fmt.Sprintf("sets %s, which may change what the commands of this line run", n.Name.Value)
-			}
 		case *syntax.CallExpr:
 			if len(n.Args) == 0 {
 				break
@@ -639,9 +635,9 @@ func onlyReads(cmd string) string {
 	return why
 }
 
-// harmlessVar tells whether setting name leaves the read commands as they
-// are: programs read variables in upper case, and bash has no special one
-// in lower case. Of those in upper case only the locale's are harmless.
+// harmlessVar tells whether setting name leaves the commands of a line as
+// they are: programs read variables in upper case, and bash has no special
+// one in lower case. Of those in upper case only the locale's are harmless.
 func harmlessVar(name string) bool {
 	switch {
 	case strings.ToLower(name) == name, strings.HasPrefix(name, "LC_"):
