@@ -137,12 +137,13 @@ func (p *Proxy) cancelRequest() {
 // shell's directory; for a later step of one, its tools and hooks anew
 // once the project is no longer trusted.
 func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.Agent, error) {
-	// What config.toml selects now: what the status compares the shell's
-	// profile with, and where a shell goes whose profile is gone. Load
-	// fails where the shell's profile may not, on a profile $AISH_PROFILE
-	// or the profile key names and config.toml has not: LoadProfile tells
-	// what is wrong if the shell's profile is too.
-	def, defErr := config.Load()
+	// What config.toml selects now, by $AISH_PROFILE as the shell has it:
+	// what the status compares the shell's profile with, and where a shell
+	// goes whose profile is gone. It fails where the shell's profile may
+	// not, on a profile $AISH_PROFILE or the profile key names and
+	// config.toml has not: LoadProfile tells what is wrong if the shell's
+	// profile is too, tellDefErr if not.
+	def, defErr := config.LoadEnv(ex.Getenv)
 	p.mu.Lock()
 	if defErr == nil {
 		p.defProfile = def.Profile
@@ -164,6 +165,9 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	cfg, err := config.LoadProfile(profile)
 	if err != nil {
 		return nil, err
+	}
+	if fresh {
+		p.tellDefErr(defErr)
 	}
 	cfg, project, err := config.Project(cfg, ex.Dir)
 	if err != nil {

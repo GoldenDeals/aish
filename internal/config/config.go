@@ -167,10 +167,10 @@ func Default() Config {
 // path can be overridden with $AISH_CONFIG. Unknown keys, inside profiles
 // too, negative limits and an unknown profile are errors: otherwise a typo
 // leaves the default in force without a word.
-func Load() (Config, error) { return loadWith(nil) }
+func Load() (Config, error) { return LoadEnv(os.Getenv) }
 
-// loadWith is Load with the profile named by profile, if not nil.
-func loadWith(profile *string) (Config, error) {
+// loadWith is LoadEnv with the profile named by profile, if not nil.
+func loadWith(profile *string, getenv func(string) string) (Config, error) {
 	cfg := Default()
 	path := os.Getenv("AISH_CONFIG")
 	if path == "" {
@@ -189,13 +189,13 @@ func loadWith(profile *string) (Config, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
-	if cfg, err = cfg.pick(profile); err != nil {
+	if cfg, err = cfg.pick(profile, getenv); err != nil {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
-	if m := os.Getenv("AISH_MODEL"); m != "" && profile == nil {
+	if m := getenv("AISH_MODEL"); m != "" && profile == nil {
 		cfg.Model = m
 	}
-	if e := os.Getenv("AISH_EFFORT"); e != "" && profile == nil {
+	if e := getenv("AISH_EFFORT"); e != "" && profile == nil {
 		cfg.Effort = e
 	}
 	cfg.PolicyDir = expand(cfg.PolicyDir)

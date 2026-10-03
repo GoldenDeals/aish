@@ -96,6 +96,7 @@ type Proxy struct {
 	// defProfile is the one config.toml selects, as the last request (or
 	// the start) read it, which the status does not name.
 	defProfile  string
+	defErr      string // why config.toml selects none, as tellDefErr told it last
 	windowAsked string // what lookupOnce last asked about, the key included
 
 	// The shell's state: how it started, how it was at the last prompt, and

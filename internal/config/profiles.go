@@ -35,18 +35,25 @@ type Profile struct {
 // and $AISH_EFFORT are not read either: they are for the profile a shell
 // starts with, and a shell switched to another by `aish model` runs with
 // that profile's own.
-func LoadProfile(name string) (Config, error) { return loadWith(&name) }
+func LoadProfile(name string) (Config, error) { return loadWith(&name, os.Getenv) }
+
+// LoadEnv is Load with $AISH_PROFILE, $AISH_MODEL and $AISH_EFFORT read
+// through getenv: the proxy asks with the environment of the shell, where
+// they may have been exported or unset since it started. $AISH_CONFIG is
+// the process's still, as for LoadProfile: the file must be the one the
+// proxy reads the shell's profile from.
+func LoadEnv(getenv func(string) string) (Config, error) { return loadWith(nil, getenv) }
 
 // ProfileNames are the profiles of the config, sorted.
 func (c Config) ProfileNames() []string { return slices.Sorted(maps.Keys(c.Profiles)) }
 
 // pick lays over c, as decoded from the file, the profile name names, or
 // else the one $AISH_PROFILE does, or else the profile key.
-func (c Config) pick(name *string) (Config, error) {
+func (c Config) pick(name *string, getenv func(string) string) (Config, error) {
 	if name != nil {
 		return c.withProfile(*name, "")
 	}
-	if env := os.Getenv("AISH_PROFILE"); env != "" {
+	if env := getenv("AISH_PROFILE"); env != "" {
 		return c.withProfile(env, "$AISH_PROFILE: ")
 	}
 	return c.withProfile(c.Profile, "profile: ")
