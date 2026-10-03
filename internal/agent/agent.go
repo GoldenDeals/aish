@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -115,9 +116,14 @@ type Agent struct {
 	hooks   hookState // found once per request
 	// subs are the subagents the task tool runs: see AddSubagents.
 	subs []subagent.Def
+	// bg are the subagents in the background, made on the first one and
+	// kept for the agent's life: they outlive the request that started
+	// them. Under bgMu: the proxy stops them between requests.
+	bgMu sync.Mutex
+	bg   *bgSet
 	// name is the subagent this agent is, "" for the host agent. Its
 	// calls carry it to the pre-tool hooks; the policy has it from the
-	// engine runSub gives the subagent as well (Engine.Subagent).
+	// engine prepSub gives the subagent as well (Engine.Subagent).
 	name string
 	// windowFull is set when the context window cut the last reply: the
 	// session is summed up before the next turn, however small the estimate.
@@ -256,12 +262,18 @@ const maxPauses = 3
 
 // drive runs tool calls and LLM turns until a bash command is handed to the
 // shell or the model gives its final answer.
-func (a *Agent) drive(ctx context.Context) error {
+func (a *Agent) drive(ctx context.Context) (err error) {
+	handedOff := false
+	defer func() {
+		if err != nil || !handedOff {
+			a.noteBackground() // the request ends here
+		}
+	}()
 	pauses := 0
 	compacted := false // since the last turn the API took
 	for {
 		for _, c := range pending(a.entries) {
-			handedOff, err := a.call(ctx, c)
+			handedOff, err = a.call(ctx, c)
 			if err != nil || handedOff {
 				return err
 			}

@@ -15,7 +15,12 @@ import (
 // saving the current one first or the next one from the start if asked.
 // The names are checked before anything is saved or dropped: a taken one
 // changes nothing.
-func (p *Proxy) clear(cp rpc.ClearParams) (rpc.Info, error) {
+func (p *Proxy) clear(cp rpc.ClearParams) (_ rpc.Info, err error) {
+	defer func() {
+		if err == nil {
+			p.stopBackground() // with the session they belong to
+		}
+	}()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.asking {
@@ -84,4 +89,15 @@ func (p *Proxy) clear(cp rpc.ClearParams) (rpc.Info, error) {
 		}
 	}
 	return p.info(), nil
+}
+
+// stopBackground stops the agent's subagents in the background, if any.
+// Not under p.mu: it waits for them, and their commands may call the proxy.
+func (p *Proxy) stopBackground() {
+	p.mu.Lock()
+	a := p.ag
+	p.mu.Unlock()
+	if a != nil {
+		a.StopBackground()
+	}
 }

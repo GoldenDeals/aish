@@ -19,6 +19,7 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 
 	"github.com/inebotov/aish/internal/capture"
+	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
@@ -32,7 +33,8 @@ import (
 // journal of its own in memory, the system prompt of its file, the host's
 // tools as its file allows them. The live shell is the host's, busy with
 // the request, so the subagent's bash commands run as processes of their
-// own. Only its final answer goes back, as the result of the call; the
+// own. Only its final answer goes back, as the result of the call or, for
+// one in the background (bgtask.go), of task_wait or task_result; the
 // session never sees the rest.
 
 const (
@@ -59,10 +61,14 @@ type Panes interface {
 }
 
 // AddSubagents registers the task tool for the subagents found in the
-// working directory; with none it does nothing.
+// working directory, and beside it the tools of those in the background
+// (bgtask.go); with none it does nothing. The latter come without task
+// too while subagents started elsewhere are in the background: their
+// answers are still the model's to take after a cd.
 func (a *Agent) AddSubagents(defs []subagent.Def) {
 	a.subs = defs
-	if len(defs) == 0 {
+	known := a.backgroundKnown()
+	if len(defs) == 0 && !known {
 		return
 	}
 	if a.Tools == nil {
@@ -70,7 +76,11 @@ func (a *Agent) AddSubagents(defs []subagent.Def) {
 	}
 	// A tool of the user's named task keeps the name: the subagents are
 	// not offered then.
-	a.Tools.Add(&taskTool{a: a})
+	if ours := len(defs) > 0 && a.Tools.Add(&taskTool{a: a}); ours || known {
+		for _, name := range bgToolNames {
+			a.Tools.Add(&bgTool{a: a, name: name})
+		}
+	}
 }
 
 // taskTool runs subagents, several at once. It is streaming: the call's
@@ -81,9 +91,15 @@ func (*taskTool) Name() string    { return subName }
 func (*taskTool) Streaming() bool { return true }
 
 func (*taskTool) Args() []tools.Arg {
-	return []tools.Arg{{Name: "tasks", Type: "array", Required: true,
-		Desc: `Tasks to run in parallel, as JSON: [{"agent": NAME, "prompt": TEXT}, …]`}}
+	return []tools.Arg{
+		{Name: "tasks", Type: "array", Required: true,
+			Desc: `Tasks to run in parallel, as JSON: [{"agent": NAME, "prompt": TEXT}, …]`},
+		{Name: "background", Type: "boolean", Flag: true, Desc: bgArgDesc},
+	}
 }
+
+const bgArgDesc = "Return at once and let the subagents work in the background; " +
+	"their answers come with task_wait or task_result"
 
 func (t *taskTool) Desc() string {
 	var b strings.Builder
@@ -95,7 +111,12 @@ func (t *taskTool) Desc() string {
 		"- A subagent starts with a fresh context: it knows nothing of this conversation. " +
 		"Its prompt must say everything it needs, and what to answer with.\n" +
 		"- Independent tasks go into one call, so that they run at once.\n" +
-		"- The answers come back to you, not to the user: tell the user what matters in them.\n\n" +
+		"- The answers come back to you, not to the user: tell the user what matters in them.\n" +
+		"- With background, the call returns at once, a line \"started ID (NAME)\" for each subagent, and they work on " +
+		"while you go on. Use it when you do not need the answers for your next step and the work takes minutes: " +
+		"meanwhile do your part or answer the user. Only task_wait (which waits) and task_result (which does not) tell " +
+		"whether they are done and give their answers, in a later request as well; task_cancel stops them. They work on " +
+		"past this request, until aish clear or the end of aish, at most 8 unfinished at once.\n\n" +
 		"Available subagents:\n")
 	for _, d := range t.a.subs {
 		fmt.Fprintf(&b, "- %s — %s\n", d.Name, d.Desc)
@@ -123,6 +144,7 @@ func (t *taskTool) Schema() map[string]any {
 				"type": "array", "minItems": 1, "items": task,
 				"description": "The tasks, one subagent each; they run in parallel",
 			},
+			"background": map[string]any{"type": "boolean", "description": bgArgDesc},
 		},
 		"required": []string{"tasks"},
 	}
@@ -187,12 +209,30 @@ func (t *taskTool) jobs(args map[string]any) ([]subJob, error) {
 	return out, nil
 }
 
+// inBackground is the background argument; some models send it as text.
+func inBackground(args map[string]any) bool {
+	switch v := args["background"].(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true")
+	}
+	return false
+}
+
 func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]any, live io.Writer) (string, error) {
 	jobs, err := t.jobs(args)
 	if err != nil {
 		return "", err
 	}
 	a := t.a
+	runs := make([]*subRun, len(jobs))
+	for i, j := range jobs {
+		runs[i] = a.prepSub(j.def, j.prompt)
+	}
+	if inBackground(args) {
+		return a.background().start(runs, live)
+	}
 	var open func(title string) Live
 	if p, ok := a.UI.(Panes); ok {
 		open = p.Pane
@@ -225,7 +265,7 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
-			reply, err := a.runSafe(ctx, j.def, j.prompt, w)
+			reply, err := runSafe(ctx, runs[i], w)
 			switch {
 			case err == nil:
 				w.Finish(0)
@@ -244,28 +284,38 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 	}
 	blocks := make([]string, len(jobs))
 	for i, j := range jobs {
-		status, text := "ok", res[i].reply
-		if res[i].err != nil {
-			status = "error"
-			text = strings.TrimSpace(text + "\n\n" + res[i].err.Error())
-		}
-		if text == "" {
-			text = "(no reply)"
-		}
-		blocks[i] = fmt.Sprintf("## %s (%s)\n%s", j.def.Name, status, text)
+		status, text := outcome(res[i].reply, res[i].err)
+		blocks[i] = block(j.def.Name, status, text)
 	}
 	return strings.Join(blocks, "\n\n"), nil
 }
 
+// outcome is the status of a subagent that answered reply or failed with
+// err, and the text of its block.
+func outcome(reply string, err error) (status, text string) {
+	if err != nil {
+		return "error", strings.TrimSpace(reply + "\n\n" + err.Error())
+	}
+	return "ok", reply
+}
+
+// block is a subagent's part of a result: its answer under a heading.
+func block(title, status, text string) string {
+	if text == "" {
+		text = "(no reply)"
+	}
+	return fmt.Sprintf("## %s (%s)\n%s", title, status, text)
+}
+
 // runSafe is runSub in a goroutine of its own: a panic there would take
 // the proxy, and the shell with it, down.
-func (a *Agent) runSafe(ctx context.Context, d subagent.Def, prompt string, out Live) (reply string, err error) {
+func runSafe(ctx context.Context, s *subRun, out Live) (reply string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("subagent %s: %v", d.Name, r)
+			err = fmt.Errorf("subagent %s: %v", s.def.Name, r)
 		}
 	}()
-	return a.runSub(ctx, d, prompt, out)
+	return runSub(ctx, s, out)
 }
 
 // subNote opens the system prompt of a subagent: the common part, written
@@ -276,39 +326,60 @@ const subNote = "# Subagent\n" +
 	"What is said above about the live shell does not hold for you: your bash commands run in processes of their own " +
 	"(see the bash tool), and nothing you do there stays in the user's shell."
 
-// runSub runs subagent d on prompt in the host's shell situation and
-// returns its final answer. Its output goes to out.
-func (a *Agent) runSub(ctx context.Context, d subagent.Def, prompt string, out Live) (string, error) {
-	cfg := a.Cfg
-	cfg.SystemPrompt = subNote + "\n\n" + d.Prompt
-	prov := a.Provider
-	if d.Model != "" && d.Model != cfg.Model {
+// subRun is a subagent ready to run: all it needs of the host, taken by
+// the request that calls task. One in the background outlives that
+// request, and the next one's prepare sets the host's Cfg, Provider, Tools
+// and Policy anew: the subagent's goroutine reads none of the host's fields.
+type subRun struct {
+	def    subagent.Def
+	prompt string
+	cfg    config.Config
+	prov   llm.Provider
+	err    error // making prov failed: the subagent's error, not the call's
+	reg    *tools.Registry
+	scope  *bashScope
+	pol    *policy.Engine
+	ex     tools.Exec
+}
+
+// prepSub takes what subagent d needs to work on prompt in the host's
+// shell situation.
+func (a *Agent) prepSub(d subagent.Def, prompt string) *subRun {
+	s := &subRun{def: d, prompt: prompt, cfg: a.Cfg, prov: a.Provider, pol: a.Policy.Subagent(d.Name), ex: a.exec}
+	s.cfg.SystemPrompt = subNote + "\n\n" + d.Prompt
+	if d.Model != "" && d.Model != s.cfg.Model {
 		// The host's effort and window are its model's: another one may
 		// not take that effort, and its window is not known here.
-		cfg.Model, cfg.Effort, cfg.ContextWindow = d.Model, "", 0
-		p, err := llm.New(cfg)
-		if err != nil {
-			return "", err
-		}
-		prov = p
+		s.cfg.Model, s.cfg.Effort, s.cfg.ContextWindow = d.Model, "", 0
+		s.prov, s.err = llm.New(s.cfg)
 	}
-	reg, scope := subTools(a.Tools, d.Tools)
-	j := &memJournal{id: "sub:" + d.Name}
+	s.reg, s.scope = subTools(a.Tools, d.Tools)
+	return s
+}
+
+// runSub runs subagent s and returns its final answer. Its output goes to
+// out.
+func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
+	if s.err != nil {
+		return "", s.err
+	}
+	j := &memJournal{id: "sub:" + s.def.Name}
 	sh := &subShell{}
-	child := &Agent{Cfg: cfg, Provider: prov, Tools: reg, Policy: a.Policy.Subagent(d.Name), Journal: j, Shell: sh, UI: subUI{out}, name: d.Name}
-	ex := a.exec
-	err := child.Start(ctx, prompt, ex)
+	child := &Agent{Cfg: s.cfg, Provider: s.prov, Tools: s.reg, Policy: s.pol, Journal: j, Shell: sh, UI: subUI{out}, name: s.def.Name}
+	ex := s.ex
+	err := child.Start(ctx, s.prompt, ex)
 	for err == nil {
 		id, cmd, ok := sh.take()
 		if !ok {
 			break
 		}
 		var o rpc.Output
-		if why := refused(scope, cmd, ex.Dir, ex.Env); why != "" {
+		if why := refused(s.scope, cmd, ex.Dir, ex.Env); why != "" {
 			fmt.Fprintf(out, "%s  ✗ %s%s\n", red, why, reset)
 			o = rpc.Output{Output: "not run: " + why, Exit: 126, Cwd: ex.Dir}
 		} else {
-			o = a.runCommand(ctx, cmd, ex, out)
+			// The child's: its Cfg is the host's as the call found it.
+			o = child.runCommand(ctx, cmd, ex, out)
 		}
 		sh.done(id, o)
 		err = child.Resume(ctx, id, o.Exit, ex)
@@ -316,7 +387,7 @@ func (a *Agent) runSub(ctx context.Context, d subagent.Def, prompt string, out L
 	reply := ""
 	for i := len(j.es) - 1; i >= 0; i-- {
 		if j.es[i].Kind == session.KindAssistant {
-			reply = capture.Truncate(strings.TrimSpace(j.es[i].Text), a.Cfg.MaxOutputBytes)
+			reply = capture.Truncate(strings.TrimSpace(j.es[i].Text), s.cfg.MaxOutputBytes)
 			break
 		}
 	}
@@ -466,7 +537,7 @@ func subTools(host *tools.Registry, names []string) (*tools.Registry, *bashScope
 	}
 	reg := &tools.Registry{}
 	for _, t := range host.All() {
-		if _, own := t.(*taskTool); own || tools.IsDialog(t) || !given(t) {
+		if hostOnly(t) || tools.IsDialog(t) || !given(t) {
 			continue
 		}
 		if _, ok := t.(tools.HandsOff); ok && t.Name() == tools.Bash {
@@ -475,6 +546,16 @@ func subTools(host *tools.Registry, names []string) (*tools.Registry, *bashScope
 		reg.Add(t)
 	}
 	return reg, scope
+}
+
+// hostOnly tells whether t is task or a tool of the subagents in the
+// background: subagents run no subagents.
+func hostOnly(t tools.Tool) bool {
+	switch t.(type) {
+	case *taskTool, *bgTool:
+		return true
+	}
+	return false
 }
 
 // mcpUnsafe is what Claude Code and internal/mcp make _ in the names of MCP

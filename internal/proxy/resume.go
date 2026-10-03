@@ -190,10 +190,15 @@ func (p *Proxy) saveState(cwd string) {
 
 // resume switches the shell to session id: the journal at once, the shell
 // at its next prompt, when __aish_precmd sources the script written here.
-func (p *Proxy) resume(id string) (rpc.Info, error) {
+func (p *Proxy) resume(id string) (_ rpc.Info, err error) {
 	if err := session.CheckID(id); err != nil {
 		return rpc.Info{}, err
 	}
+	defer func() {
+		if err == nil {
+			p.stopBackground() // with the session they belong to
+		}
+	}()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.asking {

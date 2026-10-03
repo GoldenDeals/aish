@@ -295,6 +295,9 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	case <-time.After(200 * time.Millisecond):
 	}
 	p.restoreScreen()
+	// Before the deferred cleanup: their commands are in process groups
+	// of their own and would outlive aish.
+	p.stopBackground()
 	return exitCode(waitErr)
 }
 
