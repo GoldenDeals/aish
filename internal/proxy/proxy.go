@@ -85,6 +85,7 @@ type Proxy struct {
 	col     firstCol            // whether the shell's output left the next prompt off the first column
 	folds   []Fold              // folded outputs of the last request, for Ctrl+O
 	view    *viewer             // open while Ctrl+O shows the folds
+	panes   *panes              // open while subagents run, see panes.go
 	held    []byte              // shell output that arrived while the viewer was open
 	ask     *prompt             // a question the agent waits for the user to answer
 	form    *openForm           // the questions of ask_user while the user answers them
@@ -390,6 +391,9 @@ const ctrlO = 0x0f
 func (p *Proxy) key(b []byte) []byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.panes != nil && p.panes.shown {
+		return p.paneKey(b)
+	}
 	if p.view != nil {
 		if p.view.key(b) {
 			p.closeView()
@@ -411,6 +415,10 @@ func (p *Proxy) key(b []byte) []byte {
 	// A user's command (an editor, say) gets Ctrl+O as usual.
 	if i < 0 || p.user != nil {
 		return b
+	}
+	if p.panes != nil {
+		p.showPanes() // the subagents' layout, left with q, comes back
+		return b[:i]
 	}
 	folds := p.viewFolds()
 	if len(folds) == 0 {
@@ -459,15 +467,19 @@ func (p *Proxy) resized() {
 		p.view.resize(p.size())
 		_, _ = p.out.Write(append([]byte("\x1b[2J"), p.view.render()...))
 	}
+	if p.panes != nil && p.panes.shown {
+		p.panes.resize(p.size())
+		p.drawPanes() // whole: it covers the screen
+	}
 	if p.form != nil {
 		p.drawForm() // held while the viewer is open
 	}
 }
 
-// restoreScreen takes the viewer and the form off the terminal once the
-// shell is gone: nobody would close them, and the terminal would be left
-// on the alternate screen or without its cursor. The form ends unanswered,
-// as on Esc.
+// restoreScreen takes the viewer, the panes and the form off the terminal
+// once the shell is gone: nobody would close them, and the terminal would
+// be left on the alternate screen or without its cursor. The form ends
+// unanswered, as on Esc.
 func (p *Proxy) restoreScreen() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -475,14 +487,18 @@ func (p *Proxy) restoreScreen() {
 		// With what it held: the form's last frame, which closeForm erases.
 		p.closeView()
 	}
+	if p.panes != nil {
+		p.closePanes()
+	}
 	if p.form != nil {
 		p.closeForm()
 	}
 }
 
-// emit writes to the terminal, or holds the output while the viewer is open.
+// emit writes to the terminal, or holds the output while the viewer or the
+// panes have the screen.
 func (p *Proxy) emit(b []byte) {
-	if p.view != nil {
+	if p.holding() {
 		p.held = append(p.held, b...)
 		return
 	}
