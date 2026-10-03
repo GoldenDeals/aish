@@ -35,6 +35,16 @@ func (a *Agent) loadHooks() {
 	a.hooks = hookState{set: set}
 }
 
+// ResetHooks finds the hooks of the request again, in Cfg.HooksDir as it
+// is now: a project trusted when the request began may be no longer, and
+// its hooks must not run on. The arguments pre-tool hooks gave the
+// commands left for the shell are kept: those ran with them.
+func (a *Agent) ResetHooks() {
+	args := a.hooks.args
+	a.loadHooks()
+	a.hooks.args = args
+}
+
 // handed takes out the arguments pre-tool hooks gave the command of call
 // id, nil when they gave none.
 func (h *hookState) handed(id string) map[string]any {

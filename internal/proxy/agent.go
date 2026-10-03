@@ -134,7 +134,8 @@ func (p *Proxy) cancelRequest() {
 // now, with this shell's model and effort; the provider, kept while they
 // stay the same; the policies, compiled again only when their files or
 // the [policy] rules change; and, for a fresh request, the tools of the
-// shell's directory.
+// shell's directory; for a later step of one, its tools and hooks anew
+// once the project is no longer trusted.
 func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.Agent, error) {
 	// What config.toml selects now: what the status compares the shell's
 	// profile with, and where a shell goes whose profile is gone. Load
@@ -201,11 +202,21 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	if err != nil {
 		return nil, err
 	}
+	// The project's code was on in the last step and its trust is gone
+	// now: a git pull the agent ran, say. The rest of the request goes
+	// without it, as the next request would: the hooks and tools found
+	// when it began run the files as they are now.
+	distrusted := !fresh && len(a.Cfg.Untrusted) == 0 && len(cfg.Untrusted) > 0 &&
+		(a.Cfg.HooksDir != cfg.HooksDir || a.Cfg.ToolsDir != cfg.ToolsDir)
 	a.Cfg, a.Provider, a.Policy = cfg, prov, pol
-	if fresh || a.Tools == nil {
+	if fresh || a.Tools == nil || distrusted {
 		a.Tools = p.loadTools(ctx, cfg, ex.Dir)
 		defs, _ := subagent.Find(ex.Dir)
 		a.AddSubagents(defs)
+	}
+	if distrusted {
+		fmt.Fprintf(a.UI, "\x1b[2m[aish: %s or its hooks/tools changed: project code is off until aish trust]\x1b[0m\n", config.ProjectFile)
+		a.ResetHooks()
 	}
 	return a, nil
 }
