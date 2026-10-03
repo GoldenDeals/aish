@@ -69,9 +69,13 @@ type orderUI struct {
 	calls []string
 }
 
+// Fold ends the line with the status, as the UI must: the spinner of the
+// next turn takes the cursor for the start of a line and would draw over
+// a call line left open.
 func (u *orderUI) Fold(title, text string) {
 	u.calls = append(u.calls, "fold "+title)
 	u.fakeUI.Fold(title, text)
+	u.WriteString("[status]\n")
 }
 
 func (u *orderUI) Live(title string) Live {
@@ -121,7 +125,7 @@ func TestShowCallOpen(t *testing.T) {
 		shown string // the line of the call and what follows it
 	}{
 		{"long result", toolCall("c1", "read_file", `{"path":"long.txt"}`), nil,
-			"at 20 false 0, fold ⚙ read_file long.txt", "⚙ read_file long.txtdone"},
+			"at 20 false 0, fold ⚙ read_file long.txt", "⚙ read_file long.txt[status]\ndone"},
 		{"one-line result", toolCall("c1", "read_file", `{"path":"notes.txt"}`), nil,
 			"", "⚙ read_file notes.txt\n  1\thello\n"},
 		{"error", toolCall("c1", "read_file", `{"path":"missing.txt"}`), nil,
@@ -129,11 +133,11 @@ func TestShowCallOpen(t *testing.T) {
 		{"external", toolCall("c1", "probe", `{}`), nil,
 			"at 7 false 0, live ⚙ probe", "⚙ probeprobed\n"},
 		{"fold_lines", toolCall("c1", "read_file", `{"path":"long.txt"}`), func(a *Agent, _ *orderUI) { a.Cfg.FoldLines = 3 },
-			"fold ⚙ read_file long.txt", "⚙ read_file long.txt\ndone"},
+			"fold ⚙ read_file long.txt", "⚙ read_file long.txt\n[status]\ndone"},
 		{"replaced by a hook", toolCall("c1", "read_file", `{"path":"notes.txt"}`), func(a *Agent, _ *orderUI) {
 			a.Cfg.HooksDir = ""
 			hook(t, a, "pre-tool", "h", `cat >/dev/null; echo '{"args":{"path":"long.txt"}}'`)
-		}, "at 20 false 0, fold ⚙ read_file long.txt", "(arguments replaced by pre-tool/h)\n⚙ read_file long.txtdone"},
+		}, "at 20 false 0, fold ⚙ read_file long.txt", "(arguments replaced by pre-tool/h)\n⚙ read_file long.txt[status]\ndone"},
 	} {
 		ui, out := callAgent(t, tc.call, tc.setup)
 		if got := strings.Join(ui.calls, ", "); got != tc.calls {
