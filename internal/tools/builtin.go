@@ -239,7 +239,11 @@ func Builtins() []Tool {
 }
 
 func readFile(_ context.Context, args map[string]any) (string, error) {
-	f, err := os.Open(str(args, "path"))
+	path := str(args, "path")
+	if err := notRegular(path); err != nil {
+		return "", err
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
@@ -302,6 +306,9 @@ func editFile(_ context.Context, args map[string]any) (string, error) {
 	path, old, repl := str(args, "path"), str(args, "old_string"), str(args, "new_string")
 	if old == "" {
 		return "", fmt.Errorf("old_string is empty")
+	}
+	if err := notRegular(path); err != nil {
+		return "", err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

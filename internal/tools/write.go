@@ -60,7 +60,13 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 		return writeInPlace(target, st, data)
 	}
 	if err != nil {
-		return err
+		// The temporary name is not one the agent knows: the error names
+		// the file it asked for.
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		return &os.PathError{Op: "write", Path: target, Err: err}
 	}
 	_, err = f.Write(data)
 	if err == nil && statErr == nil {
@@ -121,6 +127,20 @@ func writeInPlace(target string, st os.FileInfo, data []byte) error {
 		err = cerr
 	}
 	return err
+}
+
+// notRegular refuses a path that is neither a file nor a directory. A FIFO
+// opened for reading waits in open(2) for a writer, which may never come:
+// the agent would wait past any Ctrl+C, and every request after it would
+// wait for that one. A device may have no end (/dev/zero) or wait for the
+// user (/dev/tty). A directory or a missing path is left to open, which
+// fails as it always has.
+func notRegular(path string) error {
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() || st.Mode().IsRegular() {
+		return nil
+	}
+	return fmt.Errorf("%s: not a regular file", path)
 }
 
 // createTemp is os.CreateTemp that creates the file with mode under the

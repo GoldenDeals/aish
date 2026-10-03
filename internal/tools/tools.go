@@ -430,8 +430,10 @@ func loadExternal(dir string) []external {
 	var out []external
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
+		// A FIFO is left out: reading its header would wait for a writer,
+		// and every request with it.
 		st, err := os.Stat(path)
-		if err != nil || st.IsDir() || st.Mode()&0o111 == 0 {
+		if err != nil || !st.Mode().IsRegular() || st.Mode()&0o111 == 0 {
 			continue
 		}
 		t := external{name: e.Name(), path: path}
