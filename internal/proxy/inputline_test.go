@@ -136,28 +136,85 @@ func TestInputLineWrapped(t *testing.T) {
 	feedSteps(t, "45 keys", l, steps)
 }
 
-// With a prompt of two lines the status is on the first: erasing and
-// drawing it go up there.
+// With a prompt of two lines the status is on the last, the one typed
+// on: the new line takes it down from the first.
 func TestInputLineTwoLinePrompt(t *testing.T) {
 	l := newInputLine(40, 24, "ctx-m", "\x1b[2m")
 	l.draw()
-	feedSteps(t, "prompt", l, []step{{"top\r\n$ ", "top\r\n$ "}})
+	feedSteps(t, "prompt", l, []step{{"top\r\n$ ", "top\r" + lineHide + "\n$ " + lineShow}})
 	l.typed()
 	feedSteps(t, "two lines", l, []step{
+		{"ab", "ab" + lineHide},
+		{"\b\b\x1b[K", "\b\b\x1b[K" + lineShow},
+		{"\a", "\a"},
+	})
+
+	// A prompt that goes down without a new line leaves the status above
+	// it: erasing and drawing it go up there.
+	l = newInputLine(40, 24, "ctx-m", "\x1b[2m")
+	l.draw()
+	feedSteps(t, "moved down", l, []step{{"top\x1b[B\r$ ", "top\x1b[B\r$ "}})
+	l.typed()
+	feedSteps(t, "status above", l, []step{
 		{"ab", "ab" + hidden(1)},
 		{"\b\b\x1b[K", "\b\b\x1b[K" + shown(1)},
-		{"\a", "\a"},
 	})
 
 	// A character in the last column waits there to wrap: \e8 may cancel
 	// that, so nothing is added till the line goes on.
 	l = newInputLine(40, 24, "ctx-m", "\x1b[2m")
 	l.draw()
-	l.feed([]byte("top\r\n$ "))
+	l.feed([]byte("top\x1b[B\r$ "))
 	l.typed()
 	feedSteps(t, "last column", l, []step{
 		{strings.Repeat("x", 38), strings.Repeat("x", 38)},
 		{" \r", " \r" + hidden(2)},
+	})
+}
+
+// What PROMPT_COMMAND prints after cmd-end goes above the prompt: the
+// status goes down with every new line before the first key and stays on
+// the prompt's line, however many lines that takes.
+func TestInputLinePromptCommand(t *testing.T) {
+	l := newInputLine(40, 24, "ctx-m", "\x1b[2m")
+	l.draw()
+	feedSteps(t, "hello", l, []step{
+		{"hello\r\n", "hello\r" + lineHide + "\n" + lineShow},
+		{"$ ", "$ "},
+	})
+	l.typed()
+	feedSteps(t, "typing", l, []step{
+		{"a", "a" + lineHide},
+		{"\b\x1b[K", "\b\x1b[K" + lineShow},
+	})
+
+	// More lines than the screen has: the status is not lost with the
+	// line cmd-end found the cursor on.
+	l = newInputLine(40, 24, "ctx-m", "\x1b[2m")
+	l.draw()
+	out := l.feed([]byte(strings.Repeat("line\r\n", 30) + "$ "))
+	if want := "line\r" + lineHide + "\n" + strings.Repeat("line\r\n", 29) + "$ " + lineShow; string(out) != want {
+		t.Errorf("30 lines:\n got %q\nwant %q", out, want)
+	}
+	l.typed()
+	feedSteps(t, "after 30 lines", l, []step{
+		{"a", "a" + lineHide},
+		{"\b\x1b[K", "\b\x1b[K" + lineShow},
+	})
+
+	// A line that reaches the status erases it; the next one has room.
+	l = newInputLine(40, 24, "ctx-m", "\x1b[2m")
+	l.draw()
+	feedSteps(t, "long line", l, []step{
+		{strings.Repeat("-", 40), strings.Repeat("-", 34) + lineHide + strings.Repeat("-", 6)},
+		{"\r\n$ ", "\r\n$ " + lineShow},
+	})
+
+	// After the first key a new line is readline's, not the prompt's.
+	l = atPrompt(t)
+	feedSteps(t, "after the first key", l, []step{
+		{"\r\n", "\r\n"},
+		{"ab", "ab" + hidden(1)},
 	})
 }
 
@@ -239,14 +296,26 @@ func TestInputLineTypeahead(t *testing.T) {
 // The shell's own \e7 owns the terminal's one saved cursor till its \e8:
 // the status is erased before it and drawn only after.
 func TestInputLineSavedCursor(t *testing.T) {
-	l := newInputLine(40, 24, "ctx-m", "\x1b[2m")
-	l.draw()
-	feedSteps(t, "right prompt", l, []step{
-		{"\x1b7", lineHide + "\x1b7"},
-		{"\x1b[20G12:00", "\x1b[20G12:00"},
-		{"\x1b8$ ", "\x1b8$ " + lineShow},
-	})
-	l = atPrompt(t)
+	for _, tc := range []struct{ save, restore string }{
+		{"\x1b7", "\x1b8"},
+		{"\x1b[s", "\x1b[u"},
+		{"\x1b[?1048h", "\x1b[?1048l"},
+		{"\x1b[?2004;1048h", "\x1b[?1048;2004l"},
+	} {
+		l := newInputLine(40, 24, "ctx-m", "\x1b[2m")
+		l.draw()
+		feedSteps(t, "right prompt "+tc.save, l, []step{
+			{tc.save, lineHide + tc.save},
+			{"\x1b[20G12:00", "\x1b[20G12:00"},
+			{tc.restore + "$ ", tc.restore + "$ " + lineShow},
+		})
+		l.typed()
+		feedSteps(t, "typing after "+tc.save, l, []step{
+			{"a", "a" + lineHide},
+			{"\b\x1b[K", "\b\x1b[K" + lineShow},
+		})
+	}
+	l := atPrompt(t)
 	feedSteps(t, "deleting", l, []step{
 		{"\x1b[P", lineHide + "\x1b[P" + lineShow},
 		{"\x1b[2@", lineHide + "\x1b[2@" + lineShow},

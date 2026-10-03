@@ -24,9 +24,12 @@ const maxSeq = 256
 // cursor was on the first key.
 //
 // Rows count from the status's line, the one cmd-end found the cursor on:
-// scrolling changes none of them. Output the model does not know (absolute
-// positioning, the alternate screen) ends it: the status is erased and
-// stays so till the next prompt.
+// scrolling changes none of them. Till the first key every new line takes
+// the status down with it: the prompt is the last line printed before the
+// input, below what PROMPT_COMMAND prints and the first lines of a prompt
+// of several. Output the model does not know (absolute positioning, the
+// alternate screen) ends it: the status is erased and stays so till the
+// next prompt.
 type inputLine struct {
 	cols, rows  int
 	s           int // the status's first cell; it ends at cols-2
@@ -35,7 +38,7 @@ type inputLine struct {
 	row, col int
 	wrap     bool        // a character went to the last column: the next one goes to the next line
 	ends     map[int]int // per row, the right edge of what is printed there, the status aside
-	saved    [2]int      // the cursor \e7 or \e[s saved
+	saved    [2]int      // the cursor \e7, \e[s or ?1048h saved
 	held     bool        // by the shell, which has not restored it yet: \e7 is not ours to use
 	keyed    bool        // the first key came, the prompt ends at prompt
 	prompt   [2]int
@@ -285,13 +288,21 @@ func csi(params, inter string, final byte) op {
 		if params[0] != '?' || final != 'h' && final != 'l' {
 			return op{kind: opLost}
 		}
+		var o op
 		for _, m := range strings.Split(params[1:], ";") {
 			switch m {
 			case "7", "47", "1047", "1049":
 				return op{kind: opLost} // no autowrap, the alternate screen
+			case "1048":
+				// The cursor saved and restored as \e7 and \e8 do, in
+				// the one place the terminal has for it.
+				o.kind = 'u'
+				if final == 'h' {
+					o.kind = 's'
+				}
 			}
 		}
-		return op{}
+		return o
 	}
 	first, _, _ := strings.Cut(params, ";")
 	n, _ := strconv.Atoi(first)
@@ -314,13 +325,16 @@ func csi(params, inter string, final byte) op {
 	return op{kind: opLost}
 }
 
-// touches reports whether o writes into the status's cells, or may.
+// touches reports whether o writes into the status's cells, or may, or
+// takes the status off its line.
 func (l *inputLine) touches(o op) bool {
 	switch o.kind {
 	case opLost:
 		return true
 	case 's':
 		return true // the shell's \e7: ours would overwrite what it saves
+	case opLF:
+		return !l.keyed // the status goes down to the new line
 	case opPrint:
 		row, col := l.put(o.n)
 		return o.n > 0 && row == 0 && col+o.n > l.s
@@ -369,6 +383,9 @@ func (l *inputLine) apply(o op) {
 		return
 	case opLF:
 		l.row++
+		if !l.keyed {
+			l.follow()
+		}
 	case opTab:
 		l.col = min((l.col/8+1)*8, l.cols-1)
 	case 'A':
@@ -418,6 +435,19 @@ func (l *inputLine) apply(o op) {
 		l.held = false
 	}
 	l.wrap = false
+}
+
+// follow makes the cursor's line the status's, as a new line before the
+// first key is the prompt's: rows count from it now.
+func (l *inputLine) follow() {
+	d := l.row
+	ends := make(map[int]int, len(l.ends))
+	for r, e := range l.ends {
+		ends[r-d] = e
+	}
+	l.ends = ends
+	l.saved[0] -= d
+	l.row = 0
 }
 
 // dropLine stops following the input line; what it held back of a
