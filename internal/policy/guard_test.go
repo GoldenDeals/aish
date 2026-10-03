@@ -25,7 +25,8 @@ func TestGuard(t *testing.T) {
 	if err := os.Symlink(data, filepath.Join(home, "link")); err != nil {
 		t.Fatal(err)
 	}
-	if got := config.TrustFile(); got != filepath.Join(data, "trusted.json") {
+	trust := filepath.Join(data, "trusted.json")
+	if got := config.TrustFile(); got != trust {
 		t.Fatalf("TrustFile: %s", got)
 	}
 	permit := filepath.Join(root, "permit")
@@ -64,6 +65,70 @@ func TestGuard(t *testing.T) {
 		{"mv /tmp/aish ~/.local/share/aish", Deny},
 		{"ln -s ~/.local/share/aish/trusted.json /tmp/t", Deny},
 		{"cat ~/.local/share/aish/sessions/x.jsonl", Allow},
+		{"ls ~/.local/share/aish/sessions", Allow},
+
+		// A redirection writes the file no operand names.
+		{"echo x > ~/.local/share/aish/trusted.json", Deny},
+		{"cat a >> " + trust, Deny},
+		{"echo '{}' >| ~/link/trusted.json", Deny},
+		{"{ echo x; } &> $HOME/.local/share/aish/trusted.json", Deny},
+		{"sh -c 'echo x > ~/.local/share/aish/trusted.json'", Deny},
+		{"echo x > /tmp/y", Allow},
+		{"echo x > ~/notes.txt 2>&1", Allow},
+
+		// A tree copied into a directory above it brings a trusted.json
+		// of its own; moved away and back, the directory does too.
+		{"cp -r x ~/.local/share/", Deny},
+		{"rsync -a x/ ~/.local", Deny},
+		{"tar -xf x.tar -C ~/.local/share", Deny},
+		{"tar xzf x.tgz -C ~/.local", Deny},
+		{`find /tmp/x -exec cp -r {} ~/.local/share \;`, Deny},
+		{"mv ~/.local/share /tmp/s", Deny},
+		{"cd ~/.local/share && cp -r /tmp/aish .", Deny},
+		{"env -C ~/.local tar -x -f /tmp/x.tar", Deny},
+		{"cp -r --target-directory=$HOME/.local/share x", Deny},
+		{"dd if=/tmp/x of=~/.local/share/aish/trusted.json", Deny},
+		{"tar -czf /tmp/b.tgz ~/.local/share", Allow},
+		{"cp ~/.local/share/x.txt /tmp/", Allow},
+		{"cp -r x ~/", Allow},
+		{"make install PREFIX=~/.local", Allow},
+		{"pip install --prefix ~/.local x", Allow},
+		{"find . -exec install -D {} ~/.local/share \\;", Deny},
+		{"docker cp box:/x ~/.local/share", Deny},
+		{"ls ~/.local/share", Allow},
+		{"cd ~/.local/share && ls", Allow},
+
+		// A glob or an expansion that may come to the file or its directory.
+		{"cp /tmp/x ~/.local/share/aish/trust*", Deny},
+		{"cp /tmp/x ~/.local/sh?re/aish/trusted.json", Deny},
+		{`cp /tmp/x ~/.local/share/aish/"$n"`, Deny},
+		{"cp -r x ~/.local/sha*", Deny},
+		{"cat ~/.local/share/aish/sessions/*.jsonl", Allow},
+		{"grep -n trusted.json internal/*/*.go", Allow},
+
+		// What the guard cannot see into is denied when it names the file
+		// or aish trust.
+		{"aish trust 'x", Deny},
+		{"aish trust .\necho 'x", Deny},
+		{`bash -c 'aish trust "x'`, Deny},
+		{"TRUST=~/.local/share/aish/trusted.json; cat a >> $TRUST", Deny},
+		{"cd ~/.local/share && echo x > aish/trusted.json", Deny},
+		{`f=~/.local/share/aish/trusted.json; cp /tmp/x "$f"`, Deny},
+		{"cp /tmp/x ~/.local/share/{aish,x}/trusted.json", Deny},
+		{"echo 'aish trust .' | bash", Deny},
+		{"PROMPT_COMMAND='aish trust .'", Deny},
+		{"echo 'x", Allow},
+		{`echo x > "$f"`, Allow},
+		{`grep -rn 'aish trust' "$HOME/src"`, Allow},
+	}
+	// Run where an earlier call has gone with cd.
+	cwds := []struct{ cwd, cmd, want string }{
+		{filepath.Join(home, ".local", "share"), "cd aish", Deny},
+		{data, "cp /tmp/x trusted.json", Deny},
+		{data, "cat sessions/x.jsonl", Allow},
+		{filepath.Join(home, ".local"), "tar -xf /tmp/x.tar", Deny},
+		{filepath.Join(home, ".local"), "cp -r /tmp/share .", Deny},
+		{filepath.Join(home, ".local"), "ls share", Allow},
 	}
 	files := []struct {
 		tool, path, want string
@@ -89,6 +154,15 @@ func TestGuard(t *testing.T) {
 			}
 			if d.Action == Deny && d.Reason != TrustReason {
 				t.Errorf("%s: reason %q", c.cmd, d.Reason)
+			}
+		}
+		for _, c := range cwds {
+			d, err := e.Check(ctx, callInput("bash", map[string]any{"command": c.cmd}, c.cwd))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.Action != c.want {
+				t.Errorf("%s: in %s: %s: %s (%s), want %s", filepath.Base(dir), c.cwd, c.cmd, d.Action, d.Reason, c.want)
 			}
 		}
 		for _, c := range files {
