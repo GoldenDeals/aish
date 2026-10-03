@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/inebotov/aish/internal/capture"
 	"github.com/inebotov/aish/internal/config"
@@ -32,22 +33,34 @@ func compactLimit(cfg config.Config) int {
 // it sums the session up, as `aish compact` does, and the request goes on
 // from the summary. A second summary right after one would hold about the
 // same: then what keeps the context above the limit is what the one turn
-// since brought, and its results are cut instead.
+// since brought, and its results are cut instead. A reply the window cut
+// (windowFull) is summed up whatever the estimate, and with an unknown
+// window too: the API counted the window full.
 func (a *Agent) autoCompact(ctx context.Context) error {
 	limit := compactLimit(a.Cfg)
 	tokens := a.contextTokens(a.entries)
-	if limit <= 0 || tokens <= limit {
+	cur := session.Current(a.entries)
+	if a.windowFull && !slices.ContainsFunc(cur, func(e session.Entry) bool { return e.Kind == session.KindAssistant }) {
+		// The reply is gone from the context, and the window it filled with
+		// it: `aish compact` or a clear came since.
+		a.windowFull = false
+	}
+	full := a.windowFull && a.Cfg.CompactAt > 0
+	if !full && (limit <= 0 || tokens <= limit) {
 		return nil
 	}
-	cur := session.Current(a.entries)
-	if res := soleTurnResults(cur); res != nil {
+	if res := soleTurnResults(cur); res != nil && !full {
 		cutResults(res, tokens-limit)
 		fmt.Fprintf(a.UI, "%s[aish: context %s past compact_at right after a summary; the model gets the last output cut]%s\n",
 			dim, session.Short(tokens), reset)
 		return nil
 	}
 
-	fmt.Fprintf(a.UI, "%scontext at %d%% of the window, compacting…%s\n", dim, tokens*100/a.Cfg.ContextWindow, reset)
+	if full {
+		fmt.Fprintf(a.UI, "%sthe context window is full, compacting…%s\n", dim, reset)
+	} else {
+		fmt.Fprintf(a.UI, "%scontext at %d%% of the window, compacting…%s\n", dim, tokens*100/a.Cfg.ContextWindow, reset)
+	}
 	cwd := requestCwd(a.entries, a.exec.Dir)
 	tail := requestTail(cur)
 	sum, err := a.summarize(ctx, autoNote, cwd)
@@ -62,6 +75,7 @@ func (a *Agent) autoCompact(ctx context.Context) error {
 	if err := a.append(sum); err != nil {
 		return err
 	}
+	a.windowFull = false
 	// As after `aish compact`, instruction files are read again: everything
 	// before the summary is gone for the model, and the request goes on.
 	inst := instructions(session.Current(a.entries), cwd)
@@ -77,7 +91,7 @@ func (a *Agent) autoCompact(ctx context.Context) error {
 	after := a.contextTokens(a.entries)
 	fmt.Fprintf(a.UI, "%scompacted: %s → %s tokens (aish session show prints the summary)%s\n",
 		dim, session.Short(tokens), session.Short(after), reset)
-	if after > limit {
+	if limit > 0 && after > limit {
 		fmt.Fprintf(a.UI, "%s[aish: still past compact_at: the summary, the instructions or the request are too big for the window]%s\n", dim, reset)
 	}
 	return nil

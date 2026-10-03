@@ -148,6 +148,9 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request, onText fu
 		CachedTokens: int(u.CacheReadInputTokens),
 		OutputTokens: int(u.OutputTokens),
 	}
+	if msg.StopReason == anthropic.StopReasonModelContextWindowExceeded {
+		resp.StopReason = StopContextWindow
+	}
 	for _, b := range msg.Content {
 		switch b := b.AsAny().(type) {
 		case anthropic.TextBlock:

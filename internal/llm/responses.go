@@ -93,7 +93,7 @@ func (p *responsesProvider) response(r *responses.Response) *Response {
 		OutputTokens: int(r.Usage.OutputTokens),
 	}
 	if r.IncompleteDetails.Reason == "max_output_tokens" {
-		resp.StopReason = "max_tokens" // as the agent knows a reply cut short
+		resp.StopReason = StopMaxTokens // as the agent knows a reply cut short
 	}
 	var raw []json.RawMessage
 	for _, it := range r.Output {

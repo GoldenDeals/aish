@@ -71,6 +71,13 @@ type Response struct {
 	CachedTokens int
 }
 
+// The stop reasons the agent acts on. A provider maps its own to these;
+// any other reason is passed on as the provider gave it.
+const (
+	StopMaxTokens     = "max_tokens"     // the reply hit max_tokens
+	StopContextWindow = "context_window" // the context window is full
+)
+
 // ModelInfo is a model the API offers. Window is 0 when it is not reported.
 type ModelInfo struct {
 	ID     string

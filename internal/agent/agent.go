@@ -115,6 +115,10 @@ type Agent struct {
 	hooks   hookState // found once per request
 	// subs are the subagents the task tool runs: see AddSubagents.
 	subs []subagent.Def
+	// windowFull is set when the context window cut the last reply: the
+	// session is summed up before the next turn, however small the estimate.
+	// Like the agent it lives through to the next request.
+	windowFull bool
 }
 
 // Start records a new request made in ex and works on it.
@@ -306,8 +310,16 @@ func (a *Agent) turn(ctx context.Context) error {
 	for _, c := range resp.ToolCalls {
 		e.ToolCalls = append(e.ToolCalls, session.ToolCall{ID: c.ID, Name: c.Name, Args: c.Args})
 	}
-	if resp.StopReason == "max_tokens" || resp.StopReason == "length" {
+	switch resp.StopReason {
+	case llm.StopMaxTokens:
 		fmt.Fprintf(a.UI, "%s[aish: reply cut at max_tokens]%s\n", dim, reset)
+	case llm.StopContextWindow:
+		a.windowFull = true
+		hint := ""
+		if a.Cfg.CompactAt <= 0 {
+			hint = "; aish compact frees it"
+		}
+		fmt.Fprintf(a.UI, "%s[aish: reply cut: the context window is full%s]%s\n", dim, hint, reset)
 	}
 	return a.append(e)
 }

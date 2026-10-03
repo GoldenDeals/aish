@@ -117,6 +117,9 @@ func (p *openaiProvider) Complete(ctx context.Context, req Request, onText func(
 	ch := acc.Choices[0]
 	resp.Text = ch.Message.Content
 	resp.StopReason = ch.FinishReason
+	if resp.StopReason == "length" {
+		resp.StopReason = StopMaxTokens
+	}
 	for _, c := range ch.Message.ToolCalls {
 		args := json.RawMessage(c.Function.Arguments)
 		if !json.Valid(args) {
