@@ -36,6 +36,7 @@ type fold struct {
 	hiddenLines int
 	partial     bool // the hidden part ends without a newline
 	status      time.Time
+	last        lastLine // the output's last line, which ends what is shown
 
 	// at is set when the status goes on the line of the call, which the
 	// agent printed without a newline.
@@ -70,6 +71,7 @@ func newResult(title, text string) *fold {
 // write returns what of b goes to the terminal.
 func (f *fold) write(b []byte) []byte {
 	f.raw.Write(b)
+	f.last.feed(b)
 	if f.open {
 		return b
 	}
@@ -212,9 +214,14 @@ func (f *fold) expand() []byte {
 }
 
 // finish returns the final status line: always when nothing is shown,
-// otherwise if anything stayed hidden. exit < 0 when unknown.
+// otherwise if anything stayed hidden. exit < 0 when unknown. Output shown
+// whole gets no status, but its last line is ended: what the agent prints
+// next starts at the start of a line.
 func (f *fold) finish(exit int) []byte {
 	if f.open || !f.folded() && f.limit > 0 {
+		if f.last.text {
+			return []byte("\r\n")
+		}
 		return nil
 	}
 	return []byte(f.statusExit(exit) + "\r\n")
