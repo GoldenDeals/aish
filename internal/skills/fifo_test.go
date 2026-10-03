@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -78,5 +79,30 @@ func TestFindFIFO(t *testing.T) {
 	}
 	if len(want) > 0 {
 		t.Errorf("problems not reported: %v", want)
+	}
+}
+
+// A SKILL.md replaced by a FIFO after the skill was found fails the call
+// at once: Instructions reads it anew.
+func TestInstructionsFIFO(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "cfg"))
+	file := filepath.Join(home, "proj", ".claude", "skills", "pipe", "SKILL.md")
+	write(t, file, skill("pipe", "a skill"))
+	found, _ := Find(filepath.Join(home, "proj"))
+	if len(found) != 1 {
+		t.Fatalf("found %+v", found)
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	mkfifo(t, file)
+	err := quick(t, file, func() error {
+		_, err := found[0].Instructions("")
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), file+": not a regular file") {
+		t.Errorf("Instructions: %v", err)
 	}
 }

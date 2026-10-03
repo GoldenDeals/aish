@@ -323,6 +323,12 @@ type frontmatter struct {
 // open the file, and the body.
 func parse(path string) (frontmatter, string, error) {
 	var fm frontmatter
+	// Find took a regular file, but Instructions reads it again, maybe
+	// long after: a FIFO in its place would keep the call waiting in
+	// open(2) for a writer.
+	if st, err := os.Stat(path); err == nil && !st.Mode().IsRegular() {
+		return fm, "", fmt.Errorf("%s: not a regular file", path)
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return fm, "", err

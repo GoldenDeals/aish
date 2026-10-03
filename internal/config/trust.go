@@ -45,8 +45,12 @@ func (pr *project) code(cfg *Config) []codeKey {
 // the repository, as lines key = "value" the way the file sets them: what
 // trusting it lets in.
 func CodeKeys(path string) ([]string, error) {
+	b, err := readRegular(path)
+	if err != nil {
+		return nil, err
+	}
 	var pr project
-	if _, err := toml.DecodeFile(path, &pr); err != nil {
+	if _, err := toml.Decode(string(b), &pr); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	var keys []string
@@ -60,7 +64,7 @@ func CodeKeys(path string) ([]string, error) {
 
 // Trusted tells whether path, as it is now, was trusted.
 func Trusted(path string) bool {
-	b, err := os.ReadFile(path)
+	b, err := readRegular(path)
 	return err == nil && trusted(path, b)
 }
 
@@ -84,7 +88,7 @@ func Trust(path string) error {
 	if err != nil {
 		return err
 	}
-	b, err := os.ReadFile(path)
+	b, err := readRegular(path)
 	if err != nil {
 		return err
 	}
@@ -116,7 +120,7 @@ func Untrust(path string) error {
 // error: refusing is safe.
 func TrustedFiles() map[string]string {
 	all := map[string]string{}
-	b, err := os.ReadFile(TrustFile())
+	b, err := readRegular(TrustFile())
 	if err != nil || json.Unmarshal(b, &all) != nil || all == nil {
 		return map[string]string{}
 	}
@@ -126,7 +130,7 @@ func TrustedFiles() map[string]string {
 // Sum is the codeSum of the file at path, as trust records it; "" if it,
 // or a file of the code it names, cannot be read.
 func Sum(path string) string {
-	b, err := os.ReadFile(path)
+	b, err := readRegular(path)
 	if err != nil {
 		return ""
 	}
@@ -220,6 +224,16 @@ func fileSum(path string) (string, error) {
 		return "", fmt.Errorf("%s: %w", path, err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// readRegular is os.ReadFile of a regular file or a link to one. A FIFO
+// put in place of a trusted file would keep the read waiting in open(2)
+// for a writer: on every request in the repository, in aish trust --list.
+func readRegular(path string) ([]byte, error) {
+	if st, err := os.Stat(path); err == nil && !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: not a regular file", path)
+	}
+	return os.ReadFile(path)
 }
 
 func sha(b []byte) string {

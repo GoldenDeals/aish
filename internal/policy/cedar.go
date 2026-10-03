@@ -52,6 +52,11 @@ func loadCedar(files []string) (*cedarChecker, error) {
 	attrs := newHasNames(resolved)
 	c := &cedarChecker{ps: cedar.NewPolicySet(), files: files}
 	for _, f := range files {
+		// A FIFO would keep the read waiting in open(2) for a writer on
+		// every request, and policy_dir of a project needs no trust.
+		if st, err := os.Stat(f); err == nil && !st.Mode().IsRegular() {
+			return nil, fmt.Errorf("policy: %s: not a regular file", f)
+		}
 		src, err := os.ReadFile(f)
 		if err != nil {
 			return nil, fmt.Errorf("policy: %w", err)

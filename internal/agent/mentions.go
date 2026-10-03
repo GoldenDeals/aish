@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -210,7 +211,19 @@ func readMention(p string, budget int) session.Entry {
 		e.About, e.Text = "directory", b.String()
 		return e
 	}
-	data, err := os.ReadFile(p)
+	if !st.Mode().IsRegular() {
+		// A FIFO would keep the read waiting for a writer, /dev/tty for
+		// the user, and /dev/zero would never end: the proxy with them.
+		return fail("not a regular file, not attached")
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return fail(err.Error())
+	}
+	defer f.Close()
+	// No more than can be shown, and a byte to tell that there is more:
+	// the file is read into the proxy.
+	data, err := io.ReadAll(io.LimitReader(f, maxInstructionBytes+1))
 	if err != nil {
 		return fail(err.Error())
 	}
@@ -221,21 +234,40 @@ func readMention(p string, budget int) session.Entry {
 	if limit == 0 {
 		return fail("too much attached already, use read_file")
 	}
+	more := len(data) > maxInstructionBytes
+	var cut []byte // the line the read stopped in
+	if more {
+		data = data[:maxInstructionBytes]
+		i := bytes.LastIndexByte(data, '\n') + 1
+		data, cut = data[:i], data[i:]
+	}
 	var b strings.Builder
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	n := 0
-	for sc.Scan() {
+	// add shows the next line, or the mark of truncation if it does not fit.
+	add := func(line string) bool {
 		n++
-		line := sc.Text()
 		if len(line) > 2000 {
 			line = line[:2000] + "[...]"
 		}
 		if b.Len()+len(line) > limit {
 			fmt.Fprintf(&b, "[truncated; continue with read_file offset=%d]\n", n)
-			break
+			return false
 		}
 		fmt.Fprintf(&b, "%6d\t%s\n", n, line)
+		return true
+	}
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	ok := true
+	for ok && sc.Scan() {
+		ok = add(sc.Text())
+	}
+	// A line takes more room shown, with its number, than read, unless it
+	// is cut to 2000 bytes: only past such lines does the read end before
+	// the room. The line it ended in is shown if it is cut all the same,
+	// and the rest is left to read_file.
+	if ok && more && (len(cut) <= 2000 || add(string(cut))) {
+		fmt.Fprintf(&b, "[truncated; continue with read_file offset=%d]\n", n+1)
 	}
 	if n == 0 {
 		b.WriteString("(empty file)\n")
