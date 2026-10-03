@@ -16,8 +16,9 @@ import (
 // another endpoint: a table setting api_key or api_key_env has both of its
 // own, and one naming provider or base_url but no key has none, so the
 // provider's variable gives it. So is effort, lest a level go to a provider
-// that has none such: a table naming provider but no effort has the
-// provider's default. Pointers tell a key that is set from one that is not.
+// that has none such: a table naming a provider other than the top level's
+// ("" being DefaultProvider) but no effort has the provider's default.
+// Pointers tell a key that is set from one that is not.
 type Profile struct {
 	Provider      *string `toml:"provider"`
 	BaseURL       *string `toml:"base_url"`
@@ -69,6 +70,7 @@ func (c Config) withProfile(name, from string) (Config, error) {
 		}
 		return c, fmt.Errorf("%sno profile %q (%s)", from, name, have)
 	}
+	top := c.Provider
 	lay(&c.Provider, pr.Provider)
 	lay(&c.BaseURL, pr.BaseURL)
 	lay(&c.APIKey, pr.APIKey)
@@ -78,7 +80,8 @@ func (c Config) withProfile(name, from string) (Config, error) {
 	lay(&c.MaxTokens, pr.MaxTokens)
 	lay(&c.ContextWindow, pr.ContextWindow)
 	// Whether the endpoint changed is told by what the table sets, not by
-	// the values: "" and "anthropic" are one provider, which only llm knows.
+	// the values: a table naming provider or base_url has an endpoint of
+	// its own, and the top level's key is for the top level's.
 	switch {
 	case pr.APIKey != nil || pr.APIKeyEnv != nil:
 		if pr.APIKey == nil {
@@ -90,7 +93,9 @@ func (c Config) withProfile(name, from string) (Config, error) {
 	case pr.Provider != nil || pr.BaseURL != nil:
 		c.APIKey, c.APIKeyEnv = "", ""
 	}
-	if pr.Provider != nil && pr.Effort == nil {
+	// Effort goes by the provider itself: the top level's level is one the
+	// same provider has, whatever base_url it is reached at.
+	if pr.Provider != nil && pr.Effort == nil && provider(*pr.Provider) != provider(top) {
 		c.Effort = ""
 	}
 	return c, nil
@@ -100,6 +105,14 @@ func lay[T any](dst, v *T) {
 	if v != nil {
 		*dst = *v
 	}
+}
+
+// provider is the provider a config's provider key names.
+func provider(name string) string {
+	if name == "" {
+		return DefaultProvider
+	}
+	return name
 }
 
 // Root is how `aish model` and the status name the top level of

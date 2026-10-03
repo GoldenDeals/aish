@@ -16,9 +16,13 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// DefaultProvider is the provider of a config naming none. It lives here,
+// not in llm, so that a profile can tell whether it names the top level's.
+const DefaultProvider = "anthropic"
+
 type Config struct {
-	// Provider names the API, one that package llm registers. Empty: its
-	// default.
+	// Provider names the API, one that package llm registers. Empty:
+	// DefaultProvider.
 	Provider string `toml:"provider"`
 	// BaseURL of the API. Empty: the provider's own.
 	BaseURL string `toml:"base_url"`

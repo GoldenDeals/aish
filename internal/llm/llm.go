@@ -96,8 +96,9 @@ type Provider interface {
 	Models(ctx context.Context) ([]ModelInfo, error)
 }
 
-// defaultProvider is the one a config that names none gets.
-const defaultProvider = "anthropic"
+// defaultProvider is the one a config that names none gets: config's, by
+// which a profile tells whether it keeps the top level's provider.
+const defaultProvider = config.DefaultProvider
 
 type kind struct {
 	keyEnv      string
