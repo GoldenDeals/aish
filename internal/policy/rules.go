@@ -10,9 +10,10 @@ import (
 
 // Rules are the simple policies of the [policy] table in config.toml: a
 // command matching a Deny pattern is denied, one matching an Ask pattern
-// needs the user's yes, and a file tool writing outside the home directory
-// gets WriteOutsideHome. Unlike Cedar they are not default deny: what no
-// rule names is allowed, so `deny = ["sudo *"]` is a whole policy.
+// needs the user's yes, and a file tool or a redirection writing outside
+// the home directory gets WriteOutsideHome. Unlike Cedar they are not
+// default deny: what no rule names is allowed, so `deny = ["sudo *"]` is a
+// whole policy.
 type Rules struct {
 	Deny []string
 	Ask  []string
@@ -62,12 +63,21 @@ func (c rulesChecker) Check(ctx context.Context, in Input) (Decision, error) {
 		if len(in.Dynamic) > 0 && len(c.Deny)+len(c.Ask) > 0 {
 			ds = append(ds, Decision{Action: Ask, Reason: fmt.Sprintf("command built at run time (%s)", strings.Join(in.Dynamic, ", "))})
 		}
-	case in.Tool == "write_file", in.Tool == "edit_file":
-		if a := c.WriteOutsideHome; a != "" && a != Allow && !under(in.Path, in.Home) {
-			ds = append(ds, Decision{Action: a, Reason: fmt.Sprintf("writes outside home: %s", in.Path)})
+		for _, path := range in.Writes {
+			ds = append(ds, c.write(path, in.Home)...)
 		}
+	case in.Tool == "write_file", in.Tool == "edit_file":
+		ds = append(ds, c.write(in.Path, in.Home)...)
 	}
 	return combine(ds), nil
+}
+
+// write is WriteOutsideHome for a write to path.
+func (c rulesChecker) write(path, home string) []Decision {
+	if a := c.WriteOutsideHome; a != "" && a != Allow && !under(path, home) {
+		return []Decision{{Action: a, Reason: fmt.Sprintf("writes outside home: %s", path)}}
+	}
+	return nil
 }
 
 func matches(action string, patterns []string, text string) []Decision {

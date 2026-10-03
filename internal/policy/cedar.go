@@ -157,9 +157,10 @@ var (
 )
 
 // requests maps a tool call to Cedar: one request per simple command of a
-// call handing a command to the shell, one for a file tool, one for
-// anything else; the entities are shared by all of them. The tool stays in
-// the context of a command, so a policy can tell ssh from bash.
+// call handing a command to the shell and one write per file its
+// redirections write, one for a file tool, one for anything else; the
+// entities are shared by all of them. The tool stays in the context of a
+// command, so a policy can tell ssh from bash.
 func requests(in Input) ([]types.Request, types.EntityMap) {
 	principal := types.NewEntityUID("Model", types.String(in.Model))
 	ents := types.EntityMap{}
@@ -200,27 +201,17 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 		if len(in.Commands) == 0 || in.ParseError != "" {
 			run(nil)
 		}
+		// A redirection writes as write_file does, without its arguments.
+		for _, path := range in.Writes {
+			reqs = append(reqs, fileRequest(ents, principal, actionWrite, in, path, types.Record{}))
+		}
 		return reqs, ents
 	case in.Tool == "read_file", in.Tool == "write_file", in.Tool == "edit_file":
 		action := actionWrite
 		if in.Tool == "read_file" {
 			action = actionRead
 		}
-		file := types.NewEntityUID("File", types.String(in.Path))
-		ents[file] = types.Entity{UID: file, Parents: dirs(ents, in.Path, in.Cwd, in.Home), Tags: tags(in.Args)}
-		_, err := os.Stat(in.Path)
-		return []types.Request{{
-			Principal: principal,
-			Action:    action,
-			Resource:  file,
-			Context: types.NewRecord(types.RecordMap{
-				"tool":   types.String(in.Tool),
-				"path":   types.String(in.Path),
-				"exists": types.Boolean(err == nil),
-				"cwd":    cwd,
-				"home":   home,
-			}),
-		}}, ents
+		return []types.Request{fileRequest(ents, principal, action, in, in.Path, tags(in.Args))}, ents
 	}
 	tool := types.NewEntityUID("Tool", types.String(in.Tool))
 	ent := types.Entity{UID: tool, Tags: tags(in.Args)}
@@ -234,6 +225,26 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 	}
 	ents[tool] = ent
 	return []types.Request{{Principal: principal, Action: actionCall, Resource: tool, Context: types.NewRecord(ctx)}}, ents
+}
+
+// fileRequest is the request of action on the file at path, an absolute and
+// resolved one, with the file and its directories added to ents.
+func fileRequest(ents types.EntityMap, principal, action types.EntityUID, in Input, path string, fileTags types.Record) types.Request {
+	file := types.NewEntityUID("File", types.String(path))
+	ents[file] = types.Entity{UID: file, Parents: dirs(ents, path, in.Cwd, in.Home), Tags: fileTags}
+	_, err := os.Stat(path)
+	return types.Request{
+		Principal: principal,
+		Action:    action,
+		Resource:  file,
+		Context: types.NewRecord(types.RecordMap{
+			"tool":   types.String(in.Tool),
+			"path":   types.String(path),
+			"exists": types.Boolean(err == nil),
+			"cwd":    types.String(in.Cwd),
+			"home":   types.String(in.Home),
+		}),
+	}
 }
 
 // dirs adds the directory chain of path to ents and returns the parents of

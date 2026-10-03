@@ -118,7 +118,7 @@ func TestParseDynamic(t *testing.T) {
 		{`ls | grep x`, nil, nil},
 		{`echo bash`, nil, nil},
 	} {
-		s, err := Parse(c.src)
+		s, err := Parse(c.src, "", "")
 		if err != nil {
 			t.Errorf("%s: %v", c.src, err)
 			continue
@@ -142,7 +142,7 @@ func TestParseDynamic(t *testing.T) {
 // as bash -c does.
 func TestParseDynamicError(t *testing.T) {
 	for _, src := range []string{`eval 'echo "'`, `alias x='echo "'`, `trap 'echo "' EXIT`, `bash <<< 'echo "'`} {
-		if _, err := Parse(src); err == nil {
+		if _, err := Parse(src, "", ""); err == nil {
 			t.Errorf("%s: no parse error", src)
 		}
 		in := Input{Tool: "bash"}

@@ -23,6 +23,11 @@ type Script struct {
 	// "computed", "source", "stdin", "prompt", "depth". Sorted, no
 	// repeats; empty when every command is known.
 	Dynamic []string
+	// Writes holds the files the line writes by redirections (>, >>, &>,
+	// <>, …) wherever they are, absolute and resolved as the kernel opens
+	// them; a file not known before the line runs is marked "computed"
+	// instead. Empty without a cwd.
+	Writes []string
 }
 
 // The kinds of Script.Dynamic.
@@ -43,19 +48,32 @@ const (
 // Commands parses a bash command line and returns the argv of every simple
 // command in it, as Parse does.
 func Commands(src string) ([][]string, error) {
-	s, err := Parse(src)
+	s, err := Parse(src, "", "")
 	return s.Commands, err
 }
 
-// Parse parses a bash command line for the policies. The code a line hands
-// to eval, bash -c and the like is parsed as a line of its own, down to
-// maxDepth, when it is static; what cannot be known before the line runs
-// is named in Dynamic. On a parse error, of the line or of the code in it,
-// the script holds what was parsed before it.
-func Parse(src string) (Script, error) {
-	p := &parser{kinds: map[string]bool{}}
+// Parse parses a bash command line for the policies, as run from cwd by a
+// user whose home is home; both absolute and resolved, home "" is no home.
+// The code a line hands to eval, bash -c and the like is parsed as a line
+// of its own, down to maxDepth, when it is static; what cannot be known
+// before the line runs is named in Dynamic. On a parse error, of the line
+// or of the code in it, the script holds what was parsed before it.
+func Parse(src, cwd, home string) (Script, error) {
+	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: home}
 	err := p.parse(src, 0)
 	s := Script{Commands: p.out}
+	for _, t := range p.writes {
+		switch {
+		case t.rel && p.chdir:
+			// A cd anywhere in the line may run before the write: the
+			// directory it writes in is not cwd any longer.
+			p.mark(dynComputed)
+		case cwd != "":
+			if path := walk(t.path); !slices.Contains(s.Writes, path) {
+				s.Writes = append(s.Writes, path)
+			}
+		}
+	}
 	for k := range p.kinds {
 		s.Dynamic = append(s.Dynamic, k)
 	}
@@ -64,8 +82,20 @@ func Parse(src string) (Script, error) {
 }
 
 type parser struct {
-	out   [][]string
-	kinds map[string]bool
+	out       [][]string
+	kinds     map[string]bool
+	cwd, home string
+	// writes are the files of the redirections that write, as spelled.
+	writes []write
+	// chdir is a cd, pushd or popd somewhere in the line.
+	chdir bool
+}
+
+// write is the file a redirection writes: path is absolute but not
+// resolved, rel tells that it is taken from the current directory.
+type write struct {
+	path string
+	rel  bool
 }
 
 func (p *parser) mark(kind string) { p.kinds[kind] = true }
@@ -92,6 +122,9 @@ func (p *parser) parse(src string, depth int) error {
 			}
 		case *syntax.DeclClause:
 			p.decl(n)
+		case *syntax.Redirect:
+			// Of any statement: { …; } > f and done > f write too.
+			p.redirect(n)
 		}
 		return true
 	})
@@ -126,6 +159,9 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []string
 	seen := map[string]bool{}
 	for argv != nil {
 		p.out = append(p.out, argv)
+		if static[0] && chdirs[filepath.Base(argv[0])] {
+			p.chdir = true
+		}
 		found := p.shellC(argv, static)
 		found = append(found, p.program(argv, static, redirs)...)
 		for _, s := range found {
@@ -421,6 +457,131 @@ func hdoc(r *syntax.Redirect) (string, bool) {
 		}
 	}
 	return b.String(), true
+}
+
+// chdirs run what follows them in another directory.
+var chdirs = map[string]bool{"cd": true, "pushd": true, "popd": true}
+
+// redirect records the file a redirection writes. Reading, a copy of a
+// descriptor and the devices that are no file are left out; a file built
+// at run time is marked.
+func (p *parser) redirect(r *syntax.Redirect) {
+	switch r.Op {
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrClob, syntax.RdrAll, syntax.AppAll, syntax.RdrInOut:
+	case syntax.DplOut:
+		// >&2, 2>&1, 3>&- and 4>&3- are descriptors; >&file is &>file.
+		if isStatic(r.Word) && descriptor(word(r.Word)) {
+			return
+		}
+	default:
+		return
+	}
+	if isStatic(r.Word) && device(word(r.Word)) {
+		return
+	}
+	path, rel, ok := p.target(r.Word)
+	if !ok {
+		p.mark(dynComputed)
+		return
+	}
+	p.writes = append(p.writes, write{path, rel})
+}
+
+// descriptor tells whether the word of >& names a descriptor: digits, a
+// "-" closing it, or digits and a "-" moving it.
+func descriptor(s string) bool {
+	if s == "-" {
+		return true
+	}
+	return digits(strings.TrimSuffix(s, "-"))
+}
+
+func digits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
+
+// device tells whether a redirection to s writes to no file: /dev/null,
+// the terminal or a descriptor of the shell.
+func device(s string) bool {
+	switch s {
+	case "/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty":
+		return true
+	}
+	fd, ok := strings.CutPrefix(s, "/dev/fd/")
+	return ok && digits(fd)
+}
+
+// target makes the word of a redirection a path, as the shell expands it:
+// a leading ~, $HOME or ${HOME} is home, and $PWD, ${PWD} and a relative
+// path are taken from cwd (rel). Not filepath.Join: it would take link/..
+// away before the link is followed. Any other expansion, ~user and a glob
+// among them, leaves the file unknown.
+func (p *parser) target(w *syntax.Word) (path string, rel, ok bool) {
+	if len(w.Parts) == 0 {
+		return "", false, false
+	}
+	parts := w.Parts
+	var dir string
+	found := false
+	switch first := parts[0].(type) {
+	case *syntax.Lit:
+		v, tilde := strings.CutPrefix(first.Value, "~")
+		switch {
+		case !tilde:
+		case v == "" && len(parts) == 1, strings.HasPrefix(v, "/"):
+			dir, found = p.home, true
+			parts = append([]syntax.WordPart{&syntax.Lit{Value: v}}, parts[1:]...)
+		default:
+			// ~user is another home, ~+ and ~- are directories of the
+			// shell, and a quote in ~"/x" keeps the tilde as it is.
+			return "", false, false
+		}
+	case *syntax.ParamExp:
+		if dir, rel, found = p.param(first); found {
+			parts = parts[1:]
+		}
+	case *syntax.DblQuoted:
+		if pe, ok := firstParam(first); ok {
+			if dir, rel, found = p.param(pe); found {
+				parts = append([]syntax.WordPart{&syntax.DblQuoted{Parts: first.Parts[1:]}}, parts[1:]...)
+			}
+		}
+	}
+	rest := &syntax.Word{Parts: parts}
+	if !isStatic(rest) || found && !rel && dir == "" {
+		return "", false, false
+	}
+	s := word(rest)
+	switch {
+	case found:
+		return dir + s, rel, true
+	case filepath.IsAbs(s):
+		return s, false, true
+	}
+	return p.cwd + "/" + s, true, true
+}
+
+// param tells the directory $HOME, ${HOME}, $PWD or ${PWD} stands for.
+func (p *parser) param(pe *syntax.ParamExp) (dir string, rel, ok bool) {
+	var b strings.Builder
+	if err := syntax.NewPrinter().Print(&b, pe); err != nil {
+		return "", false, false
+	}
+	switch b.String() {
+	case "$HOME", "${HOME}":
+		return p.home, false, true
+	case "$PWD", "${PWD}":
+		return p.cwd, true, true
+	}
+	return "", false, false
+}
+
+func firstParam(q *syntax.DblQuoted) (*syntax.ParamExp, bool) {
+	if q.Dollar || len(q.Parts) == 0 {
+		return nil, false
+	}
+	pe, ok := q.Parts[0].(*syntax.ParamExp)
+	return pe, ok
 }
 
 // envSplit finds the string of env -S STRING (-SSTRING, --split-string=

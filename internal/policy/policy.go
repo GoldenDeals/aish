@@ -46,6 +46,8 @@ type Input struct {
 	// Dynamic is Script.Dynamic of Line: what in it runs code no policy
 	// has seen.
 	Dynamic []string `json:"dynamic,omitempty"`
+	// Writes is Script.Writes of Line: the files its redirections write.
+	Writes []string `json:"writes,omitempty"`
 	// Model is the model making the call, the principal of the request.
 	Model string `json:"model,omitempty"`
 }
@@ -108,11 +110,12 @@ func NewInput(tool string, args map[string]any, cwd string) Input {
 }
 
 // HandOff marks the call as one that hands line to the user's shell, so
-// that the policies judge its commands one by one.
+// that the policies judge its commands one by one and the files its
+// redirections write. Cwd and Home are those of the call by then.
 func (in *Input) HandOff(line string) {
 	in.Line = line
-	s, err := Parse(line)
-	in.Commands, in.Dynamic = s.Commands, s.Dynamic
+	s, err := Parse(line, in.Cwd, in.Home)
+	in.Commands, in.Dynamic, in.Writes = s.Commands, s.Dynamic, s.Writes
 	if err != nil {
 		in.ParseError = err.Error()
 	}
