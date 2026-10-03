@@ -62,7 +62,11 @@ func (a *Agent) autoCompact(ctx context.Context) error {
 		return nil
 	}
 
+	before := session.Short(tokens)
 	if full {
+		// The estimate starts from the last turn the API took, and what
+		// did not fit is past it: the context was the window at least.
+		before = "≥" + session.Short(max(tokens, a.Cfg.ContextWindow))
 		fmt.Fprintf(a.UI, "%sthe context window is full, compacting…%s\n", dim, reset)
 	} else {
 		fmt.Fprintf(a.UI, "%scontext at %d%% of the window, compacting…%s\n", dim, tokens*100/a.Cfg.ContextWindow, reset)
@@ -102,7 +106,7 @@ func (a *Agent) autoCompact(ctx context.Context) error {
 	}
 	after := a.contextTokens(a.entries)
 	fmt.Fprintf(a.UI, "%scompacted: %s → %s tokens (aish session show prints the summary)%s\n",
-		dim, session.Short(tokens), session.Short(after), reset)
+		dim, before, session.Short(after), reset)
 	if limit > 0 && after > limit {
 		fmt.Fprintf(a.UI, "%s[aish: still past compact_at: the summary, the instructions or the request are too big for the window]%s\n", dim, reset)
 	}

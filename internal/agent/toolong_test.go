@@ -81,7 +81,8 @@ func TestPromptTooLongCompacts(t *testing.T) {
 		t.Errorf("after the summary the model got %+v", next)
 	}
 	out := ui.String()
-	if !strings.Contains(out, "the context window is full, compacting") || !strings.Contains(out, "compacted: ") {
+	// The window is unknown: the context was at least the estimate.
+	if !strings.Contains(out, "the context window is full, compacting") || !strings.Contains(out, "compacted: ≥1.0k → ") {
 		t.Errorf("terminal:\n%s", out)
 	}
 	if a.windowFull {
