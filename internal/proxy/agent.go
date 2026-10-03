@@ -54,9 +54,18 @@ func (p *Proxy) request(ctx context.Context, ex tools.Exec, fresh bool, fn func(
 			p.mu.Unlock()
 		}
 		p.mu.Lock()
-		p.cancelReq = nil
+		p.cancelReq, p.reqCtx = nil, nil
 		p.mu.Unlock()
 	}()
+	p.mu.Lock()
+	p.reqCtx = ctx
+	// Checked again: the request that had the turn while this one waited
+	// may have left a command for the shell.
+	handed := fresh && p.handed != ""
+	p.mu.Unlock()
+	if handed {
+		return errNested
+	}
 	a, err := p.prepare(ctx, ex, fresh)
 	if err != nil {
 		return err
@@ -99,27 +108,60 @@ func (p *Proxy) takeTurn(gen uint64, cancel context.CancelFunc) bool {
 // last command's output was taken.
 var errNested = errors.New("the assistant's command cannot start or compact a request")
 
+// errBusy refuses them while a request is in progress and not
+// interrupted: the shell sends its next request only once the client of
+// that one is gone, so one that comes meanwhile is from a process the
+// request started or left running in the background — a subagent's
+// command, a tool, a hook. Waiting for the turn, it would wait for the
+// request that waits for that process, or close the call the request
+// hands off next.
+var errBusy = errors.New("a request is in progress: the assistant's commands cannot start or compact another")
+
+// nested is why a request that starts or compacts is refused, nil if it is
+// not. Called under p.mu.
+func (p *Proxy) nested() error {
+	switch {
+	case p.handed != "":
+		return errNested
+	case p.reqCtx != nil && p.reqCtx.Err() == nil:
+		return errBusy
+	}
+	return nil
+}
+
 // agentStart begins a request; it does what the ask-start marker does too,
 // in case the request arrives first.
 func (p *Proxy) agentStart(ctx context.Context, ap rpc.AgentParams) error {
 	p.mu.Lock()
-	if p.handed != "" {
+	if err := p.nested(); err != nil {
 		p.mu.Unlock()
-		return errNested
+		return err
 	}
 	if !p.asking {
 		p.asking, p.folds = true, nil
 	}
 	p.mu.Unlock()
-	// A request interrupted right after it left a command would have the
-	// shell run that command after this one.
-	_ = os.WriteFile(filepath.Join(p.run, "next.cmd"), nil, 0o600)
 	return p.request(ctx, execOf(ap), true, func(ctx context.Context, a *agent.Agent) error {
+		// A request interrupted right after it left a command would have
+		// the shell run that command after this one. Not before the turn:
+		// the request that has it may hand a command off yet.
+		_ = os.WriteFile(filepath.Join(p.run, "next.cmd"), nil, 0o600)
 		return a.Start(ctx, ap.Text, execOf(ap))
 	})
 }
 
+// agentResume goes on after the command the shell was handed. The id of
+// another call comes from a command, the agent's own or a subagent's: the
+// agent would wait for an output that is not coming and go on without it.
+// The agent's command resuming the call it runs as cannot be told from the
+// shell, which sends the same.
 func (p *Proxy) agentResume(ctx context.Context, ap rpc.AgentParams) error {
+	p.mu.Lock()
+	handed := p.handed
+	p.mu.Unlock()
+	if handed == "" || handed != ap.ID {
+		return fmt.Errorf("the shell is not running the assistant's command %s", ap.ID)
+	}
 	return p.request(ctx, execOf(ap), false, func(ctx context.Context, a *agent.Agent) error {
 		return a.Resume(ctx, ap.ID, ap.RC, execOf(ap))
 	})
@@ -127,10 +169,10 @@ func (p *Proxy) agentResume(ctx context.Context, ap rpc.AgentParams) error {
 
 func (p *Proxy) compact(ctx context.Context, ap rpc.AgentParams) error {
 	p.mu.Lock()
-	nested := p.handed != ""
+	err := p.nested()
 	p.mu.Unlock()
-	if nested {
-		return errNested
+	if err != nil {
+		return err
 	}
 	return p.request(ctx, execOf(ap), true, func(ctx context.Context, a *agent.Agent) error {
 		return a.Compact(ctx, ap.Text, execOf(ap))

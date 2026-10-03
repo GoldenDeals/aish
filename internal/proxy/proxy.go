@@ -119,11 +119,13 @@ type Proxy struct {
 	restore string // the script that brings back a resumed session
 	resumed *session.Saved
 
-	// The agent, see agent.go. cancelReq is under p.mu; the rest is the
-	// request's own, one at a time under reqMu.
+	// The agent, see agent.go. cancelReq and reqCtx, the context of the
+	// request it stops, are under p.mu; the rest is the request's own, one
+	// at a time under reqMu.
 	reqMu        sync.Mutex
 	ag           *agent.Agent
 	cancelReq    context.CancelFunc
+	reqCtx       context.Context
 	cancelGen    uint64 // agent_cancel calls so far, under p.mu
 	policies     policy.Cache
 	project      string // the .aish.toml of the last request, "" if none
