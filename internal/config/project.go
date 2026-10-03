@@ -128,6 +128,9 @@ func Project(cfg Config, cwd string) (Config, string, error) {
 // findProject is the ProjectFile for cwd, or "". It stops at the first
 // directory with a .git (the repository's root: a file in a parent
 // repository is someone else's), at the home directory, and at /.
+// Only a regular file, or a link to one, is taken: a FIFO would keep
+// the read waiting in open(2) for a writer on every request there, and
+// with it the proxy and the shell.
 func findProject(cwd string) string {
 	dir, err := filepath.Abs(cwd)
 	if err != nil {
@@ -139,7 +142,7 @@ func findProject(cwd string) string {
 			return ""
 		}
 		path := filepath.Join(dir, ProjectFile)
-		if st, err := os.Stat(path); err == nil && !st.IsDir() {
+		if st, err := os.Stat(path); err == nil && st.Mode().IsRegular() {
 			return path
 		}
 		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {

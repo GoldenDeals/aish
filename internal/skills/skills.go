@@ -99,7 +99,14 @@ func Find(cwd string) ([]Skill, []Problem) {
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {
 			path := filepath.Join(dir, e.Name(), "SKILL.md")
-			if _, err := os.Stat(path); err != nil {
+			st, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+			// A FIFO would keep load waiting in open(2) for a writer, and
+			// with it every request in the directory.
+			if !st.Mode().IsRegular() {
+				problems = append(problems, Problem{path, "not a regular file"})
 				continue
 			}
 			s, err := load(path)
