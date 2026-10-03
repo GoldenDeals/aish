@@ -76,6 +76,7 @@ type Proxy struct {
 	mu      sync.Mutex
 	screen  Screen
 	asking  bool                // inside __aish_ask, between ask-start and the next prompt
+	handed  string              // call id of the agent's command left for the shell, until its output is taken
 	user    *segment            // command typed by the user, between cmd-start and cmd-end
 	agent   map[string]*segment // commands run on behalf of the agent, by call id
 	tool    *fold               // live output of an external tool, while it runs
@@ -581,6 +582,7 @@ func (p *Proxy) marker(m Marker) {
 		defer p.drawStatus() // once the command is in the journal
 		p.at = nil
 		p.asking = false
+		p.handed = "" // cut short by Ctrl+C or return, or never run
 		if p.tool != nil {
 			p.finishFold(p.tool, 130)
 			p.tool = nil

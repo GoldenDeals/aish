@@ -86,10 +86,22 @@ func (p *Proxy) takeTurn(gen uint64, cancel context.CancelFunc) bool {
 	return true
 }
 
+// errNested refuses `aish agent start` and `aish compact` run by the
+// agent's own command: closing the call the shell is running as
+// interrupted, they would leave the agent_resume after it no call to go on
+// with. The shell's own `agent start` comes before the first command is
+// handed off, and the next request of the same command line after the
+// last command's output was taken.
+var errNested = errors.New("the assistant's command cannot start or compact a request")
+
 // agentStart begins a request; it does what the ask-start marker does too,
 // in case the request arrives first.
 func (p *Proxy) agentStart(ctx context.Context, ap rpc.AgentParams) error {
 	p.mu.Lock()
+	if p.handed != "" {
+		p.mu.Unlock()
+		return errNested
+	}
 	if !p.asking {
 		p.asking, p.folds = true, nil
 	}
@@ -109,6 +121,12 @@ func (p *Proxy) agentResume(ctx context.Context, ap rpc.AgentParams) error {
 }
 
 func (p *Proxy) compact(ctx context.Context, ap rpc.AgentParams) error {
+	p.mu.Lock()
+	nested := p.handed != ""
+	p.mu.Unlock()
+	if nested {
+		return errNested
+	}
 	return p.request(ctx, execOf(ap), true, func(ctx context.Context, a *agent.Agent) error {
 		return a.Compact(ctx, ap.Text, execOf(ap))
 	})
@@ -279,15 +297,31 @@ func (j journal) Append(es ...session.Entry) error { return j.p.session().Append
 // marker.
 type shell struct{ p *Proxy }
 
+// HandOff marks the command handed before the shell can run it: a request
+// from the command itself (errNested) may come before its agent-start.
 func (s shell) HandOff(id, cmd string) error {
 	if err := os.WriteFile(filepath.Join(s.p.run, "next.id"), []byte(id+"\n"), 0o600); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(s.p.run, "next.cmd"), []byte(cmd), 0o600)
+	if err := os.WriteFile(filepath.Join(s.p.run, "next.cmd"), []byte(cmd), 0o600); err != nil {
+		return err
+	}
+	s.p.mu.Lock()
+	s.p.handed = id
+	s.p.mu.Unlock()
+	return nil
 }
 
 func (s shell) Wait(ctx context.Context, id string, timeout time.Duration) (rpc.Output, error) {
-	return s.p.wait(ctx, id, timeout)
+	out, err := s.p.wait(ctx, id, timeout)
+	// With its output or without: agent_resume comes once the shell is
+	// done with the command, and the agent goes on either way.
+	s.p.mu.Lock()
+	if s.p.handed == id {
+		s.p.handed = ""
+	}
+	s.p.mu.Unlock()
+	return out, err
 }
 
 // ui is the terminal for the agent. Everything goes through emit under
