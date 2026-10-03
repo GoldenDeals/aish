@@ -87,7 +87,20 @@ func main() {
 func run(args []string) int {
 	cfg, err := config.Load()
 	if err != nil {
-		return fail(err)
+		// LoadProfile("") fails on all Load does but a profile the profile
+		// key or $AISH_PROFILE names and config.toml has not, a table
+		// renamed, say: on the top level every command still works,
+		// `aish model root` too.
+		top, topErr := config.LoadProfile("")
+		if topErr != nil {
+			return fail(err)
+		}
+		// Not on each request and after each of its commands: the agent
+		// is the proxy's, which reads config.toml itself.
+		if len(args) == 0 || args[0] != "agent" {
+			fmt.Fprintf(os.Stderr, "\x1b[33maish: %v; on the top level of config.toml\x1b[0m\n", err)
+		}
+		cfg = top
 	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return shell(cfg, args)
