@@ -30,6 +30,11 @@ func resumeCmd(cfg config.Config, args []string) int {
 		if err := client.Call(rpc.MethodInfo, nil, &info); err != nil {
 			return fail(err)
 		}
+		// The proxy refuses the switch anyway, but only after the picker
+		// was shown or the session looked up.
+		if info.Asking {
+			return fail(errors.New("sessions are switched by the user, not by the assistant"))
+		}
 		cur, curSaved = info.SessionID, info.Saved
 	}
 	dir := cfg.SessionsDir

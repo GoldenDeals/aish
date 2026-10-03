@@ -49,6 +49,12 @@ func startOver(cp rpc.ClearParams) int {
 	if err := client.Call(rpc.MethodInfo, nil, &old); err != nil {
 		return fail(err)
 	}
+	// The proxy refuses it anyway, in these words; refused here, as aish
+	// model and aish resume are, it is before the rpc meant to change the
+	// session.
+	if old.Asking {
+		return fail(errors.New("sessions are cleared by the user, not by the assistant"))
+	}
 	if err := client.Call(rpc.MethodClear, cp, &info); err != nil {
 		return fail(err)
 	}
