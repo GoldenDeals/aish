@@ -51,9 +51,13 @@ func TestRoute(t *testing.T) {
 	for _, c := range cases {
 		script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; printf '%s\\x1f' \"$READLINE_LINE\"\n")
 	}
+	// A home and a directory of its own: a skill of the machine named like
+	// a case (gti) would send the line to the model.
 	cmd := exec.Command("bash", "--norc", "--noprofile", "-i")
+	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(script.String())
-	cmd.Env = cleanEnv("PS1=", "HISTFILE=/dev/null", "LC_ALL=C.UTF-8")
+	cmd.Env = cleanEnv("PS1=", "HISTFILE=/dev/null", "LC_ALL=C.UTF-8",
+		"HOME="+dir, "XDG_CONFIG_HOME="+filepath.Join(dir, "xdg"))
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +104,8 @@ func TestMarkerNonce(t *testing.T) {
 	cmd := exec.Command("bash", "--norc", "--noprofile", "-i")
 	cmd.Dir = wd
 	cmd.Stdin = strings.NewReader(script)
-	cmd.Env = cleanEnv("PS1=", "HISTFILE=/dev/null", "AISH_RUN="+run, "AISH_BIN="+stub)
+	cmd.Env = cleanEnv("PS1=", "HISTFILE=/dev/null", "AISH_RUN="+run, "AISH_BIN="+stub,
+		"HOME="+run, "XDG_CONFIG_HOME="+filepath.Join(run, "xdg"))
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)
