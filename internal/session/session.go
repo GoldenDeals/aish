@@ -130,12 +130,16 @@ func Latest(dir string) (*Session, error) {
 }
 
 func Open(path string) (*Session, error) {
+	id := trimExt(filepath.Base(path))
+	if err := CheckID(id); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	s := &Session{ID: trimExt(filepath.Base(path)), path: path, saved: true}
+	s := &Session{ID: id, path: path, saved: true}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 64<<20)
 	for sc.Scan() {
