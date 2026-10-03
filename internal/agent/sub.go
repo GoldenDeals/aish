@@ -280,7 +280,7 @@ func (a *Agent) runSub(ctx context.Context, d subagent.Def, prompt string, out L
 	reg, scope := subTools(a.Tools, d.Tools)
 	j := &memJournal{id: "sub:" + d.Name}
 	sh := &subShell{}
-	child := &Agent{Cfg: cfg, Provider: prov, Tools: reg, Policy: a.Policy, Journal: j, Shell: sh, UI: subUI{out}}
+	child := &Agent{Cfg: cfg, Provider: prov, Tools: reg, Policy: a.Policy.Subagent(d.Name), Journal: j, Shell: sh, UI: subUI{out}}
 	ex := a.exec
 	err := child.Start(ctx, prompt, ex)
 	for err == nil {

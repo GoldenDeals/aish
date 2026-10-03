@@ -50,11 +50,30 @@ type Input struct {
 	Writes []string `json:"writes,omitempty"`
 	// Model is the model making the call, the principal of the request.
 	Model string `json:"model,omitempty"`
+	// Agent is the subagent making the call; "" for the host agent.
+	Agent string `json:"agent,omitempty"`
 }
 
 // Engine holds the checkers of a policy directory.
 type Engine struct {
 	checkers []Checker
+	// agent names the subagent whose calls this engine judges: see
+	// Subagent.
+	agent string
+}
+
+// Subagent is the engine judging the calls of subagent name: the same
+// checkers, with Input.Agent set to name in every call they see. The
+// subagent's input is built by the same code as the host's, which knows
+// nothing of subagents, so its name is put in here, where no check can
+// miss it, a second one after a hook replaced the arguments included.
+func (e *Engine) Subagent(name string) *Engine {
+	if e == nil {
+		return nil
+	}
+	sub := *e
+	sub.agent = name
+	return &sub
 }
 
 // Load reads the *.cedar files of dir, a directory or a list of them in
@@ -203,6 +222,9 @@ func homePath(p, home string) string {
 func (e *Engine) Check(ctx context.Context, in Input) (Decision, error) {
 	if e == nil || len(e.checkers) == 0 {
 		return Decision{Action: Allow}, nil
+	}
+	if e.agent != "" {
+		in.Agent = e.agent
 	}
 	ds := make([]Decision, 0, len(e.checkers))
 	for _, c := range e.checkers {

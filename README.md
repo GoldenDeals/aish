@@ -487,6 +487,7 @@ write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
 | `bash` и любой инструмент, который отдаёт команду shell, — на каждую простую команду | `Action::"run"` | `Command::"rm"` (basename) | `program`, `args`, `flags` (`-rf` → `r`, `f`; `--force` → `force`), `operands`, `paths`, `text`, `line`, `cwd`, `home`, `parse_error`, `dynamic` |
 | `read_file` / `write_file`, `edit_file` и редиректы `>`, `>>` bash-команды | `Action::"read"` / `Action::"write"` | `File::"/abs/path"` | `path`, `exists`, `cwd`, `home` |
 | остальные (внешние, MCP, скиллы) | `Action::"call"` | `Tool::"имя"` | `server`, `path`, `cwd`, `home` |
+| вызов сабагента — любой из перечисленных | то же | то же | то же и `agent` — имя сабагента; у вызовов основного агента `agent` нет |
 
 Команды bash-строки разбираются все: конвейеры, `$(...)`, `bash -c '...'` и обёртки — `sudo rm x`
 даёт запросы и для `sudo`, и для `rm`; вердикт вызова — худший из них. Так же разбирается код,
@@ -508,6 +509,24 @@ write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
 наружу туда не попадает). `File` и `Tool` несут аргументы вызова как tags:
 `resource.hasTag("private") && resource.getTag("private") == "false"` (не-строки — компактный JSON).
 Для MCP-инструмента `Tool` лежит в `Server::"<сервер>"`.
+
+`context.agent` — имя сабагента, который делает вызов (см. «Сабагенты»); у вызовов основного
+агента его нет, поэтому перед сравнением нужен `context has agent`. Сабагенту `reviewer` — только
+чтение:
+
+```cedar
+@reason("reviewer only reads")
+forbid(principal, action == Action::"write", resource)
+when { context has agent && context.agent == "reviewer" };
+
+@reason("reviewer only reads")
+forbid(principal, action == Action::"run", resource)
+when { context has agent && context.agent == "reviewer" &&
+       !["cat", "grep", "head", "ls", "rg"].contains(context.program) };
+```
+
+Первое правило ловит и `write_file`, и редирект `>` в команде сабагента, второе — любую простую
+команду, кроме перечисленных, в том числе внутри `$(...)` и конвейера.
 
 Cedar — default deny: без `permit` запрещено всё, поэтому пример начинается с
 `permit(principal, action, resource);` и дальше только запрещает. Движок fail-closed: ошибка

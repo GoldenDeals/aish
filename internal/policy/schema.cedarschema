@@ -8,13 +8,14 @@ action run appliesTo {
   principal: [Model], resource: [Command],
   context: { tool: String, program: String, args: Set<String>, flags: Set<String>,
              operands: Set<String>, paths: Set<String>, text: String, line: String,
-             cwd: String, home: String, parse_error?: String, dynamic?: Set<String> }
+             cwd: String, home: String, parse_error?: String, dynamic?: Set<String>,
+             agent?: String }
 };
 action read, write appliesTo {
   principal: [Model], resource: [File],
-  context: { tool: String, path: String, exists: Bool, cwd: String, home: String }
+  context: { tool: String, path: String, exists: Bool, cwd: String, home: String, agent?: String }
 };
 action call appliesTo {
   principal: [Model], resource: [Tool],
-  context: { tool: String, server?: String, path?: String, cwd: String, home: String }
+  context: { tool: String, server?: String, path?: String, cwd: String, home: String, agent?: String }
 };

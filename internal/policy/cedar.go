@@ -160,7 +160,8 @@ var (
 // call handing a command to the shell and one write per file its
 // redirections write, one for a file tool, one for anything else; the
 // entities are shared by all of them. The tool stays in the context of a
-// command, so a policy can tell ssh from bash.
+// command, so a policy can tell ssh from bash; the subagent making the
+// call is in every context, so a policy can tell it from the host agent.
 func requests(in Input) ([]types.Request, types.EntityMap) {
 	principal := types.NewEntityUID("Model", types.String(in.Model))
 	ents := types.EntityMap{}
@@ -187,6 +188,9 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 			}
 			if len(in.Dynamic) > 0 {
 				ctx["dynamic"] = stringSet(in.Dynamic)
+			}
+			if in.Agent != "" {
+				ctx["agent"] = types.String(in.Agent)
 			}
 			reqs = append(reqs, types.Request{
 				Principal: principal,
@@ -223,6 +227,9 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 	if in.Path != "" {
 		ctx["path"] = types.String(in.Path)
 	}
+	if in.Agent != "" {
+		ctx["agent"] = types.String(in.Agent)
+	}
 	ents[tool] = ent
 	return []types.Request{{Principal: principal, Action: actionCall, Resource: tool, Context: types.NewRecord(ctx)}}, ents
 }
@@ -233,17 +240,21 @@ func fileRequest(ents types.EntityMap, principal, action types.EntityUID, in Inp
 	file := types.NewEntityUID("File", types.String(path))
 	ents[file] = types.Entity{UID: file, Parents: dirs(ents, path, in.Cwd, in.Home), Tags: fileTags}
 	_, err := os.Stat(path)
+	ctx := types.RecordMap{
+		"tool":   types.String(in.Tool),
+		"path":   types.String(path),
+		"exists": types.Boolean(err == nil),
+		"cwd":    types.String(in.Cwd),
+		"home":   types.String(in.Home),
+	}
+	if in.Agent != "" {
+		ctx["agent"] = types.String(in.Agent)
+	}
 	return types.Request{
 		Principal: principal,
 		Action:    action,
 		Resource:  file,
-		Context: types.NewRecord(types.RecordMap{
-			"tool":   types.String(in.Tool),
-			"path":   types.String(path),
-			"exists": types.Boolean(err == nil),
-			"cwd":    types.String(in.Cwd),
-			"home":   types.String(in.Home),
-		}),
+		Context:   types.NewRecord(ctx),
 	}
 }
 
