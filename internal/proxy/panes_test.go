@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
+	"github.com/inebotov/aish/internal/agent"
 	"github.com/inebotov/aish/internal/capture"
+	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
@@ -291,6 +294,23 @@ func (tm *terminal) reset() {
 	tm.b.Reset()
 }
 
+// due is paneDelay over: the layout opens as its timer would open it.
+func due(p *Proxy) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.panes != nil {
+		p.panesDue(p.panes)
+	}
+}
+
+// panesShown tells whether the layout is on the screen, safe to ask while its
+// timer may open it.
+func panesShown(p *Proxy) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.panes != nil && p.panes.shown
+}
+
 // While the layout is shown the keys are its own: a digit zooms, 0 and Esc
 // go back to the grid, q and Ctrl+O leave it; Ctrl+C goes on to the shell.
 // Ctrl+O brings the layout back, not the viewer of the folds.
@@ -300,6 +320,7 @@ func TestPaneKeys(t *testing.T) {
 	for _, name := range []string{"one", "two", "three"} {
 		u.Pane(name)
 	}
+	due(p)
 	ps := p.panes
 	if !ps.shown || !strings.HasPrefix(out.String(), panesOpen) {
 		t.Fatalf("the layout did not open: %q", out.String())
@@ -358,6 +379,7 @@ func TestPaneKeys(t *testing.T) {
 func TestPaneClose(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
 	a, b := u.Pane("alpha"), u.Pane("beta")
+	due(p)
 	a.Write([]byte("found\nit\n"))
 	b.Write([]byte("oops\n"))
 	p.mu.Lock()
@@ -371,6 +393,7 @@ func TestPaneClose(t *testing.T) {
 		t.Fatalf("one pane done: %q", out.String())
 	}
 	b.Finish(1)
+	u.ClosePanes()
 	b.Write([]byte("late"))
 	b.Finish(0)
 	if p.panes != nil || p.held != nil {
@@ -408,6 +431,7 @@ func TestPaneBehindViewer(t *testing.T) {
 	out.reset()
 	w := u.Pane("alpha")
 	w.Write([]byte("x\n"))
+	due(p)
 	if p.panes.shown || out.String() != "" {
 		t.Fatalf("the layout took the viewer's screen: %q", out.String())
 	}
@@ -426,6 +450,7 @@ func TestPaneBehindViewer(t *testing.T) {
 	// Detached, the end is as usual, minus the screen.
 	out.reset()
 	w.Finish(0)
+	u.ClosePanes()
 	if s := out.String(); strings.Contains(s, "\x1b[?1049") || !strings.Contains(s, "✓"+reset+" alpha") {
 		t.Errorf("closed detached: %q", s)
 	}
@@ -436,6 +461,8 @@ func TestPaneBehindViewer(t *testing.T) {
 func TestPaneRedraw(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
 	w := u.Pane("alpha")
+	due(p)
+	defer u.ClosePanes()
 	defer w.Finish(0)
 	p.mu.Lock()
 	p.panes.last = time.Now().Add(300 * time.Millisecond)
@@ -469,6 +496,7 @@ func TestPaneResize(t *testing.T) {
 	p, out, u, size := paneProxy(t)
 	u.Pane("alpha")
 	u.Pane("beta")
+	due(p)
 	out.reset()
 	*size = [2]int{50, 10}
 	p.resized()
@@ -481,10 +509,12 @@ func TestPaneNoTerminal(t *testing.T) {
 	p.size = nil
 	w := u.Pane("alpha")
 	w.Write([]byte("x\n"))
+	due(p)
 	if p.panes.shown {
 		t.Fatal("shown without a terminal")
 	}
 	w.Finish(0)
+	u.ClosePanes()
 	if s := out.String(); s != "  "+paneOK+"✓"+reset+" alpha  "+dim+"(1 line · ctrl+o to expand)"+reset+"\r\n" {
 		t.Errorf("terminal %q", s)
 	}
@@ -498,21 +528,132 @@ func TestPaneNoTerminal(t *testing.T) {
 func TestPaneAfterRequest(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
 	w := u.Pane("alpha")
+	due(p)
 	w.Write([]byte("x\n"))
 	p.asking = false
 	w.Finish(130)
+	u.ClosePanes()
 	if s := out.String(); !strings.HasSuffix(s, panesClose) || len(p.folds) != 1 {
 		t.Errorf("terminal %q, folds %q", s, p.folds)
 	}
 
 	p, out, u, _ = paneProxy(t)
 	w = u.Pane("alpha")
+	due(p)
 	p.restoreScreen()
 	if s := out.String(); !strings.Contains(s, panesClose) || p.panes != nil {
 		t.Errorf("restored: %q", s)
 	}
+	before := out.String()
 	w.Write([]byte("x\n"))
 	w.Finish(0)
+	u.ClosePanes()
+	if s := out.String(); s != before {
+		t.Errorf("written once the screen was restored: %q", s[len(before):])
+	}
+}
+
+// The subagents past maxParallel start as the first ones end: the layout
+// stays between them, all done for a moment, and goes once the call ends
+// it, with one summary block for all of them.
+func TestPanesStayForTheCall(t *testing.T) {
+	p, out, u, _ := paneProxy(t)
+	var ws []agent.Live
+	for i := range 4 {
+		ws = append(ws, u.Pane(fmt.Sprintf("s%d", i+1)))
+	}
+	due(p)
+	for _, w := range ws {
+		w.Finish(0)
+	}
+	if !panesShown(p) || strings.Contains(out.String(), panesClose) || strings.Contains(out.String(), "✓") {
+		t.Fatalf("the layout closed before the fifth: %q", out.String())
+	}
+	w := u.Pane("s5")
+	w.Write([]byte("x\n"))
+	w.Finish(0)
+	if !panesShown(p) || strings.Contains(out.String(), "✓") {
+		t.Fatalf("the layout closed with the fifth: %q", out.String())
+	}
+	u.ClosePanes()
+	s := out.String()
+	if strings.Count(s, panesOpen) != 1 || strings.Count(s, panesClose) != 1 {
+		t.Fatalf("the layout opened %d times, closed %d", strings.Count(s, panesOpen), strings.Count(s, panesClose))
+	}
+	end := strings.Index(s, panesClose)
+	if !strings.Contains(s[:end], " 5 s5  ok") {
+		t.Errorf("the fifth is not in the layout: %q", s[:end])
+	}
+	var want strings.Builder
+	for i := range 5 {
+		what := "no output"
+		if i == 4 {
+			what = "1 line · ctrl+o to expand"
+		}
+		fmt.Fprintf(&want, "  %s✓%s s%d  %s(%s)%s\r\n", paneOK, reset, i+1, dim, what, reset)
+	}
+	if got := s[end+len(panesClose):]; got != want.String() {
+		t.Errorf("after the layout\n got %q\nwant %q", got, want.String())
+	}
+	if p.panes != nil || panesShown(p) {
+		t.Error("the layout stayed")
+	}
+}
+
+// A subagent done before paneDelay leaves its summary without the
+// alternate screen: the layout would only flash. Nor does it open later.
+func TestPaneShortSubagent(t *testing.T) {
+	p, out, u, _ := paneProxy(t)
+	w := u.Pane("alpha")
+	w.Write([]byte("x\n"))
+	time.Sleep(10 * time.Millisecond)
+	w.Finish(0)
+	u.ClosePanes()
+	time.Sleep(paneDelay + 50*time.Millisecond)
+	want := "  " + paneOK + "✓" + reset + " alpha  " + dim + "(1 line · ctrl+o to expand)" + reset + "\r\n"
+	if s := out.String(); s != want {
+		t.Errorf("terminal %q, want %q", s, want)
+	}
+	if p.panes != nil || len(p.folds) != 1 || p.folds[0].Text != "x" {
+		t.Errorf("panes %v, folds %q", p.panes != nil, p.folds)
+	}
+}
+
+// The layout opens once the subagents have run paneDelay, or at once on
+// Ctrl+O; left with q then, it does not come back by itself.
+func TestPaneDelay(t *testing.T) {
+	p, out, u, _ := paneProxy(t)
+	start := time.Now()
+	w := u.Pane("alpha")
+	if s := out.String(); s != "" {
+		t.Fatalf("opened at once: %q", s)
+	}
+	for deadline := time.Now().Add(5 * time.Second); !panesShown(p); time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("never opened")
+		}
+	}
+	if d := time.Since(start); d < paneDelay {
+		t.Errorf("opened after %v", d)
+	}
+	if s := out.String(); !strings.HasPrefix(s, panesOpen) || !strings.Contains(s, " 1 alpha  running") {
+		t.Errorf("terminal %q", s)
+	}
+	w.Finish(0)
+	u.ClosePanes()
+
+	p, out, u, _ = paneProxy(t)
+	w = u.Pane("alpha")
+	if got := p.key([]byte{ctrlO}); len(got) != 0 || !panesShown(p) || !strings.HasPrefix(out.String(), panesOpen) {
+		t.Fatalf("Ctrl+O: passed %q, terminal %q", got, out.String())
+	}
+	p.key([]byte("q"))
+	time.Sleep(paneDelay + 50*time.Millisecond)
+	if panesShown(p) || strings.Count(out.String(), panesOpen) != 1 {
+		t.Errorf("the delay brought the layout back: %q", out.String())
+	}
+	w.Finish(0)
+	u.ClosePanes()
 }
 
 // Ctrl+C echoes ^C into the live output of the task call while the layout
@@ -523,8 +664,10 @@ func TestPaneCallInterrupted(t *testing.T) {
 	p.at = &statusAt{col: 20, cols: 80}
 	live := u.Live("⚙ task alpha")
 	w := u.Pane("alpha")
+	due(p)
 	p.output([]byte("^C"))
 	w.Finish(130)
+	u.ClosePanes()
 	live.Finish(130)
 	s := out.String()
 	after := s[strings.LastIndex(s, panesClose)+len(panesClose):]
@@ -544,8 +687,10 @@ func TestPaneCallShown(t *testing.T) {
 	p.foldLines = 3
 	live := u.Live("⚙ task alpha")
 	w := u.Pane("alpha")
+	due(p)
 	p.output([]byte("bg job"))
 	w.Finish(0)
+	u.ClosePanes()
 	live.Finish(-1)
 	s := out.String()
 	after := s[strings.LastIndex(s, panesClose)+len(panesClose):]
@@ -554,10 +699,21 @@ func TestPaneCallShown(t *testing.T) {
 	}
 }
 
-// The task call of a request: its subagent has a pane, and once it is done
-// a summary goes below the call, whose line ends without a status of its
-// own; the subagent's output is in the folds.
-func TestPanesOfTaskCall(t *testing.T) {
+// paneGated holds a request until gate lets it go.
+type paneGated struct {
+	*scripted
+	gate func(llm.Request)
+}
+
+func (g paneGated) Complete(ctx context.Context, req llm.Request, onText func(string)) (*llm.Response, error) {
+	g.gate(req)
+	return g.scripted.Complete(ctx, req, onText)
+}
+
+// scoutCall is a request whose agent hands "look" to the subagent scout,
+// which finds two files. Its requests to the model go through gate.
+func scoutCall(t *testing.T, gate func(*Proxy, llm.Request)) (*Proxy, *terminal) {
+	t.Helper()
 	prov := &scripted{replies: []*llm.Response{
 		{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "task", Args: json.RawMessage(`{"tasks":[{"agent":"scout","prompt":"look around"}]}`)}}},
 		{Text: "found two files"},
@@ -572,11 +728,42 @@ func TestPanesOfTaskCall(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "scout.md"), []byte(def), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	p.newProvider = func(config.Config) (llm.Provider, error) {
+		return paneGated{prov, func(req llm.Request) { gate(p, req) }}, nil
+	}
 	p.size = func() (int, int) { return 80, 24 }
 	p.marker(Marker{Kind: "ask-start"})
 	if _, err := call(t, p, rpc.MethodAgentStart, rpc.AgentParams{Text: "look", Cwd: cwd}); err != nil {
 		t.Fatal(err)
 	}
+	if len(p.folds) != 1 || p.folds[0].Title != "scout" || !strings.Contains(p.folds[0].Text, "found two files") {
+		t.Errorf("folds %q", p.folds)
+	}
+	if p.panes != nil || p.tool != nil {
+		t.Error("the layout or the call's live output stayed")
+	}
+	if es := p.sess.Entries(); len(es) < 3 || !strings.Contains(es[2].Output, "found two files") {
+		t.Errorf("journal %+v", es)
+	}
+	return p, out
+}
+
+// The task call of a request: its subagent has a pane, and once it is done
+// a summary goes below the call, whose line ends without a status of its
+// own; the subagent's output is in the folds.
+func TestPanesOfTaskCall(t *testing.T) {
+	_, out := scoutCall(t, func(p *Proxy, req llm.Request) {
+		if !strings.Contains(req.System, "Look around.") {
+			return
+		}
+		// The subagent works until the layout is there.
+		for deadline := time.Now().Add(5 * time.Second); !panesShown(p); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Error("the layout never opened")
+				return
+			}
+		}
+	})
 	s := out.String()
 	open, end := strings.Index(s, panesOpen), strings.Index(s, panesClose)
 	if open < 0 || end < open {
@@ -596,13 +783,23 @@ func TestPanesOfTaskCall(t *testing.T) {
 	if strings.Contains(s, "no output") {
 		t.Errorf("the call has a status of its own: %q", s)
 	}
-	if len(p.folds) != 1 || p.folds[0].Title != "scout" || !strings.Contains(p.folds[0].Text, "found two files") {
-		t.Errorf("folds %q", p.folds)
+}
+
+// A subagent done before paneDelay is over leaves its summary below the
+// call as well, without the alternate screen.
+func TestPanesOfQuickTaskCall(t *testing.T) {
+	old := paneDelay
+	paneDelay = time.Hour // however slow the machine
+	t.Cleanup(func() { paneDelay = old })
+	_, out := scoutCall(t, func(*Proxy, llm.Request) {})
+	s := out.String()
+	if strings.Contains(s, "\x1b[?1049") {
+		t.Fatalf("the alternate screen: %q", s)
 	}
-	if p.panes != nil || p.tool != nil {
-		t.Error("the layout or the call's live output stayed")
-	}
-	if es := p.sess.Entries(); len(es) < 3 || !strings.Contains(es[2].Output, "found two files") {
-		t.Errorf("journal %+v", es)
+	at := strings.Index(s, "task scout")
+	want := "\r\n  " + paneOK + "✓" + reset + " scout  " + dim + "(1 line · ctrl+o to expand)" + reset + "\r\n"
+	sum := strings.Index(s, want)
+	if at < 0 || sum < at || !strings.Contains(s[sum:], "all done") || strings.Contains(s, "no output") {
+		t.Errorf("terminal %q", s)
 	}
 }

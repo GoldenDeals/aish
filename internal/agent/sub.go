@@ -48,7 +48,15 @@ const (
 // subagent. A UI without it falls back to the Live of the task call, which
 // shows them one after another: a second Live of the UI at once would take
 // the place of the first.
-type Panes interface{ Pane(title string) Live }
+type Panes interface {
+	// Pane is the live output of a subagent of the call.
+	Pane(title string) Live
+	// ClosePanes ends the panes of the call once all its subagents are
+	// done. The Finish of the last one running would not do: those past
+	// maxParallel start as the first ones end, and between them the panes
+	// would close and open again.
+	ClosePanes()
+}
 
 // AddSubagents registers the task tool for the subagents found in the
 // working directory; with none it does nothing.
@@ -188,6 +196,7 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 	var open func(title string) Live
 	if p, ok := a.UI.(Panes); ok {
 		open = p.Pane
+		defer p.ClosePanes()
 	} else {
 		if live == nil {
 			live = a.UI

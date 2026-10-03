@@ -17,9 +17,11 @@ import (
 // own on the alternate screen, tiled as tmux tiles them: a header with its
 // name and state, the tail of its output below. Meanwhile the screen is
 // the layout's, as it is the viewer's while that is open: the output of
-// the shell and of the agent waits in p.held (holding). Once the last one
-// is done, the screen comes back, a line per subagent sums it up below the
-// call, and its whole output is kept for Ctrl+O.
+// the shell and of the agent waits in p.held (holding). The layout opens
+// once the subagents have run paneDelay, and the call closes it when all
+// of them are done: the screen comes back, a line per subagent sums it up
+// below the call, and its whole output is kept for Ctrl+O. Subagents done
+// sooner leave only those lines.
 
 const (
 	paneMinWidth = 20                    // the narrowest column the grid makes
@@ -32,6 +34,13 @@ const (
 	paneOK   = "\x1b[32m"
 	paneFail = "\x1b[31m"
 )
+
+// paneDelay is how long the subagents of a call run before the layout
+// opens: one done sooner would only flash the alternate screen. A
+// variable for the tests.
+var paneDelay = 150 * time.Millisecond
+
+var _ agent.Panes = (*ui)(nil)
 
 // paneSep divides the columns of the grid; where the locale makes the box
 // line two columns wide it would break the layout.
@@ -59,15 +68,18 @@ type panes struct {
 	w, h  int
 	last  time.Time   // when the layout was drawn, for throttling
 	timer *time.Timer // draws what came since last once paneRedraw is over
+	// delay opens the layout once paneDelay is over; nil once it is open,
+	// and for a layout that waits for Ctrl+O.
+	delay *time.Timer
 	// call is the live output of the task call, which the panes stand in
 	// for: the subagents write nothing there, and closePanes ends it.
 	call *fold
 }
 
-// Pane opens a pane for a subagent of the task call, and the layout with
-// the first one. While the viewer has the screen, the layout waits for
-// Ctrl+O; without a terminal there is nothing to draw it on, and the
-// outputs are only kept and summed up at the end.
+// Pane opens a pane for a subagent of the task call; the first one sets
+// the layout to open once paneDelay is over. While the viewer has the
+// screen, the layout waits for Ctrl+O; without a terminal there is nothing
+// to draw it on, and the outputs are only kept and summed up at the end.
 func (u *ui) Pane(title string) agent.Live {
 	p := u.p
 	p.mu.Lock()
@@ -76,16 +88,30 @@ func (u *ui) Pane(title string) agent.Live {
 	if ps == nil {
 		ps = &panes{zoom: -1, call: p.tool}
 		p.panes = ps
+		if p.view == nil && p.size != nil {
+			ps.delay = time.AfterFunc(paneDelay, func() {
+				p.mu.Lock()
+				defer p.mu.Unlock()
+				p.panesDue(ps)
+			})
+		}
 	}
 	pn := &pane{title: oneLine(title), buf: capture.NewBuffer(foldRawCap, foldRawCap), exit: -1}
 	ps.list = append(ps.list, pn)
-	switch {
-	case ps.shown:
+	if ps.shown {
 		p.drawPanes()
-	case len(ps.list) == 1 && p.view == nil:
-		p.showPanes()
 	}
 	return &paneWriter{p: p, ps: ps, pn: pn}
+}
+
+// ClosePanes ends the layout of the task call, its subagents all done.
+func (u *ui) ClosePanes() {
+	p := u.p
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.panes != nil {
+		p.closePanes()
+	}
 }
 
 // paneWriter is a subagent's output into its pane.
@@ -105,7 +131,8 @@ func (w *paneWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-// Finish marks the pane done; the last one to finish closes the layout.
+// Finish marks the pane done. The layout stays for the call to close:
+// the subagents past maxParallel come as the first ones end.
 func (w *paneWriter) Finish(exit int) {
 	p := w.p
 	p.mu.Lock()
@@ -114,18 +141,9 @@ func (w *paneWriter) Finish(exit int) {
 		return
 	}
 	w.pn.exit, w.pn.done = exit, true
-	if p.panes != w.ps {
-		return // closed already: the shell is gone
+	if p.panes == w.ps && w.ps.shown {
+		p.drawPanes()
 	}
-	for _, pn := range w.ps.list {
-		if !pn.done {
-			if w.ps.shown {
-				p.drawPanes()
-			}
-			return
-		}
-	}
-	p.closePanes()
 }
 
 func (pn *pane) write(b []byte) {
@@ -371,12 +389,24 @@ func (p *Proxy) paneKey(b []byte) []byte {
 	return pass
 }
 
+// panesDue opens the layout of ps once paneDelay is over, unless Ctrl+O
+// opened it sooner or the call closed it. Called under p.mu.
+func (p *Proxy) panesDue(ps *panes) {
+	if p.panes == ps && ps.delay != nil && p.view == nil {
+		p.showPanes()
+	}
+}
+
 // showPanes puts the layout on the alternate screen. Called under p.mu.
 func (p *Proxy) showPanes() {
+	ps := p.panes
+	if ps.delay != nil {
+		ps.delay.Stop() // shown sooner, by Ctrl+O: q then is not undone
+		ps.delay = nil
+	}
 	if p.size == nil {
 		return
 	}
-	ps := p.panes
 	ps.shown = true
 	ps.resize(p.size())
 	_, _ = p.out.Write([]byte(panesOpen))
@@ -431,6 +461,10 @@ func (p *Proxy) closePanes() {
 	if ps.timer != nil {
 		ps.timer.Stop()
 		ps.timer = nil
+	}
+	if ps.delay != nil {
+		ps.delay.Stop()
+		ps.delay = nil
 	}
 	if ps.shown {
 		p.detachPanes()

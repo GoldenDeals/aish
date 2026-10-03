@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -360,11 +361,13 @@ func TestTaskRejectsBadCalls(t *testing.T) {
 // panesUI shows each subagent in a pane of its own.
 type panesUI struct {
 	*fakeUI
-	mu    sync.Mutex
-	panes []*fakePane
+	mu     sync.Mutex
+	panes  []*fakePane
+	events []string // the panes opened, finished and closed, in order
 }
 
 type fakePane struct {
+	u     *panesUI
 	title string
 	mu    sync.Mutex
 	out   bytes.Buffer
@@ -374,9 +377,16 @@ type fakePane struct {
 func (u *panesUI) Pane(title string) Live {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	p := &fakePane{title: title}
+	p := &fakePane{u: u, title: title}
 	u.panes = append(u.panes, p)
+	u.events = append(u.events, "pane "+title)
 	return p
+}
+
+func (u *panesUI) ClosePanes() {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	u.events = append(u.events, "close")
 }
 
 func (p *fakePane) Write(b []byte) (int, error) {
@@ -387,8 +397,11 @@ func (p *fakePane) Write(b []byte) (int, error) {
 
 func (p *fakePane) Finish(exit int) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.exit = &exit
+	p.mu.Unlock()
+	p.u.mu.Lock()
+	defer p.u.mu.Unlock()
+	p.u.events = append(p.u.events, "finish "+p.title)
 }
 
 // A UI with panes gets one per subagent, each finished with its status; a
@@ -426,6 +439,45 @@ func TestTaskPanes(t *testing.T) {
 	}
 	if r := j.es[2]; r.IsError || r.Output != "## alpha (error)\nboom\n\n## beta (ok)\nbeta reply" {
 		t.Errorf("result %q, error %v", r.Output, r.IsError)
+	}
+}
+
+// The panes of a call go once all its subagents are done, not with the
+// last one running: those past maxParallel start as the first ones end,
+// and the panes would close and open again between them. An interrupted
+// call ends them all the same.
+func TestTaskClosesPanes(t *testing.T) {
+	var tasks []string
+	for i := range maxParallel + 1 {
+		tasks = append(tasks, fmt.Sprintf(`{"agent":"alpha","prompt":"job %d"}`, i+1))
+	}
+	for _, stop := range []bool{false, true} {
+		ctx, cancel := context.WithCancel(context.Background())
+		prov := &subProvider{}
+		prov.answer = func(ctx context.Context, req llm.Request, onText func(string)) (*llm.Response, error) {
+			switch {
+			case subOf(req) == "":
+				return reply(host("["+strings.Join(tasks, ",")+"]")(req), onText)
+			case stop:
+				cancel()
+				return nil, ctx.Err()
+			}
+			return reply(&llm.Response{Text: "ok"}, onText)
+		}
+		a, _, _, ui, cwd := newSubAgent(t, prov, def("alpha"))
+		pu := &panesUI{fakeUI: ui}
+		a.UI = pu
+		if err := a.Start(ctx, "go", tools.Exec{Dir: cwd}); (err != nil) != stop {
+			t.Fatalf("interrupted %v: err %v", stop, err)
+		}
+		cancel()
+		ev := strings.Join(pu.events, "\n")
+		if len(pu.panes) == 0 || strings.Count(ev, "finish alpha") != len(pu.panes) || strings.Count(ev, "close") != 1 || !strings.HasSuffix(ev, "\nclose") {
+			t.Errorf("interrupted %v: %q", stop, pu.events)
+		}
+		if !stop && len(pu.panes) != maxParallel+1 {
+			t.Errorf("%d panes", len(pu.panes))
+		}
 	}
 }
 
