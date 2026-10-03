@@ -13,7 +13,7 @@ func TestMatch(t *testing.T) {
 		want   bool
 	}{
 		{"sudo *", "sudo cat /etc/x", true}, // * takes spaces and slashes
-		{"sudo *", "sudo", false},
+		{"sudo *", "sudo", true},            // the bare command too
 		{"sudo *", "xsudo ls", false},
 		{"rm -rf /", "rm -rf /", true},
 		{"rm -rf /", "rm -rf /tmp/x", false},

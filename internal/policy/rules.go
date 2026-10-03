@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // Rules are the simple policies of the [policy] table in config.toml: a
@@ -66,6 +69,11 @@ func (c rulesChecker) Check(ctx context.Context, in Input) (Decision, error) {
 		for _, path := range in.Writes {
 			ds = append(ds, c.write(path, in.Home)...)
 		}
+		// A file known only at run time may be anywhere. Parse marks it
+		// computed, so a line without the mark writes none.
+		if a := c.WriteOutsideHome; a != "" && a != Allow && slices.Contains(in.Dynamic, dynComputed) && unknownWrite(in.Line, in.Cwd, in.Home) {
+			ds = append(ds, Decision{Action: a, Reason: "writes a file known only at run time"})
+		}
 	case in.Tool == "write_file", in.Tool == "edit_file":
 		ds = append(ds, c.write(in.Path, in.Home)...)
 	}
@@ -78,6 +86,56 @@ func (c rulesChecker) write(path, home string) []Decision {
 		return []Decision{{Action: a, Reason: fmt.Sprintf("writes outside home: %s", path)}}
 	}
 	return nil
+}
+
+// unknownWrite tells whether a redirection in line writes a file known only
+// at run time: one built of expansions (> "$f") or a relative one in a line
+// with a cd. Parse marks both computed, as it marks a program built at run
+// time, yet `$cmd > ~/x` writes a known file; so the line is walked again
+// as Parse walks it, the code it hands to a shell included, and only its
+// redirections are asked about.
+func unknownWrite(line, cwd, home string) bool {
+	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: home}
+	unknown := false
+	todo := []string{line}
+	for depth := 0; depth <= maxDepth && len(todo) > 0 && !unknown; depth++ {
+		var nested []string
+		for _, src := range todo {
+			f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
+			if err != nil {
+				continue
+			}
+			done := map[*syntax.CallExpr]bool{}
+			syntax.Walk(f, func(n syntax.Node) bool {
+				switch n := n.(type) {
+				case *syntax.Stmt:
+					if call, ok := n.Cmd.(*syntax.CallExpr); ok {
+						done[call] = true
+						nested = append(nested, p.call(call, n.Redirs)...)
+					}
+				case *syntax.CallExpr:
+					if !done[n] {
+						nested = append(nested, p.call(n, nil)...)
+					}
+				case *syntax.Redirect:
+					// A parser of its own: the marks of p are the
+					// programs' too.
+					r := &parser{kinds: map[string]bool{}, cwd: cwd, home: home}
+					r.redirect(n)
+					unknown = unknown || r.kinds[dynComputed]
+					p.writes = append(p.writes, r.writes...)
+				}
+				return true
+			})
+		}
+		todo = nested
+	}
+	for _, w := range p.writes {
+		if w.rel && p.chdir {
+			return true
+		}
+	}
+	return unknown
 }
 
 func matches(action string, patterns []string, text string) []Decision {
@@ -105,7 +163,18 @@ func under(path, dir string) bool {
 // is not filepath.Match, whose * stops at a slash: `sudo *` must take
 // `sudo cat /etc/x`. Only the last * is ever backtracked to, so a pattern
 // with several of them stays linear in the length of a long command.
+//
+// A pattern ending in " *" takes the bare command too: who writes
+// `sudo *` means any sudo, and sudo with no arguments is a root shell, as
+// is the value of `alias s=sudo`, which is a command of its own.
 func match(pat, s string) bool {
+	if head, ok := strings.CutSuffix(pat, " *"); ok && glob(head, s) {
+		return true
+	}
+	return glob(pat, s)
+}
+
+func glob(pat, s string) bool {
 	p, i := 0, 0
 	star, from := -1, 0
 	for i < len(s) {
