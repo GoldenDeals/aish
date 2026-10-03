@@ -48,6 +48,9 @@ type Input struct {
 	Dynamic []string `json:"dynamic,omitempty"`
 	// Writes is Script.Writes of Line: the files its redirections write.
 	Writes []string `json:"writes,omitempty"`
+	// Remote is Script.Remote of Line: the commands of Commands that run
+	// on another machine.
+	Remote []int `json:"-"`
 	// Model is the model making the call, the principal of the request.
 	Model string `json:"model,omitempty"`
 	// Agent is the subagent making the call; "" for the host agent.
@@ -135,6 +138,7 @@ func (in *Input) HandOff(line string) {
 	in.Line = line
 	s, err := Parse(line, in.Cwd, in.Home)
 	in.Commands, in.Dynamic, in.Writes = s.Commands, s.Dynamic, s.Writes
+	in.Remote = s.Remote
 	if err != nil {
 		in.ParseError = err.Error()
 	}

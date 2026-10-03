@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -174,8 +175,12 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 	switch {
 	case in.Line != "":
 		var reqs []types.Request
-		run := func(argv []string) {
+		run := func(argv []string, remote bool) {
 			c := Analyze(argv, in.Cwd, in.Home)
+			if remote {
+				// The command of ssh names files of another machine.
+				c.Paths = nil
+			}
 			ctx := types.RecordMap{
 				"tool":     types.String(in.Tool),
 				"program":  types.String(c.Program),
@@ -204,11 +209,11 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 				Context:   types.NewRecord(ctx),
 			})
 		}
-		for _, argv := range in.Commands {
-			run(argv)
+		for i, argv := range in.Commands {
+			run(argv, slices.Contains(in.Remote, i))
 		}
 		if len(in.Commands) == 0 || in.ParseError != "" {
-			run(nil)
+			run(nil, false)
 		}
 		// A redirection writes as write_file does, without its arguments.
 		for _, path := range in.Writes {

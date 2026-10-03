@@ -97,14 +97,15 @@ func (c rulesChecker) write(path, home string) []Decision {
 func unknownWrite(line, cwd, home string) bool {
 	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: home}
 	unknown := false
-	todo := []string{line}
+	todo := []snippet{{src: line}}
 	for depth := 0; depth <= maxDepth && len(todo) > 0 && !unknown; depth++ {
-		var nested []string
-		for _, src := range todo {
-			f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
+		var nested []snippet
+		for _, s := range todo {
+			f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(s.src), "")
 			if err != nil {
 				continue
 			}
+			p.remote = s.remote
 			done := map[*syntax.CallExpr]bool{}
 			syntax.Walk(f, func(n syntax.Node) bool {
 				switch n := n.(type) {
@@ -120,7 +121,7 @@ func unknownWrite(line, cwd, home string) bool {
 				case *syntax.Redirect:
 					// A parser of its own: the marks of p are the
 					// programs' too.
-					r := &parser{kinds: map[string]bool{}, cwd: cwd, home: home}
+					r := &parser{kinds: map[string]bool{}, cwd: cwd, home: home, remote: s.remote}
 					r.redirect(n)
 					unknown = unknown || r.kinds[dynComputed]
 					p.writes = append(p.writes, r.writes...)

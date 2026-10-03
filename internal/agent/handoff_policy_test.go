@@ -12,8 +12,8 @@ import (
 
 // A tool of another name than bash that hands its calls to the shell has
 // the policy judge the command it hands, as bash has: a denied one never
-// reaches the shell. The rule names ssh, because the command of a remote
-// shell is ssh's operand, not a simple command of its own.
+// reaches the shell. Both rules see it: one the line of ssh, the other
+// the command ssh runs on the box.
 func TestPolicyJudgesHandedOffCommand(t *testing.T) {
 	pol, err := policy.Load(context.Background(), "", policy.Rules{Deny: []string{"sudo *", "ssh box sudo *"}})
 	if err != nil {
@@ -29,7 +29,7 @@ func TestPolicyJudgesHandedOffCommand(t *testing.T) {
 	if err := a.Start(context.Background(), "go", tools.Exec{Dir: cwd}); err != nil {
 		t.Fatal(err)
 	}
-	const msg = `denied by policy: matches "ssh box sudo *"`
+	const msg = `denied by policy: matches "ssh box sudo *"; matches "sudo *"`
 	if len(j.es) < 3 {
 		t.Fatalf("journal %s, handed off %q", kinds(j.es), sh.handed)
 	}
@@ -53,7 +53,7 @@ func TestPolicyJudgesReplacedCommand(t *testing.T) {
 	}
 	for _, tc := range []struct{ tool, args, reply, result string }{
 		{"bash", `{"command":"ls"}`, `{"args":{"command":"sudo ls"}}`, `denied by policy: matches "sudo *"`},
-		{"remote", `{"what":"ls"}`, `{"args":{"what":"sudo ls"}}`, `denied by policy: matches "ssh box sudo *"`},
+		{"remote", `{"what":"ls"}`, `{"args":{"what":"sudo ls"}}`, `denied by policy: matches "ssh box sudo *"; matches "sudo *"`},
 	} {
 		prov := &fakeProvider{replies: []*llm.Response{
 			{ToolCalls: []llm.ToolCall{toolCall("c1", tc.tool, tc.args)}},

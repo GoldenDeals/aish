@@ -16,9 +16,15 @@ type Script struct {
 	// Commands holds the argv of every simple command in the line: in
 	// pipelines, $(...), subshells, behind wrappers, and in the code the
 	// line hands to eval, bash -c, a shell's here-string or here-document,
-	// env -S, alias and trap. Words that are not static (expansions,
-	// substitutions) are kept in their source form, e.g. "$HOME".
+	// env -S, alias, trap, su -c, flock -c, script -c, watch and, on
+	// another machine, ssh HOST CMD. Words that are not static
+	// (expansions, substitutions) are kept in their source form, e.g.
+	// "$HOME".
 	Commands [][]string
+	// Remote holds the indexes in Commands of the commands that run on
+	// another machine, in the command of ssh: their words name no files
+	// of this one, and their redirections are not in Writes.
+	Remote []int
 	// Dynamic names what in the line runs code the parser cannot see:
 	// "computed", "source", "stdin", "prompt", "depth". Sorted, no
 	// repeats; empty when every command is known.
@@ -60,8 +66,8 @@ func Commands(src string) ([][]string, error) {
 // or of the code in it, the script holds what was parsed before it.
 func Parse(src, cwd, home string) (Script, error) {
 	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: home}
-	err := p.parse(src, 0)
-	s := Script{Commands: p.out}
+	err := p.parse(src, 0, false)
+	s := Script{Commands: p.out, Remote: p.remotes}
 	for _, t := range p.writes {
 		switch {
 		case t.rel && p.chdir:
@@ -89,6 +95,16 @@ type parser struct {
 	writes []write
 	// chdir is a cd, pushd or popd somewhere in the line.
 	chdir bool
+	// remote tells that the code being walked runs on another machine,
+	// remotes are the indexes in out of the commands that run there.
+	remote  bool
+	remotes []int
+}
+
+// snippet is code a line hands to a shell, here or on another machine.
+type snippet struct {
+	src    string
+	remote bool
 }
 
 // write is the file a redirection writes: path is absolute but not
@@ -100,12 +116,13 @@ type write struct {
 
 func (p *parser) mark(kind string) { p.kinds[kind] = true }
 
-func (p *parser) parse(src string, depth int) error {
+func (p *parser) parse(src string, depth int, remote bool) error {
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
 	if err != nil {
 		return err
 	}
-	var nested []string
+	p.remote = remote
+	var nested []snippet
 	done := map[*syntax.CallExpr]bool{}
 	syntax.Walk(f, func(n syntax.Node) bool {
 		switch n := n.(type) {
@@ -134,7 +151,7 @@ func (p *parser) parse(src string, depth int) error {
 		return nil
 	}
 	for _, s := range nested {
-		if err := p.parse(s, depth+1); err != nil {
+		if err := p.parse(s.src, depth+1, s.remote); err != nil {
 			return err
 		}
 	}
@@ -143,7 +160,7 @@ func (p *parser) parse(src string, depth int) error {
 
 // call records the argv of a simple command and of the commands its
 // wrappers run, and returns the code it hands to a shell.
-func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []string {
+func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippet {
 	for _, a := range call.Assigns {
 		p.assign(a)
 	}
@@ -155,20 +172,30 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []string
 	for i, w := range call.Args {
 		argv[i], static[i] = word(w), isStatic(w)
 	}
-	var code []string
-	seen := map[string]bool{}
+	var code []snippet
+	seen := map[snippet]bool{}
+	add := func(src string, remote bool) {
+		if s := (snippet{src, remote}); !seen[s] {
+			seen[s] = true
+			code = append(code, s)
+		}
+	}
 	for argv != nil {
+		if p.remote {
+			p.remotes = append(p.remotes, len(p.out))
+		}
 		p.out = append(p.out, argv)
-		if static[0] && chdirs[filepath.Base(argv[0])] {
+		if !p.remote && static[0] && chdirs[filepath.Base(argv[0])] {
 			p.chdir = true
 		}
-		found := p.shellC(argv, static)
+		here, there, local := p.handed(argv, static)
+		found := p.shellC(argv[:local], static[:local])
 		found = append(found, p.program(argv, static, redirs)...)
-		for _, s := range found {
-			if !seen[s] {
-				seen[s] = true
-				code = append(code, s)
-			}
+		for _, s := range append(found, here...) {
+			add(s, p.remote)
+		}
+		for _, s := range there {
+			add(s, true)
 		}
 		argv, static = p.next(argv, static)
 	}
@@ -385,6 +412,248 @@ options:
 	return script, file, stdin
 }
 
+// strung are the commands that run a string of theirs through a shell:
+// what finds the string among their arguments, and whether that shell is
+// on another machine.
+var strung = map[string]struct {
+	find   func(args []string) []piece
+	remote bool
+}{
+	"ssh":    {sshCommand, true},
+	"su":     {suCommand, false},
+	"flock":  {flockCommand, false},
+	"script": {scriptCommand, false},
+	"watch":  {watchCommand, false},
+}
+
+// piece is a string a command runs through a shell, and the indexes of
+// the words of its arguments the string is made of.
+type piece struct {
+	text  string
+	words []int
+}
+
+// handed returns the strings the commands of strung in argv run, wherever
+// they are in it, as shellC finds shells: here those of su -c, flock -c,
+// script -c and watch, there the command of ssh. A string with a word
+// built at run time is marked. As the program of argv such a command is
+// marked for a word of that kind anywhere, which word splitting may make
+// an option, the host or a string. local is how many words of argv run
+// here: after an ssh that is the program, none of them is a shell of
+// this machine.
+func (p *parser) handed(argv []string, static []bool) (here, there []string, local int) {
+	for i, a := range argv {
+		s, ok := strung[filepath.Base(a)]
+		if !ok {
+			continue
+		}
+		st := static[i+1:]
+		known := !slices.Contains(st, false)
+		if i == 0 && !known {
+			p.mark(dynComputed)
+		}
+		for _, pc := range s.find(argv[i+1:]) {
+			switch {
+			case slices.ContainsFunc(pc.words, func(w int) bool { return !st[w] }):
+				p.mark(dynComputed)
+			case s.remote:
+				there = append(there, pc.text)
+			default:
+				here = append(here, pc.text)
+			}
+		}
+		if i == 0 && s.remote && known {
+			return here, there, 1
+		}
+	}
+	return here, there, len(argv)
+}
+
+// The options of the commands of strung, as their getopt calls read them
+// in OpenSSH 10, util-linux 2.42 and procps-ng 4.
+var (
+	sshOpts    = getopt{short: "+1246ab:c:e:fgi:kl:m:no:p:qstvxAB:CD:E:F:GI:J:KL:MNO:P:Q:R:S:TVw:W:XYy"}
+	suOpts     = getopt{short: "c:fg:G:lmpPTs:u:hVw:", long: "command: session-command: fast login preserve-environment pty no-pty shell: group: supp-group: user: whitelist-environment: help version"}
+	flockOpts  = getopt{short: "+sexnoFuw:E:hV?", long: "shared exclusive unlock nonblocking nb timeout: wait: conflict-exit-code: close no-fork verbose fcntl start: length: help version"}
+	scriptOpts = getopt{short: "aB:c:eE:fI:O:o:qm:T:t::Vh", long: "append command: echo: return flush force quiet log-in: log-out: log-io: log-timing: logging-format: output-limit: timing:: help version"}
+	watchOpts  = getopt{short: "+bCcefd::ghq:n:prs:twvx", long: "beep color no-color differences:: errexit follow chgexit interval: precise equexit: no-rerun shotsdir: no-title no-wrap exec help version"}
+)
+
+// sshCommand finds the command of ssh [OPTIONS] HOST [OPTIONS] CMD...: ssh
+// reads options again after the host, unless a "--" ended them, and joins
+// the rest with spaces for the shell over there.
+func sshCommand(args []string) []piece {
+	_, ops := sshOpts.read(args)
+	if len(ops) < 2 {
+		return nil
+	}
+	from := ops[1]
+	if host := ops[0]; host == 0 || args[host-1] != "--" {
+		_, more := sshOpts.read(args[from:])
+		if len(more) == 0 {
+			return nil
+		}
+		from += more[0]
+	}
+	return []piece{{strings.Join(args[from:], " "), indexes(from, len(args))}}
+}
+
+// suCommand finds the strings of su -c, --command and --session-command,
+// and the -c string among the words after the user, which su hands to
+// the user's shell as they are: su root -- -c CMD.
+func suCommand(args []string) []piece {
+	opts, ops := suOpts.read(args)
+	ps := values(opts, "c", "command", "session-command")
+	if len(ops) > 0 && args[ops[0]] == "-" {
+		ops = ops[1:]
+	}
+	if len(ops) > 1 {
+		shell := make([]string, len(ops)-1)
+		for k, w := range ops[1:] {
+			shell[k] = args[w]
+		}
+		if script, _, _ := shellArgs(shell); script >= 0 {
+			ps = append(ps, piece{shell[script], ops[1+script : 2+script]})
+		}
+	}
+	return ps
+}
+
+// flockCommand finds the string of flock [OPTIONS] FILE -c CMD; the
+// command of flock FILE CMD ARGS... is no string.
+func flockCommand(args []string) []piece {
+	_, ops := flockOpts.read(args)
+	if len(ops) < 3 || args[ops[1]] != "-c" && args[ops[1]] != "--command" {
+		return nil
+	}
+	return []piece{{args[ops[2]], ops[2:3]}}
+}
+
+func scriptCommand(args []string) []piece {
+	opts, _ := scriptOpts.read(args)
+	return values(opts, "c", "command")
+}
+
+// watchCommand finds the command of watch: its words joined with spaces
+// for sh -c, unless -x runs them as they are.
+func watchCommand(args []string) []piece {
+	opts, ops := watchOpts.read(args)
+	if len(ops) == 0 || slices.ContainsFunc(opts, func(o option) bool { return o.name == "x" || o.name == "exec" }) {
+		return nil
+	}
+	return []piece{{strings.Join(args[ops[0]:], " "), ops}}
+}
+
+// values are the pieces of the options named names.
+func values(opts []option, names ...string) []piece {
+	var ps []piece
+	for _, o := range opts {
+		if slices.Contains(names, o.name) {
+			ps = append(ps, piece{o.value, []int{o.word}})
+		}
+	}
+	return ps
+}
+
+// getopt is how a command reads its options, in the terms of getopt_long:
+// short is its optstring, where a letter with ":" takes a value from the
+// rest of its word or the next one, with "::" only from the rest of its
+// word, and a leading "+" ends the options at the first operand; long
+// lists its long options, with the same colons.
+type getopt struct {
+	short, long string
+}
+
+// option is an option a command has read: its letter or its long name,
+// its value and the index of the word that holds the value.
+type option struct {
+	name, value string
+	word        int
+}
+
+// read reads args as getopt_long does: the options up to "--", among the
+// operands as well unless short starts with "+", and the indexes of the
+// operands in order. An unknown option is taken for one with no value:
+// the command fails on it anyway.
+func (g getopt) read(args []string) (opts []option, operands []int) {
+	short, posix := strings.CutPrefix(g.short, "+")
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return opts, append(operands, indexes(i+1, len(args))...)
+		case len(a) < 2 || a[0] != '-':
+			if posix {
+				return opts, append(operands, indexes(i, len(args))...)
+			}
+			operands = append(operands, i)
+		case strings.HasPrefix(a, "--"):
+			name, v, eq := strings.Cut(a[2:], "=")
+			o := option{value: v, word: i}
+			var takes int
+			if o.name, takes = g.longOpt(name); takes == 1 && !eq && i+1 < len(args) {
+				i++
+				o.value, o.word = args[i], i
+			}
+			opts = append(opts, o)
+		default:
+			for j := 1; j < len(a); j++ {
+				o := option{name: a[j : j+1], word: i}
+				if takes := colons(short, a[j]); takes > 0 {
+					o.value = a[j+1:]
+					if takes == 1 && o.value == "" && i+1 < len(args) {
+						i++
+						o.value, o.word = args[i], i
+					}
+					j = len(a)
+				}
+				opts = append(opts, o)
+			}
+		}
+	}
+	return opts, operands
+}
+
+// longOpt finds a long option by its name, or by a prefix of the name of
+// no other option, and tells the value it takes: 0 none, 1 a value, 2 an
+// optional one.
+func (g getopt) longOpt(name string) (string, int) {
+	var found []string
+	for _, l := range strings.Fields(g.long) {
+		switch n := strings.TrimRight(l, ":"); {
+		case n == name:
+			return n, len(l) - len(n)
+		case strings.HasPrefix(n, name):
+			found = append(found, l)
+		}
+	}
+	if len(found) != 1 {
+		return name, 0
+	}
+	n := strings.TrimRight(found[0], ":")
+	return n, len(found[0]) - len(n)
+}
+
+// colons tells the value the short option c of optstring takes, as
+// longOpt does.
+func colons(optstring string, c byte) int {
+	i := strings.IndexByte(optstring, c)
+	if c == ':' || i < 0 {
+		return 0
+	}
+	rest := optstring[i+1:]
+	return len(rest) - len(strings.TrimLeft(rest, ":"))
+}
+
+// indexes are the numbers from i up to n, n left out.
+func indexes(i, n int) []int {
+	var out []int
+	for ; i < n; i++ {
+		out = append(out, i)
+	}
+	return out
+}
+
 // stdin returns the code a shell reading its commands from stdin gets from
 // the redirections of its statement: a here-string or a here-document. A
 // pipe, a file and text built at run time are marked.
@@ -464,8 +733,11 @@ var chdirs = map[string]bool{"cd": true, "pushd": true, "popd": true}
 
 // redirect records the file a redirection writes. Reading, a copy of a
 // descriptor and the devices that are no file are left out; a file built
-// at run time is marked.
+// at run time is marked. On another machine it writes no file here.
 func (p *parser) redirect(r *syntax.Redirect) {
+	if p.remote {
+		return
+	}
 	switch r.Op {
 	case syntax.RdrOut, syntax.AppOut, syntax.RdrClob, syntax.RdrAll, syntax.AppAll, syntax.RdrInOut:
 	case syntax.DplOut:
