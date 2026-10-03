@@ -56,6 +56,7 @@ func TestLoadErrors(t *testing.T) {
 		{"mask = [\"ok\", \"(\"]\n", `mask "("`},
 		{"[policy]\ndenny = [\"sudo *\"]\n", `unknown key "policy.denny"`},
 		{"[policy]\nwrite_outside_home = \"never\"\n", `policy.write_outside_home = "never"`},
+		{"hooks_fail = \"maybe\"\n", `hooks_fail = "maybe"`},
 	} {
 		_, err := load(t, tc.toml)
 		if err == nil {
@@ -82,6 +83,21 @@ write_outside_home = "ask"
 	want := Policy{Deny: []string{"sudo *", "rm -rf /"}, Ask: []string{"apt install *"}, WriteOutsideHome: "ask"}
 	if !reflect.DeepEqual(cfg.Policy, want) {
 		t.Errorf("policy %+v, want %+v", cfg.Policy, want)
+	}
+}
+
+// hooks_fail is the user's to set: a repository must not loosen a guard
+// of theirs.
+func TestLoadHooksFail(t *testing.T) {
+	cfg, err := load(t, "hooks_fail = \"deny\"\n")
+	if err != nil || cfg.HooksFail != "deny" {
+		t.Errorf("hooks_fail %q, %v", cfg.HooksFail, err)
+	}
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	repo(t, root, "hooks_fail = \"allow\"\n")
+	if _, _, err := Project(cfg, root); err == nil || !strings.Contains(err.Error(), `key "hooks_fail" is not allowed in a project config`) {
+		t.Errorf("hooks_fail in a project: %v", err)
 	}
 }
 

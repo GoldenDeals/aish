@@ -15,7 +15,8 @@ import (
 // What hooks answer is laid over the request here: the policy is the
 // hard default, and a hook only adds to it. A hook that fails, hangs or
 // answers nonsense is told about in a dim line and passed over, except a
-// pre-tool hook exiting non-zero: that is a deny, the simplest guard.
+// pre-tool hook exiting non-zero: that is a deny, the simplest guard. With
+// hooks_fail = "deny" a pre-tool hook that gives no answer denies as well.
 
 // hookState is what the hooks of a request need between the agent's
 // calls: the hooks found when it began, and the arguments pre-tool hooks
@@ -153,7 +154,13 @@ func (a *Agent) preTool(ctx context.Context, t tools.Tool, c session.ToolCall, i
 			return verdict{Decision: policy.Decision{Action: policy.Deny, Reason: reason}, by: by, args: cur.Args}, nil
 		}
 		if a.hookFailed(r) {
-			continue
+			// A guard that cannot answer is a hole, unless the user
+			// would rather have a deny: then it is one, as a policy that
+			// fails is. The non-zero exit is taken above: r.Err is why.
+			if a.Cfg.HooksFail != policy.Deny {
+				continue
+			}
+			return verdict{Decision: policy.Decision{Action: policy.Deny, Reason: fmt.Sprintf("hook failed: %v", r.Err)}, by: by, args: cur.Args}, nil
 		}
 		if r.Reply.Args != nil {
 			cur = policy.NewInput(in.Tool, r.Reply.Args, in.Cwd)

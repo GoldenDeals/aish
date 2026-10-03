@@ -78,6 +78,7 @@ type Config struct {
 	PolicyDir   string `toml:"policy_dir"`
 	Policy      Policy `toml:"policy"`
 	HooksDir    string `toml:"hooks_dir"`
+	HooksFail   string `toml:"hooks_fail"` // "allow" or "deny" a call whose pre-tool hook gave no answer; "" is allow
 	ToolsDir    string `toml:"tools_dir"`
 	SessionsDir string `toml:"sessions_dir"`
 	// SessionsTTL is how long a saved session lives unmodified before aish
@@ -152,6 +153,7 @@ func Default() Config {
 		StateIgnore:    []string{"*TOKEN*", "*SECRET*", "*KEY*", "*PASSWORD*", "AWS_*"},
 		PolicyDir:      filepath.Join(Dir(), "policy"),
 		HooksDir:       filepath.Join(Dir(), "hooks"),
+		HooksFail:      "allow",
 		ToolsDir:       filepath.Join(Dir(), "tools"),
 		SessionsDir:    filepath.Join(dataDir(), "sessions"),
 		SessionsTTL:    "0",
@@ -262,6 +264,11 @@ func (c Config) check() error {
 	case "", "allow", "ask", "deny":
 	default:
 		return fmt.Errorf("policy.write_outside_home = %q: want \"allow\", \"ask\" or \"deny\"", c.Policy.WriteOutsideHome)
+	}
+	switch c.HooksFail {
+	case "", "allow", "deny":
+	default:
+		return fmt.Errorf("hooks_fail = %q: want \"allow\" or \"deny\"", c.HooksFail)
 	}
 	// The shell reads it as a line of $AISH_RUN/route.
 	if strings.ContainsAny(c.Route.Suffix, "\r\n") {
