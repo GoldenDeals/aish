@@ -99,11 +99,12 @@ func TestParseShellString(t *testing.T) {
 	}
 }
 
-// Without a command ssh logs in, and su, flock, script and watch with no
-// string of theirs run none: nothing is added.
+// Without a command ssh -n or -N hands no stdin to a shell there, as ssh
+// box does, and su, flock, script and watch with no string of theirs run
+// none: nothing is added.
 func TestParseShellStringNone(t *testing.T) {
 	for _, src := range []string{
-		`ssh box`, `ssh -p 22 box`, `ssh -Q cipher`, `ssh -V`,
+		`ssh -n box`, `ssh -N -p 22 box`, `ssh -Q cipher`, `ssh -V`,
 		`su`, `su - root`, `su -s /bin/zsh root`,
 		`flock 3`, `flock -w 5 /tmp/l`,
 		`script`, `script -q out.log`,

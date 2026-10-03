@@ -115,7 +115,7 @@ func TestScopedBashAssignments(t *testing.T) {
 		"env -uPATH git log":                   "sets PATH",
 		"env --unset=PATH git log":             "sets PATH",
 		"env -S 'PATH=. git' log":              "sets PATH",
-		`env "$v"=. git log`:                   "sets $v",
+		`env "$v"=. git log`:                   "computed",
 		"builtin export PATH=.; git log":       "sets PATH",
 		"command declare -n r=PATH; git log":   "-n",
 		"printf -v PATH .; git log":            "sets PATH",

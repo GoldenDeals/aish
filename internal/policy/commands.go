@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -16,8 +17,9 @@ type Script struct {
 	// Commands holds the argv of every simple command in the line: in
 	// pipelines, $(...), subshells, behind wrappers, and in the code the
 	// line hands to eval, bash -c, a shell's here-string or here-document,
-	// env -S, alias, trap, su -c, flock -c, script -c, watch and, on
-	// another machine, ssh HOST CMD. Words that are not static
+	// env -S, alias, trap, su -c, runuser -c, flock -c, script -c, watch,
+	// sudo -s and -i and, on another machine, ssh HOST CMD or the
+	// here-string of ssh HOST. Words that are not static
 	// (expansions, substitutions) are kept in their source form, e.g.
 	// "$HOME".
 	Commands [][]string
@@ -102,7 +104,8 @@ type parser struct {
 	writes []write
 	// unknown is a redirection to a file known only at run time.
 	unknown bool
-	// chdir is a cd, pushd or popd somewhere in the line.
+	// chdir is a cd, pushd or popd somewhere in the line, or a command
+	// that runs another in another directory (see moves).
 	chdir bool
 	// remote tells that the code being walked runs on another machine,
 	// remotes are the indexes in out of the commands that run there.
@@ -178,8 +181,9 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 	}
 	argv := make([]string, len(call.Args))
 	static := make([]bool, len(call.Args))
+	split := make([]bool, len(call.Args))
 	for i, w := range call.Args {
-		argv[i], static[i] = word(w), isStatic(w)
+		argv[i], static[i], split[i] = word(w), isStatic(w), splits(w)
 	}
 	var code []snippet
 	seen := map[snippet]bool{}
@@ -194,10 +198,10 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 			p.remotes = append(p.remotes, len(p.out))
 		}
 		p.out = append(p.out, argv)
-		if !p.remote && static[0] && chdirs[filepath.Base(argv[0])] {
+		if !p.remote && static[0] && moves(argv) {
 			p.chdir = true
 		}
-		here, there, local := p.handed(argv, static)
+		here, there, local := p.handed(argv, static, redirs)
 		found := p.shellC(argv[:local], static[:local])
 		found = append(found, p.program(argv, static, redirs)...)
 		for _, s := range append(found, here...) {
@@ -206,7 +210,7 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 		for _, s := range there {
 			add(s, true)
 		}
-		argv, static = p.next(argv, static)
+		argv, static, split = p.next(argv, static, split)
 	}
 	return code
 }
@@ -239,16 +243,8 @@ func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect
 		case file >= 0 && !st[file]:
 			p.mark(dynComputed)
 		}
-	case name == "env":
-		for _, a := range args {
-			v, _, ok := strings.Cut(a, "=")
-			if !ok && !strings.HasPrefix(a, "-") {
-				break
-			}
-			if ok && promptVars[v] {
-				p.mark(dynPrompt)
-			}
-		}
+	case wrappers[name].env || wrappers[name].shell != nil:
+		return p.wrapped(wrappers[name], args, st, redirs)
 	case name == "alias":
 		var code []string
 		for i, a := range args {
@@ -274,81 +270,228 @@ func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect
 	return nil
 }
 
-// next returns the command a wrapper in argv runs, with the static flags of
-// its words; nil when argv runs none.
-func (p *parser) next(argv []string, static []bool) ([]string, []bool) {
-	if filepath.Base(argv[0]) == "env" {
-		if i, s, ok := envSplit(argv); ok {
-			// env -S has quotes, escapes and ${VAR} of its own: only a
-			// string of plain words is split here as env splits it.
-			if !static[i] || strings.ContainsAny(s, `'"\$`) {
-				p.mark(dynComputed)
-				return nil, nil
-			}
-			fields := strings.Fields(s)
-			split := append(append([]string{argv[0]}, fields...), argv[i+1:]...)
-			st := make([]bool, len(split))
-			for k := range st {
-				st[k] = true
-			}
-			copy(st[1+len(fields):], static[i+1:])
-			return split, st
-		}
-	}
-	inner := unwrap(argv)
-	if inner == nil {
-		return nil, nil
-	}
-	return inner, static[len(argv)-len(inner):]
-}
-
-// wrappers run their arguments as a command.
-var wrappers = map[string]bool{
-	"sudo": true, "doas": true, "env": true, "nohup": true, "time": true, "nice": true,
-	"ionice": true, "command": true, "builtin": true, "exec": true, "xargs": true,
-	"timeout": true, "stdbuf": true, "setsid": true, "chroot": true, "watch": true,
-}
-
-// unwrap returns the command run by a wrapper such as `sudo -u x rm -rf y`,
-// skipping its options and VAR=value assignments. Option values are not
-// known, so a separate option argument may be taken for the command; that
-// errs on the side of more commands for the policy to look at.
-func unwrap(argv []string) []string {
-	if len(argv) < 2 || !wrappers[filepath.Base(argv[0])] {
-		return nil
-	}
+// next returns the command a wrapper in argv runs, with the static and
+// split flags of its words; nil when argv runs none.
+func (p *parser) next(argv []string, static, split []bool) ([]string, []bool, []bool) {
 	name := filepath.Base(argv[0])
-	rest := argv[1:]
-	for len(rest) > 0 {
-		a := rest[0]
-		switch {
-		case a == "--":
-			rest = rest[1:]
-			return nonEmptyArgv(rest)
-		case strings.HasPrefix(a, "-"):
-			rest = rest[1:]
-			if name == "sudo" && (a == "-u" || a == "-g" || a == "-C" || a == "-D") && len(rest) > 0 {
-				rest = rest[1:]
-			}
-		case name == "env" && strings.Contains(a, "="):
-			rest = rest[1:]
-		case name == "timeout" && len(a) > 0 && a[0] >= '0' && a[0] <= '9':
-			rest = rest[1:]
-		case name == "chroot":
-			rest = rest[1:]
-			return nonEmptyArgv(rest)
-		default:
-			return rest
-		}
+	w, ok := wrappers[name]
+	if !ok {
+		return nil, nil, nil
 	}
-	return nil
+	cmd, opts := p.unwrap(w, argv, static, split)
+	if s := values(opts, "S", "split-string"); name == "env" && len(s) > 0 {
+		// env -S has quotes, escapes and ${VAR} of its own: only a
+		// string of plain words is split here as env splits it.
+		i := 1 + s[0].words[0]
+		if !static[i] || strings.ContainsAny(s[0].text, `'"\$`) {
+			p.mark(dynComputed)
+			return nil, nil, nil
+		}
+		fields := strings.Fields(s[0].text)
+		words := append(append([]string{argv[0]}, fields...), argv[i+1:]...)
+		st, sp := make([]bool, len(words)), make([]bool, len(words))
+		for k := range st {
+			st[k] = true
+		}
+		copy(st[1+len(fields):], static[i+1:])
+		copy(sp[1+len(fields):], split[i+1:])
+		return words, st, sp
+	}
+	if cmd == 0 {
+		return nil, nil, nil
+	}
+	return argv[cmd:], static[cmd:], split[cmd:]
 }
 
-func nonEmptyArgv(a []string) []string {
-	if len(a) == 0 {
+// wrappers run a command made of their words, after options read as their
+// getopt calls read them in coreutils 9.11, util-linux 2.42, procps-ng 4,
+// findutils 4.11, GNU time 1.9, sudo 1.9, OpenDoas and bash 5: a value of
+// an option is no command. Options of other builds are in too (sudo -c,
+// -r): a build that does not know one fails on it.
+var wrappers = map[string]wrapper{
+	"builtin": {opts: getopt{short: "+"}},
+	"chroot":  {opts: getopt{short: "+", long: "groups: userspec: skip-chdir help version"}, operands: 1},
+	"command": {opts: getopt{short: "+pVv"}, none: []string{"v", "V"}},
+	"doas":    {opts: getopt{short: "+C:Lnsu:"}, none: []string{"C"}, shell: []string{"s"}},
+	"env": {
+		opts: getopt{short: "+a:C:iS:u:v0", long: "argv0: ignore-environment null unset: chdir: split-string: block-signal:: default-signal:: ignore-signal:: list-signal-handling debug help version"},
+		env:  true, chdir: []string{"C", "chdir"},
+	},
+	"exec":   {opts: getopt{short: "+cla:"}},
+	"flock":  {opts: flockOpts, operands: 1},
+	"ionice": {opts: getopt{short: "+c:n:p:P:u:tVh", long: "class: classdata: pid: pgid: uid: ignore help version"}, none: []string{"p", "P", "u", "pid", "pgid", "uid"}},
+	"nice":   {opts: getopt{short: "+n:", long: "adjustment: help version"}},
+	"nohup":  {opts: getopt{short: "+", long: "help version"}},
+	// runuser -u runs its operands; without -u it is su.
+	"runuser": {opts: suOpts, only: []string{"u", "user"}},
+	"setsid":  {opts: getopt{short: "+cfwVh", long: "ctty fork wait help version"}},
+	"stdbuf":  {opts: getopt{short: "+i:o:e:", long: "input: output: error: help version"}},
+	// sudo takes the word after a bare -h for the host, unless it starts
+	// with - or holds =: then -h asks for help and nothing runs. Either way
+	// that word is no command, so h: rather than h::.
+	"sudo": {
+		opts: getopt{short: "+Aa:BbC:c:D:Eeg:Hh:iKklNnPp:R:r:SsT:t:U:u:Vv", long: "askpass auth-type: background bell close-from: login-class: chdir: preserve-env:: edit group: set-home help host: login remove-timestamp reset-timestamp list no-update non-interactive preserve-groups prompt: chroot: role: stdin shell command-timeout: type: other-user: user: validate version"},
+		env:  true, none: []string{"e", "edit", "l", "list"},
+		chdir: []string{"D", "chdir", "i", "login", "R", "chroot"}, shell: []string{"s", "shell", "i", "login"},
+	},
+	"time":    {opts: getopt{short: "+af:o:pqvV", long: "append format: output: portability quiet verbose help version"}},
+	"timeout": {opts: getopt{short: "+fk:ps:v", long: "foreground kill-after: preserve-status signal: verbose help version"}, operands: 1},
+	// watch without -x joins its words for sh -c: strung reads them.
+	"watch": {opts: watchOpts, only: []string{"x", "exec"}},
+	"xargs": {opts: getopt{short: "+0a:E:e::i::I:l::L:n:prs:txP:d:o", long: "null arg-file: delimiter: eof:: replace:: max-lines:: max-args: max-procs: open-tty interactive no-run-if-empty max-chars: verbose show-limits exit process-slot-var: help version"}},
+}
+
+// wrapper is how a wrapper reads its words up to the command it runs.
+type wrapper struct {
+	opts getopt
+	// operands is how many operands come before the command: the
+	// duration of timeout, the new root of chroot, the file of flock.
+	operands int
+	// env takes NAME=VALUE words (and env's "-") after the options for
+	// the environment of the command; sudo reads options again after
+	// them, env takes the next word for the command and fails on an
+	// option.
+	env bool
+	// only lists the options without which its operands are no command,
+	// none those with which they are none: command -v, sudo -l, ionice -p.
+	only, none []string
+	// chdir lists the options that run the command in another directory,
+	// shell those that run a shell instead, which takes the words of the
+	// command for its -c and, with none, its commands from stdin.
+	chdir, shell []string
+}
+
+// read reads args as the wrapper does: its options, and the index in args
+// of the command, len(args) for none.
+func (w wrapper) read(args []string) (opts []option, cmd int) {
+	for {
+		o, ops := w.opts.read(args[cmd:])
+		for _, x := range o {
+			x.word += cmd
+			opts = append(opts, x)
+		}
+		if len(ops) == 0 {
+			return opts, len(args)
+		}
+		from := cmd + ops[0]
+		cmd = from
+		for w.env && cmd < len(args) && (args[cmd] == "-" || strings.Contains(args[cmd], "=")) {
+			cmd++
+		}
+		if cmd == from {
+			return opts, min(cmd+w.operands, len(args))
+		}
+	}
+}
+
+// fixed tells whether what makes a word a wrapper reads an option, which
+// one and whether its value is in the word, or a NAME=VALUE, is text the
+// shell keeps as it is. -u"$u" is not: empty, it takes the next word.
+func (w wrapper) fixed(a string) bool {
+	head := a
+	switch short := strings.TrimPrefix(w.opts.short, "+"); {
+	case strings.HasPrefix(a, "--"), w.env && !strings.HasPrefix(a, "-"):
+		head, _, _ = strings.Cut(a, "=")
+	case strings.HasPrefix(a, "-"):
+		for j := 1; j < len(a); j++ {
+			if colons(short, a[j]) > 0 {
+				head = a[:min(j+2, len(a))]
+				break
+			}
+		}
+	}
+	return !strings.ContainsAny(head, "$`\\")
+}
+
+// unwrap reads argv as its wrapper w does and returns the index in argv of
+// the command it runs, 0 for none, and the options it read. The words the
+// wrapper reads itself are marked when the shell may make other words of
+// them, which moves the command among them: split or globbed, or not fixed.
+// A value of an option stays one word whatever it holds.
+func (p *parser) unwrap(w wrapper, argv []string, static, split []bool) (int, []option) {
+	args := argv[1:]
+	opts, cmd := w.read(args)
+	if w.only != nil && !has(opts, w.only...) {
+		return 0, opts
+	}
+	own := cmd
+	for _, o := range opts {
+		if slices.Contains(w.none, o.name) {
+			// After it no word makes the wrapper run a command.
+			own = min(own, o.word)
+		}
+	}
+	for i, a := range args[:own] {
+		if split[1+i] || !static[1+i] && !valued(opts, args, i) && !w.fixed(a) {
+			p.mark(dynComputed)
+		}
+	}
+	switch {
+	case own < cmd, cmd == len(args), has(opts, w.shell...):
+		return 0, opts
+	case filepath.Base(argv[0]) == "flock" && (args[cmd] == "-c" || args[cmd] == "--command"):
+		// flock FILE -c CMD runs a string: strung reads it.
+		return 0, opts
+	}
+	return 1 + cmd, opts
+}
+
+// wrapped looks at what a wrapper hands the command it runs besides its
+// words: the environment of env and sudo, and the shell of sudo -s, -i and
+// doas -s, which gets those words for its -c as escaped puts them and,
+// with none of them, reads its commands from stdin.
+func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*syntax.Redirect) []string {
+	opts, cmd := w.read(args)
+	for i, a := range args[:cmd] {
+		if name, _, ok := strings.Cut(a, "="); ok && promptVars[name] && !valued(opts, args, i) {
+			p.mark(dynPrompt)
+		}
+	}
+	if !has(opts, w.shell...) || has(opts, w.none...) {
 		return nil
 	}
-	return a
+	switch {
+	case cmd == len(args):
+		return p.stdin(redirs)
+	case !static[cmd]:
+		// The other words, escaped, are its arguments whatever they hold.
+		p.mark(dynComputed)
+		return nil
+	}
+	return []string{escaped(args[cmd:])}
+}
+
+// escaped joins words with spaces as sudo and sudo-rs do for the -c of the
+// shell of -s and -i: every character but an ASCII letter or digit, _, -
+// and $ behind a backslash. Each word stays one, and only $NAME expands
+// there: sudo -s 'rm -rf /' runs no rm.
+func escaped(words []string) string {
+	var b strings.Builder
+	for i, w := range words {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		for len(w) > 0 {
+			r, n := utf8.DecodeRuneInString(w)
+			plain := r == '_' || r == '-' || r == '$' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+			if !plain {
+				b.WriteByte('\\')
+			}
+			b.WriteString(w[:n])
+			w = w[n:]
+		}
+	}
+	return b.String()
+}
+
+// valued tells whether word i of args is the value of an option, whole.
+func valued(opts []option, args []string, i int) bool {
+	return slices.ContainsFunc(opts, func(o option) bool { return o.word == i && o.value == args[i] })
+}
+
+// has tells whether opts holds an option of one of names.
+func has(opts []option, names ...string) bool {
+	return slices.ContainsFunc(opts, func(o option) bool { return slices.Contains(names, o.name) })
 }
 
 // shells take their commands from -c, a file or stdin.
@@ -428,11 +571,12 @@ var strung = map[string]struct {
 	find   func(args []string) []piece
 	remote bool
 }{
-	"ssh":    {sshCommand, true},
-	"su":     {suCommand, false},
-	"flock":  {flockCommand, false},
-	"script": {scriptCommand, false},
-	"watch":  {watchCommand, false},
+	"ssh":     {sshCommand, true},
+	"su":      {suCommand, false},
+	"runuser": {runuserCommand, false},
+	"flock":   {flockCommand, false},
+	"script":  {scriptCommand, false},
+	"watch":   {watchCommand, false},
 }
 
 // piece is a string a command runs through a shell, and the indexes of
@@ -443,14 +587,15 @@ type piece struct {
 }
 
 // handed returns the strings the commands of strung in argv run, wherever
-// they are in it, as shellC finds shells: here those of su -c, flock -c,
-// script -c and watch, there the command of ssh. A string with a word
-// built at run time is marked. As the program of argv such a command is
-// marked for a word of that kind anywhere, which word splitting may make
-// an option, the host or a string. local is how many words of argv run
-// here: after an ssh that is the program, none of them is a shell of
-// this machine.
-func (p *parser) handed(argv []string, static []bool) (here, there []string, local int) {
+// they are in it, as shellC finds shells: here those of su -c, runuser -c,
+// flock -c, script -c and watch, there the command of ssh and, when ssh
+// that is the program has none, what the redirections of its statement
+// give the shell over there on stdin. A string with a word built at run
+// time is marked. As the program of argv such a command is marked for a
+// word of that kind anywhere, which word splitting may make an option, the
+// host or a string. local is how many words of argv run here: after an ssh
+// that is the program, none of them is a shell of this machine.
+func (p *parser) handed(argv []string, static []bool, redirs []*syntax.Redirect) (here, there []string, local int) {
 	for i, a := range argv {
 		s, ok := strung[filepath.Base(a)]
 		if !ok {
@@ -472,10 +617,28 @@ func (p *parser) handed(argv []string, static []bool) (here, there []string, loc
 			}
 		}
 		if i == 0 && s.remote && known {
+			if sshReads(argv[1:]) {
+				there = append(there, p.stdin(redirs)...)
+			}
 			return here, there, 1
 		}
 	}
 	return here, there, len(argv)
+}
+
+// sshReads tells whether ssh runs a shell over there that reads its
+// commands from stdin: it has a host and no command, no -n or -f keeps
+// stdin from the shell and no -N, -W, -O, -G, -V or -Q runs none.
+func sshReads(args []string) bool {
+	opts, ops := sshOpts.read(args)
+	if len(ops) == 0 || sshCommand(args) != nil {
+		return false
+	}
+	if host := ops[0]; host == 0 || args[host-1] != "--" {
+		more, _ := sshOpts.read(args[host+1:])
+		opts = append(opts, more...)
+	}
+	return !has(opts, "n", "f", "N", "W", "O", "G", "V", "Q")
 }
 
 // The options of the commands of strung, as their getopt calls read them
@@ -526,6 +689,15 @@ func suCommand(args []string) []piece {
 		}
 	}
 	return ps
+}
+
+// runuserCommand finds the strings of runuser as suCommand does those of
+// su; runuser -u runs its operands as a command, a wrapper.
+func runuserCommand(args []string) []piece {
+	if opts, _ := suOpts.read(args); has(opts, "u", "user") {
+		return nil
+	}
+	return suCommand(args)
 }
 
 // flockCommand finds the string of flock [OPTIONS] FILE -c CMD; the
@@ -737,8 +909,29 @@ func hdoc(r *syntax.Redirect) (string, bool) {
 	return b.String(), true
 }
 
-// chdirs run what follows them in another directory.
-var chdirs = map[string]bool{"cd": true, "pushd": true, "popd": true}
+// chdirs run what follows them in another directory, chroot its command.
+var chdirs = map[string]bool{"cd": true, "pushd": true, "popd": true, "chroot": true}
+
+// moves tells whether argv runs what follows it, or the command it runs,
+// in another directory: as chdirs do, a wrapper with an option of chdir
+// (env -C, sudo -D, sudo -i), and su or runuser starting a login shell,
+// which starts in the home of the user.
+func moves(argv []string) bool {
+	name := filepath.Base(argv[0])
+	switch {
+	case chdirs[name]:
+		return true
+	case name == "su" || name == "runuser":
+		opts, ops := suOpts.read(argv[1:])
+		return has(opts, "l", "login") || len(ops) > 0 && argv[1+ops[0]] == "-"
+	}
+	w, ok := wrappers[name]
+	if !ok {
+		return false
+	}
+	opts, _ := w.read(argv[1:])
+	return has(opts, w.chdir...)
+}
 
 // redirect records the file a redirection writes. Reading, a copy of a
 // descriptor and the devices that are no file are left out; a file built
@@ -866,57 +1059,6 @@ func firstParam(q *syntax.DblQuoted) (*syntax.ParamExp, bool) {
 	return pe, ok
 }
 
-// envSplit finds the string of env -S STRING (-SSTRING, --split-string=
-// STRING, --split-string STRING) and returns the index of its word in argv.
-func envSplit(argv []string) (int, string, bool) {
-	for i := 1; i < len(argv); i++ {
-		a := argv[i]
-		switch {
-		case a == "--":
-			return 0, "", false
-		case strings.HasPrefix(a, "--"):
-			// getopt takes any unambiguous prefix of a long option.
-			name, v, eq := strings.Cut(a[2:], "=")
-			switch {
-			case name == "":
-			case strings.HasPrefix("split-string", name):
-				if eq {
-					return i, v, true
-				}
-				if i+1 < len(argv) {
-					return i + 1, argv[i+1], true
-				}
-				return 0, "", false
-			case !eq && (strings.HasPrefix("unset", name) || strings.HasPrefix("chdir", name) || strings.HasPrefix("argv0", name)):
-				i++
-			}
-		case len(a) > 1 && a[0] == '-':
-			for j := 1; j < len(a); j++ {
-				switch a[j] {
-				case 'S':
-					if j+1 < len(a) {
-						return i, a[j+1:], true
-					}
-					if i+1 < len(argv) {
-						return i + 1, argv[i+1], true
-					}
-					return 0, "", false
-				case 'u', 'C', 'a':
-					// The value is the rest of the word or the next one.
-					if j+1 == len(a) {
-						i++
-					}
-					j = len(a)
-				}
-			}
-		case strings.Contains(a, "="):
-		default:
-			return 0, "", false
-		}
-	}
-	return 0, "", false
-}
-
 // promptVars hold code the shell runs later, outside any check: at every
 // prompt, or in every bash or sh it starts.
 var promptVars = map[string]bool{
@@ -988,6 +1130,36 @@ func isStatic(w *syntax.Word) bool {
 		}
 	}
 	return true
+}
+
+// splits tells whether a word may become other than one word: an
+// expansion out of double quotes is split and globbed, and so is a glob or
+// braces; in them "$@", "${a[@]}" and ${!x} (which may name @) become as
+// many words as there are elements, none among them.
+func splits(w *syntax.Word) bool {
+	for _, p := range w.Parts {
+		switch p := p.(type) {
+		case *syntax.Lit:
+			if expands(p.Value) {
+				return true
+			}
+		case *syntax.SglQuoted:
+		case *syntax.DblQuoted:
+			for _, q := range p.Parts {
+				pe, ok := q.(*syntax.ParamExp)
+				if !ok {
+					continue
+				}
+				var b strings.Builder
+				if pe.Excl || syntax.NewPrinter().Print(&b, pe) != nil || strings.Contains(b.String(), "@") {
+					return true
+				}
+			}
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // expands tells whether an unquoted literal is subject to pathname or brace
