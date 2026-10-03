@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -15,11 +16,14 @@ import (
 	"syscall"
 	"time"
 
+	"mvdan.cc/sh/v3/syntax"
+
 	"github.com/inebotov/aish/internal/capture"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
+	"github.com/inebotov/aish/internal/skills"
 	"github.com/inebotov/aish/internal/subagent"
 	"github.com/inebotov/aish/internal/tools"
 )
@@ -269,8 +273,10 @@ func (a *Agent) runSub(ctx context.Context, d subagent.Def, prompt string, out L
 	cfg := a.Cfg
 	cfg.SystemPrompt = subNote + "\n\n" + d.Prompt
 	prov := a.Provider
-	if d.Model != "" {
-		cfg.Model = d.Model
+	if d.Model != "" && d.Model != cfg.Model {
+		// The host's effort and window are its model's: another one may
+		// not take that effort, and its window is not known here.
+		cfg.Model, cfg.Effort, cfg.ContextWindow = d.Model, "", 0
 		p, err := llm.New(cfg)
 		if err != nil {
 			return "", err
@@ -289,7 +295,7 @@ func (a *Agent) runSub(ctx context.Context, d subagent.Def, prompt string, out L
 			break
 		}
 		var o rpc.Output
-		if why := refused(scope, cmd); why != "" {
+		if why := refused(scope, cmd, ex.Dir); why != "" {
 			fmt.Fprintf(out, "%s  ✗ %s%s\n", red, why, reset)
 			o = rpc.Output{Output: "not run: " + why, Exit: 126, Cwd: ex.Dir}
 		} else {
@@ -355,56 +361,103 @@ func (a *Agent) runCommand(ctx context.Context, cmd string, ex tools.Exec, out i
 }
 
 // claudeTools maps the tool names of Claude Code's subagent files to
-// aish's. aish has no search tools of its own: it searches with bash.
+// aish's.
 var claudeTools = map[string]string{
 	"read": "read_file", "write": "write_file", "edit": "edit_file", "multiedit": "edit_file",
-	"bash": tools.Bash, "grep": tools.Bash, "glob": tools.Bash, "ls": tools.Bash,
+}
+
+// searchTools are Claude Code's tools that only look. aish has no search
+// tools of its own: they give bash, for the commands that search and read.
+var searchTools = map[string]bool{"grep": true, "glob": true, "ls": true}
+
+// readCommands are the commands Grep, Glob and LS give a subagent's bash.
+var readCommands = []string{"cat", "find", "grep", "head", "ls", "rg", "tail", "wc"}
+
+// skillTool is the type of a skill as a tool: the Skill entry gives those.
+var skillTool = reflect.TypeOf(skills.Skill{}.Tool())
+
+// bashScope is what the bash of a subagent may run, as its file says; nil
+// for anything.
+type bashScope struct {
+	// patterns are of its Bash(...) entries, Claude Code's rules.
+	patterns []string
+	// readOnly is set by Grep, Glob and LS: the readCommands too, in a
+	// line that writes nothing and runs nothing else (see onlyReads).
+	readOnly bool
+}
+
+func (s *bashScope) String() string {
+	pats := slices.Clone(s.patterns)
+	if s.readOnly {
+		for _, c := range readCommands {
+			pats = append(pats, c+" *")
+		}
+	}
+	return strings.Join(pats, ", ")
 }
 
 // subTools is the registry of a subagent whose file names the tools names,
 // nil for all of them: the host's tools but task, as subagents run no
-// subagents, and the dialogs, as nobody answers them. Scope is the
-// commands its bash may run, from Bash(...) entries; nil for any.
+// subagents, and the dialogs, as nobody answers them. Scope is what its
+// bash may run; nil for anything.
 //
-// Names are Claude Code's or aish's, in any case. A Bash(...) entry gives
-// bash for the commands it names, unless another entry gives it whole. A
-// pattern of another tool (Read(src/**)) is not understood, and the entry
-// gives nothing: a limit that cannot be kept does not turn into the whole
-// tool.
-func subTools(host *tools.Registry, names []string) (reg *tools.Registry, scope []string) {
+// Names are Claude Code's or aish's, in any case. Bash gives bash whole,
+// Bash(...) for the commands of its patterns (a comma between them), and
+// Grep, Glob and LS for the commands that search and read. Skill gives the
+// skills, mcp__SERVER__TOOL that tool of an MCP server, mcp__SERVER all of
+// the server's. A pattern of another tool (Read(src/**)) is not understood,
+// and the entry gives nothing: a limit that cannot be kept does not turn
+// into the whole tool.
+func subTools(host *tools.Registry, names []string) (*tools.Registry, *bashScope) {
 	allow := map[string]bool{}
+	var mcps [][2]string // server and tool of the mcp__ entries
+	allSkills := false
 	whole := false // bash without a scope
+	scope := &bashScope{}
 	for _, n := range names {
 		base, spec, scoped := strings.Cut(strings.TrimSpace(n), "(")
-		key := strings.ToLower(strings.TrimSpace(base))
-		if key == subName {
-			continue
+		var pats []string
+		if scoped {
+			for _, p := range strings.Split(strings.TrimSuffix(strings.TrimSpace(spec), ")"), ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					pats = append(pats, p)
+				}
+			}
+			scoped = len(pats) > 0 && !slices.Contains(pats, "*")
 		}
+		key := strings.ToLower(strings.TrimSpace(base))
 		if m, ok := claudeTools[key]; ok {
 			key = m
 		}
-		if scoped {
-			spec = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(spec), ")"))
-			scoped = spec != "" && spec != "*"
-		}
 		switch {
-		case !scoped:
+		case key == tools.Bash && scoped:
 			allow[key] = true
-			whole = whole || key == tools.Bash
-		case strings.EqualFold(strings.TrimSpace(base), tools.Bash):
+			scope.patterns = append(scope.patterns, pats...)
+		case scoped, key == subName:
+		case key == tools.Bash:
+			allow[key], whole = true, true
+		case searchTools[key]:
+			allow[tools.Bash], scope.readOnly = true, true
+		case key == "skill":
+			allSkills = true
+		case strings.HasPrefix(key, "mcp__"):
+			server, tool, _ := strings.Cut(key[len("mcp__"):], "__")
+			mcps = append(mcps, [2]string{server, tool})
+		default:
 			allow[key] = true
-			scope = append(scope, spec)
 		}
 	}
-	if whole {
+	if whole || !allow[tools.Bash] {
 		scope = nil
 	}
-	reg = &tools.Registry{}
+	given := func(t tools.Tool) bool {
+		return names == nil || allow[strings.ToLower(t.Name())] ||
+			allSkills && reflect.TypeOf(t) == skillTool ||
+			slices.ContainsFunc(mcps, func(m [2]string) bool { return mcpTool(t, m[0], m[1]) })
+	}
+	reg := &tools.Registry{}
 	for _, t := range host.All() {
-		if _, own := t.(*taskTool); own || tools.IsDialog(t) {
-			continue
-		}
-		if names != nil && !allow[strings.ToLower(t.Name())] {
+		if _, own := t.(*taskTool); own || tools.IsDialog(t) || !given(t) {
 			continue
 		}
 		if _, ok := t.(tools.HandsOff); ok && t.Name() == tools.Bash {
@@ -415,11 +468,30 @@ func subTools(host *tools.Registry, names []string) (reg *tools.Registry, scope 
 	return reg, scope
 }
 
+// mcpUnsafe is what Claude Code and internal/mcp make _ in the names of MCP
+// servers and tools.
+var mcpUnsafe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
+// mcpTool tells whether t is the tool Claude Code names mcp__SERVER__TOOL,
+// or for an empty tool or * one of the server's. aish names it SERVER_TOOL,
+// cut to 64 bytes.
+func mcpTool(t tools.Tool, server, tool string) bool {
+	s := tools.ServerOf(t)
+	if s == "" || !strings.EqualFold(mcpUnsafe.ReplaceAllString(s, "_"), server) {
+		return false
+	}
+	if tool == "" || tool == "*" {
+		return true
+	}
+	name := server + "_" + tool
+	return strings.EqualFold(t.Name(), name[:min(len(name), 64)])
+}
+
 // subBash is bash as a subagent has it: described for what it is there,
 // a process per command, not the live shell.
 type subBash struct {
 	tools.Tool
-	scope []string
+	scope *bashScope
 }
 
 func (b subBash) Desc() string {
@@ -433,7 +505,13 @@ func (b subBash) Desc() string {
 		"- Avoid cat, head, tail, sed, awk or echo to read, edit or write files when read_file, edit_file or write_file are available."
 	if b.scope != nil {
 		d += "\n\nOnly these commands may run, every command of the line matching one of them (* matches anything): " +
-			strings.Join(b.scope, ", ") + ". Any other is refused."
+			b.scope.String() + ". Any other is refused."
+		if b.scope.readOnly {
+			d += " " + strings.Join(readCommands, ", ") + " are there to search and read: a line with them may not " +
+				"redirect output to a file or set variables; find runs without -delete, -exec, -execdir, -ok, -okdir, " +
+				"-fls and -fprint*, rg without --pre and --hostname-bin, and the words of find and rg are written out: " +
+				"quote patterns, with no $, *, ? or braces outside quotes."
+		}
 	}
 	return d
 }
@@ -444,24 +522,165 @@ func (b subBash) Command(args map[string]any) (string, bool) {
 
 func (b subBash) Title(args map[string]any) string { return tools.Title(b.Tool, args) }
 
-// refused tells why cmd is not one a subagent with scope may run; "" when
-// it is. Every simple command of the line, those in $(…) and bash -c
-// included, must match a pattern.
-func refused(scope []string, cmd string) string {
-	if scope == nil {
+// refused tells why cmd, run in cwd, is not one a subagent with scope may
+// run; "" when it is. Every simple command of the line, those in $(…) and
+// bash -c included, must match a pattern, and code made at run time
+// cannot be checked, so it does not run.
+func refused(s *bashScope, cmd, cwd string) string {
+	if s == nil {
 		return ""
 	}
-	cmds, err := policy.Commands(cmd)
-	if err != nil {
-		return "cannot parse the command: " + err.Error()
+	if cwd == "" {
+		// Without it the policy's parser does not tell the files written.
+		return "no working directory to check the command in"
 	}
-	for _, argv := range cmds {
+	in := policy.NewInput(tools.Bash, nil, cwd)
+	in.HandOff(cmd)
+	switch {
+	case in.ParseError != "":
+		return "cannot parse the command: " + in.ParseError
+	case len(in.Dynamic) > 0:
+		return fmt.Sprintf("the command runs code made at run time (%s), which cannot be checked", strings.Join(in.Dynamic, ", "))
+	}
+	// A line without commands may still write: > file.
+	reads := len(in.Commands) == 0
+	for _, argv := range in.Commands {
 		line := strings.Join(argv, " ")
-		if !slices.ContainsFunc(scope, func(p string) bool { return matchCommand(p, line) }) {
-			return fmt.Sprintf("%s is not among the commands this subagent may run: %s", argv[0], strings.Join(scope, ", "))
+		switch {
+		case slices.ContainsFunc(s.patterns, func(p string) bool { return matchCommand(p, line) }):
+		case s.readOnly && slices.Contains(readCommands, argv[0]):
+			if opt := unsafeOption(argv); opt != "" {
+				return fmt.Sprintf("%s %s changes files or runs commands, and this subagent may only read with %s", argv[0], opt, argv[0])
+			}
+			reads = true
+		default:
+			return fmt.Sprintf("%s is not among the commands this subagent may run: %s", argv[0], s)
+		}
+	}
+	switch {
+	case !reads:
+		return ""
+	case len(in.Writes) > 0:
+		return fmt.Sprintf("writes to %s: the commands of this line may only read", in.Writes[0])
+	}
+	return onlyReads(cmd)
+}
+
+// unsafeOption is an option that makes a read command do more than read:
+// find's that delete, run commands or write files, rg's that run a
+// command. "" when argv has none.
+func unsafeOption(argv []string) string {
+	for _, a := range argv[1:] {
+		switch argv[0] {
+		case "find":
+			switch {
+			case a == "-delete", a == "-exec", a == "-execdir", a == "-ok", a == "-okdir", a == "-fls",
+				strings.HasPrefix(a, "-fprint"):
+				return a
+			}
+		case "rg":
+			if name, _, _ := strings.Cut(a, "="); name == "--pre" || name == "--hostname-bin" {
+				return a
+			}
 		}
 	}
 	return ""
+}
+
+// onlyReads tells what in the line cmd, past the options of its commands
+// and the files it writes, makes it do more than read: a variable set,
+// which may change what its commands run (PATH, LD_PRELOAD), a word of
+// find or rg made at run time, which may be an option. "" when nothing.
+func onlyReads(cmd string) string {
+	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(cmd), "")
+	if err != nil {
+		return "cannot parse the command: " + err.Error()
+	}
+	why := ""
+	syntax.Walk(f, func(n syntax.Node) bool {
+		if why != "" {
+			return false
+		}
+		switch n := n.(type) {
+		case *syntax.DeclClause:
+			why = fmt.Sprintf("%s sets variables, which may change what the commands of this line run", n.Variant.Value)
+		case *syntax.Assign:
+			if n.Name != nil && !harmlessVar(n.Name.Value) {
+				why = fmt.Sprintf("sets %s, which may change what the commands of this line run", n.Name.Value)
+			}
+		case *syntax.WordIter:
+			if !harmlessVar(n.Name.Value) {
+				why = fmt.Sprintf("sets %s, which may change what the commands of this line run", n.Name.Value)
+			}
+		case *syntax.CallExpr:
+			if len(n.Args) == 0 {
+				break
+			}
+			if name := unquoted(n.Args[0]); name == "find" || name == "rg" {
+				for _, w := range n.Args[1:] {
+					if !literal(w) {
+						why = fmt.Sprintf("%s has a word made at run time, %s: what may come in as an option is not known; write it out", name, printed(w))
+						break
+					}
+				}
+			}
+		}
+		return true
+	})
+	return why
+}
+
+// harmlessVar tells whether setting name leaves the read commands as they
+// are: programs read variables in upper case, and bash has no special one
+// in lower case. Of those in upper case only the locale's are harmless.
+func harmlessVar(name string) bool {
+	switch {
+	case strings.ToLower(name) == name, strings.HasPrefix(name, "LC_"):
+		return true
+	}
+	return name == "LANG" || name == "LANGUAGE" || name == "TZ" || name == "NO_COLOR"
+}
+
+// literal tells whether a word is the same text whatever the shell's
+// state: quotes and plain characters, no expansion or glob.
+func literal(w *syntax.Word) bool {
+	for _, p := range w.Parts {
+		switch p := p.(type) {
+		case *syntax.Lit:
+			if strings.ContainsAny(p.Value, "*?[{") {
+				return false
+			}
+		case *syntax.SglQuoted:
+			if p.Dollar {
+				return false
+			}
+		case *syntax.DblQuoted:
+			if p.Dollar {
+				return false
+			}
+			for _, q := range p.Parts {
+				if _, ok := q.(*syntax.Lit); !ok {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func printed(w *syntax.Word) string {
+	var b strings.Builder
+	syntax.NewPrinter().Print(&b, w)
+	return b.String()
+}
+
+// unquoted is a word without its quotes and backslashes: of a literal
+// word, the text the program gets, but for quotes and backslashes of its
+// own, which no name of a program or a device has.
+func unquoted(w *syntax.Word) string {
+	return strings.NewReplacer(`'`, "", `"`, "", `\`, "").Replace(printed(w))
 }
 
 // matchCommand matches a command line against a pattern of Claude Code's

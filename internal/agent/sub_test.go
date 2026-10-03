@@ -226,6 +226,7 @@ func TestSubTools(t *testing.T) {
 		}
 		return strings.Join(out, " ")
 	}
+	ro := []string{"cat *", "find *", "grep *", "head *", "ls *", "rg *", "tail *", "wc *"}
 	for _, tc := range []struct {
 		names []string
 		tools string
@@ -234,16 +235,20 @@ func TestSubTools(t *testing.T) {
 		{nil, "bash read_file write_file edit_file", nil},
 		{[]string{"Read", "Edit"}, "read_file edit_file", nil},
 		{[]string{"MultiEdit", "write_file"}, "write_file edit_file", nil},
-		{[]string{"Grep"}, "bash", nil},
+		{[]string{"Grep"}, "bash", ro},
 		{[]string{"Task", "Agent", "ask_user", "WebFetch"}, "", nil},
 		{[]string{"Bash(git diff:*)", "Bash(git log *)"}, "bash", []string{"git diff:*", "git log *"}},
-		{[]string{"Glob", "Bash(git *)"}, "bash", nil},
+		{[]string{"Glob", "Bash(git *)"}, "bash", append([]string{"git *"}, ro...)},
 		{[]string{"Bash(*)"}, "bash", nil},
 		{[]string{"Read(src/**)"}, "", nil},
 	} {
 		reg, scope := subTools(a.Tools, tc.names)
-		if got := names(reg); got != tc.tools || !slices.Equal(scope, tc.scope) {
-			t.Errorf("%q: tools %q scope %q, want %q %q", tc.names, got, scope, tc.tools, tc.scope)
+		var pats []string
+		if scope != nil {
+			pats = strings.Split(scope.String(), ", ")
+		}
+		if got := names(reg); got != tc.tools || !slices.Equal(pats, tc.scope) {
+			t.Errorf("%q: tools %q scope %q, want %q %q", tc.names, got, pats, tc.tools, tc.scope)
 		}
 	}
 	reg, _ := subTools(a.Tools, nil)
@@ -253,7 +258,7 @@ func TestSubTools(t *testing.T) {
 }
 
 func TestMatchCommand(t *testing.T) {
-	scope := []string{"git diff:*", "git log *", "go test ./..."}
+	scope := &bashScope{patterns: []string{"git diff:*", "git log *", "go test ./..."}}
 	for cmd, ok := range map[string]bool{
 		"git diff":                       true,
 		"git diff --stat HEAD~1":         true,
@@ -271,11 +276,11 @@ func TestMatchCommand(t *testing.T) {
 		"git push --force":               false,
 		"git diff; X=1 sh -c 'git diff'": false,
 	} {
-		if got := refused(scope, cmd) == ""; got != ok {
-			t.Errorf("%q: allowed %v, want %v (%s)", cmd, got, ok, refused(scope, cmd))
+		if got := refused(scope, cmd, "/") == ""; got != ok {
+			t.Errorf("%q: allowed %v, want %v (%s)", cmd, got, ok, refused(scope, cmd, "/"))
 		}
 	}
-	if refused(nil, "rm -rf x") != "" {
+	if refused(nil, "rm -rf x", "/") != "" {
 		t.Error("no scope refused a command")
 	}
 }

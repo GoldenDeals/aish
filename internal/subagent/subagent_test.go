@@ -133,3 +133,22 @@ func TestLoad(t *testing.T) {
 		}
 	}
 }
+
+// A comma within the parentheses of a pattern does not end the entry, in a
+// string or in a list YAML split there.
+func TestToolNames(t *testing.T) {
+	for _, c := range []struct {
+		v    any
+		want []string
+	}{
+		{"Bash(git log, git diff), Read", []string{"Bash(git log, git diff)", "Read"}},
+		{"Read,Grep , Bash(git *)", []string{"Read", "Grep", "Bash(git *)"}},
+		{[]any{"Bash(git log", "git diff)", "Read"}, []string{"Bash(git log,git diff)", "Read"}},
+		{[]any{"Read, Write", "Bash"}, []string{"Read", "Write", "Bash"}},
+		{"", nil},
+	} {
+		if got := toolNames(c.v); !slices.Equal(got, c.want) {
+			t.Errorf("%q: %q, want %q", c.v, got, c.want)
+		}
+	}
+}

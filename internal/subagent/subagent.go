@@ -142,16 +142,30 @@ func load(path string) (Def, error) {
 }
 
 // toolNames is the tools field, a string with commas or a list; nil when it
-// names none.
+// names none. A comma within parentheses is a pattern's, as in
+// Bash(git log, git diff): YAML splits a flow list there too, so the items
+// of a list are put back together before the split.
 func toolNames(v any) []string {
 	var out []string
-	for _, s := range list(v) {
-		for _, name := range strings.Split(s, ",") {
-			if name = strings.TrimSpace(name); name != "" {
-				out = append(out, name)
-			}
+	add := func(name string) {
+		if name = strings.TrimSpace(name); name != "" {
+			out = append(out, name)
 		}
 	}
+	s := strings.Join(list(v), ",")
+	depth, start := 0, 0
+	for i, c := range s {
+		switch {
+		case c == '(':
+			depth++
+		case c == ')' && depth > 0:
+			depth--
+		case c == ',' && depth == 0:
+			add(s[start:i])
+			start = i + 1
+		}
+	}
+	add(s[start:])
 	return out
 }
 
