@@ -14,7 +14,7 @@ type Command struct {
 	Args     []string // argv[1:] as written
 	Flags    []string // "-rf" → "r", "f"; "--force" → "force"; "--opt=v" → "opt"; none after "--"
 	Operands []string // non-option args, "--" dropped
-	Paths    []string // operands that look like paths, absolute and resolved as the kernel opens them
+	Paths    []string // operands that look like paths, absolute and resolved as the kernel opens them (cd, pushd: also as they take them logically)
 	Text     string   // argv joined with spaces
 }
 
@@ -45,12 +45,43 @@ func Analyze(argv []string, cwd, home string) Command {
 			}
 		}
 	}
+	logical := c.Program == "pushd" || c.Program == "cd" && !physicalCd(c.Args)
 	for _, op := range c.Operands {
-		if p, ok := pathOf(op, cwd, home); ok {
-			c.Paths = append(c.Paths, walk(p))
+		p, ok := pathOf(op, cwd, home)
+		if !ok {
+			continue
 		}
+		w := walk(p)
+		// cd takes ".." off the path as spelled before it follows the
+		// links, and enters the path as the kernel walks it only when that
+		// fails: a rule must see both places.
+		if l := resolve(p); logical && l != w {
+			c.Paths = append(c.Paths, l)
+		}
+		c.Paths = append(c.Paths, w)
 	}
 	return c
+}
+
+// physicalCd tells whether cd is told -P: the last of -L and -P among the
+// options before its operand counts, as in bash. pushd has no such options
+// and always goes by the logical path.
+func physicalCd(args []string) bool {
+	p := false
+	for _, a := range args {
+		if a == "--" || a == "-" || !strings.HasPrefix(a, "-") {
+			break
+		}
+		for _, r := range a[1:] {
+			switch r {
+			case 'P':
+				p = true
+			case 'L':
+				p = false
+			}
+		}
+	}
+	return p
 }
 
 // pathOf tells whether an operand names a path and makes it absolute. Bare
