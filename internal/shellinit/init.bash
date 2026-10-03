@@ -263,6 +263,46 @@ __aish_precmd() {
 	return $__aish_rc
 }
 
+# __aish_rows sets __aish_n, a local of its caller, to the rows text $1 takes
+# on a terminal $2 columns wide. A wide character, East Asian or emoji, takes
+# two columns, and goes to the next row when one is left, as readline puts it
+# there. The ranges stand in for wcwidth, which is a fork away; they are
+# UTF-8 bytes, which match no ASCII character in any locale, as $'\u…' may
+# stay an escape in the C locale. Text is taken a run of narrow or wide
+# characters at a time: a loop over characters takes seconds on a long one.
+__aish_rows() {
+	# U+1100-115F, U+2E80-A4CF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
+	# U+FF00-FF60, U+FFE0-FFE6, U+1F300-1FAFF, U+20000-3FFFD.
+	local __aish_w=$'\xe1\x84\x80-\xe1\x85\x9f\xe2\xba\x80-\xea\x93\x8f\xea\xb0\x80-\xed\x9e\xa3\xef\xa4\x80-\xef\xab\xbf\xef\xb8\xb0-\xef\xb9\x8f\xef\xbc\x80-\xef\xbd\xa0\xef\xbf\xa0-\xef\xbf\xa6\xf0\x9f\x8c\x80-\xf0\x9f\xab\xbf\xf0\xa0\x80\x80-\xf0\xbf\xbf\xbd'
+	local __aish_s=$1 __aish_r __aish_x=0 __aish_f __aish_p=$(($2 > 1 ? $2 / 2 : 1)) __aish_g=
+	__aish_n=1
+	# Without globasciiranges a range is one of the locale's collation.
+	shopt -q globasciiranges || __aish_g=1
+	shopt -s globasciiranges
+	while :; do
+		__aish_r=${__aish_s%%[$__aish_w]*}
+		__aish_s=${__aish_s:${#__aish_r}}
+		__aish_x=$((__aish_x + ${#__aish_r}))
+		if ((__aish_x > $2)); then
+			__aish_n=$((__aish_n + (__aish_x - 1) / $2))
+			__aish_x=$(((__aish_x - 1) % $2 + 1))
+		fi
+		[[ -n $__aish_s ]] || break
+		# As many wide characters as fit in the row, the rest __aish_p a row.
+		__aish_r=${__aish_s%%[!$__aish_w]*}
+		__aish_s=${__aish_s:${#__aish_r}}
+		__aish_f=$((($2 - __aish_x) / 2))
+		if ((${#__aish_r} <= __aish_f)); then
+			__aish_x=$((__aish_x + 2 * ${#__aish_r}))
+		else
+			__aish_f=$((${#__aish_r} - __aish_f - 1))
+			__aish_n=$((__aish_n + 1 + __aish_f / __aish_p))
+			__aish_x=$(((__aish_f % __aish_p + 1) * 2))
+		fi
+	done
+	[[ -z $__aish_g ]] || shopt -u globasciiranges
+}
+
 # __aish_unecho replaces the `__aish_ask '...'` line readline has echoed with
 # what the user typed, the prompt's `$` (or `#`) turned into `?`:
 # "user@host:~? text".
@@ -274,9 +314,10 @@ __aish_unecho() {
 		vis=${vis%%$'\001'*}${vis#*$'\002'}
 	done
 	p=${p//[$'\001\002']/}
-	local line="__aish_ask ${1@Q}" cols=${COLUMNS:-80}
+	local line="__aish_ask ${1@Q}" cols=${COLUMNS:-80} __aish_n
 	# Readline leaves the cursor under the echo's last row, a full one too.
-	local rows=$(((${#vis} + ${#line} + cols - 1) / cols))
+	__aish_rows "$vis$line" "$cols"
+	local rows=$__aish_n
 	local c
 	# The echo's first row is erased by itself: erase below from the
 	# top-left corner is a clear screen to tmux, which keeps the screen, the
