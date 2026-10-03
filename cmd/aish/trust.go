@@ -56,7 +56,7 @@ func trustCmd(cfg config.Config, args []string) int {
 		fmt.Printf("%s is trusted; it sets nothing that runs code\n", home(path))
 		return 0
 	}
-	fmt.Printf("%s is trusted, until it changes; these run code from the repository now:\n", home(path))
+	fmt.Printf("%s is trusted until it or its hooks and tools change; these run code from the repository now:\n", home(path))
 	for _, k := range keys {
 		fmt.Println("  " + k)
 	}

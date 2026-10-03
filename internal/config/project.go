@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -45,9 +46,10 @@ type project struct {
 // system_prompt is appended to the global one. policy_dir and tools_dir
 // are added after the global directories: PolicyDir and ToolsDir come
 // back as lists in the form of PATH (filepath.ListSeparator), which the
-// policy and tools packages take. Relative directories are taken from
-// the file's own. The deny and ask lists of [policy] are added to the
-// global ones, and of the two write_outside_home the stricter is kept.
+// policy and tools packages take. Each key names one directory, a list
+// is an error; a relative one is taken from the file's own. The deny
+// and ask lists of [policy] are added to the global ones, and of the two
+// write_outside_home the stricter is kept.
 // hooks_dir is added as tools_dir is: the project's hooks run after the
 // user's. Both run code from the repository and hold only if the file is
 // Trusted; otherwise they are left out and named in Untrusted.
@@ -64,6 +66,9 @@ func Project(cfg Config, cwd string) (Config, string, error) {
 	}
 	if err == nil {
 		err = forbidden(md)
+	}
+	if err == nil {
+		err = pr.oneDir()
 	}
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -169,6 +174,21 @@ func forbidden(md toml.MetaData) error {
 		}
 	}
 	return unknown(md)
+}
+
+// oneDir refuses a directory key set to a list. Project adds the value
+// as one element of a list in the form of PATH, taken from the file's
+// directory: a second element would be taken from anywhere, a relative
+// one from the proxy's cwd, while the key names a directory of the
+// project. Refused, not split: a project has no use for a list.
+func (pr *project) oneDir() error {
+	keys := append(pr.code(&Config{}), codeKey{name: "policy_dir", value: pr.PolicyDir})
+	for _, k := range keys {
+		if k.value != nil && strings.ContainsRune(*k.value, filepath.ListSeparator) {
+			return fmt.Errorf("%s = %q: one directory, not a list", k.name, *k.value)
+		}
+	}
+	return nil
 }
 
 // stricter is the stricter of two write_outside_home values. A value that
