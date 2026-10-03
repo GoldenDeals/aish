@@ -49,7 +49,7 @@ func loadCedar(files []string) (*cedarChecker, error) {
 		return nil, fmt.Errorf("policy: built-in schema: %w", err)
 	}
 	v := validate.New(resolved)
-	attrs := contextAttrs(resolved)
+	attrs := newHasNames(resolved)
 	c := &cedarChecker{ps: cedar.NewPolicySet(), files: files}
 	for _, f := range files {
 		src, err := os.ReadFile(f)
@@ -58,7 +58,7 @@ func loadCedar(files []string) (*cedarChecker, error) {
 		}
 		list, err := cedar.NewPolicyListFromBytes(f, src)
 		if err != nil {
-			return nil, fmt.Errorf("policy: %w", err)
+			return nil, parseError(f, err)
 		}
 		base := filepath.Base(f)
 		for i, p := range list {
@@ -76,6 +76,17 @@ func loadCedar(files []string) (*cedarChecker, error) {
 		c.summary = append(c.summary, Summary{File: base, Policies: len(list)})
 	}
 	return c, nil
+}
+
+// parseError names the file of a syntax error: cedar-go names it only in
+// the policies it parsed, and the position of an error is <input>:line:col.
+// Only the first <input> is the position; one after it is a quoted token.
+func parseError(f string, err error) error {
+	msg := err.Error()
+	if strings.Contains(msg, "<input>") {
+		return fmt.Errorf("policy: %s", strings.Replace(msg, "<input>", f, 1))
+	}
+	return fmt.Errorf("policy: %s: %w", f, err)
 }
 
 func (c *cedarChecker) Summaries() []Summary { return c.summary }
