@@ -573,6 +573,7 @@ jq -n --arg s "$s" '{context: ("git status:\n" + $s)}'
 provider = "anthropic"            # или "openai" (Chat Completions), "openai-responses" (Responses API)
 base_url = "http://127.0.0.1:8317" # прокси, например cliproxyapi; нет — официальный API провайдера
 api_key_env = "AISH_API_KEY"
+api_key = ""                      # сам ключ вместо api_key_env; в файле его лучше не держать
 model = "claude-opus-5"           # или $AISH_MODEL
 effort = "high"                   # low … max (у OpenAI ещё none, minimal); нет — уровень модели; или $AISH_EFFORT
 max_tokens = 0                    # лимит ответа; 0 — 32000, на effort xhigh/max — 64000
@@ -589,9 +590,30 @@ code_style = "monokai"            # стиль подсветки кода: http
 prompt_status = true              # статус контекста справа от промпта
 context_window = 0                # размер окна модели в токенах; 0 — узнать у API
 compact_at = 0.8                  # доля окна, за которой сессия сжимается в сводку сама; 0 — никогда
+sessions_dir = "~/.local/share/aish/sessions" # сохранённые сессии, см. «Сессии»
+sessions_ttl = "0"                # удалять при запуске сессии старше: "30d" или "720h"; "0" — не удалять
 mcp_config = "~/.config/aish/mcp.yaml"
+policy_dir = "~/.config/aish/policy" # политики Cedar, см. «Политики»
+hooks_dir = "~/.config/aish/hooks" # хуки, см. «Хуки»
+tools_dir = "~/.config/aish/tools" # свои инструменты, см. «Свои инструменты»
 shell = "/opt/bash/bin/bash"      # какой bash запускать; нет — $SHELL, если это bash, иначе первый bash в PATH
 system_prompt = "Дополнение к системному промпту"
+
+[route]                           # что уходит ассистенту, см. «Команда или вопрос?»
+capital = true                    # строка с заглавной буквы, не команда
+not_found = true                  # слова, а не shell: то, на что bash ответил бы command not found
+suffix = "?"                      # строка, которая кончается на suffix; "" — правило выключено
+min_words = 2                     # сколько слов нужно для not_found
+expand = true                     # раскрывать $VAR и $(…) в запросе
+
+[policy]                          # простые правила рядом с Cedar, см. «Политики»
+deny = ["sudo *", "rm -rf /"]     # запретить; * ловит всё, включая пробелы и /
+ask = ["git push*"]               # спросить Yes/No
+write_outside_home = "ask"        # write_file и edit_file вне $HOME: "allow" | "ask" | "deny"
+
+[profiles.work]                   # профиль, который выбирает profile: endpoint и модель поверх ключей выше, см. ниже
+base_url = "http://127.0.0.1:8317"
+model = "claude-opus-5"
 ```
 
 Провайдер — это протокол API. `openai` (Chat Completions) понимают и совместимые серверы —
