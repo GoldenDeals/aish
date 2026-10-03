@@ -47,9 +47,10 @@ __aish_buf=      # full text of the command being entered (multi-line aware)
 __aish_ps0=      # marker emitted by PS0, set only for user commands
 
 # The locals here and in __aish_to_llm are __aish_ names: the request
-# __aish_expand expands sees them, and $line means the user's.
+# __aish_expand expands sees them, and $line means the user's. __aish_rc
+# is the code of the user's last command, for $? in the request.
 __aish_route() {
-	local __aish_line=$READLINE_LINE
+	local __aish_rc=$? __aish_line=$READLINE_LINE
 	if [[ $__aish_fresh != 1 ]]; then
 		# Continuation line (PS2): part of a command already routed to bash.
 		__aish_buf+=$'\n'$__aish_line
@@ -193,6 +194,9 @@ __aish_expand() {
 		__aish_r=${__aish_r#*'`'}
 	done
 	set -- # $1 is the text here, not the user's
+	# $? too: the code __aish_route found, not that of `set`. A function,
+	# not (exit N): that would fork once more.
+	__aish_status "${__aish_rc:-0}"
 	# The dot: a backslash at the end would join the delimiter's line to it.
 	eval "IFS= read -r -d '' __aish_o <<__aish_eof || :
 $__aish_t$__aish_r.
@@ -201,6 +205,8 @@ __aish_eof
 	[[ $__aish_o == *.$'\n' ]] || return 1
 	printf '%s' "${__aish_o%.$'\n'}"
 }
+
+__aish_status() { return "$1"; }
 
 # __aish_to_llm rewrites the line into a request. The text is expanded
 # here, before READLINE_LINE, for the screen, the journal and the model to
