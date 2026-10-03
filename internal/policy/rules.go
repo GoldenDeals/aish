@@ -4,11 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 	"unicode/utf8"
-
-	"mvdan.cc/sh/v3/syntax"
 )
 
 // Rules are the simple policies of the [policy] table in config.toml: a
@@ -49,13 +46,21 @@ func (c rulesChecker) Check(ctx context.Context, in Input) (Decision, error) {
 	case in.Line != "":
 		var texts []string
 		for _, argv := range in.Commands {
-			texts = append(texts, Analyze(argv, in.Cwd, in.Home).Text)
+			cmd := Analyze(argv, in.Cwd, in.Home)
+			texts = append(texts, cmd.Text)
+			// /usr/bin/sudo and ./sudo run sudo, which a pattern names.
+			if len(argv) > 0 && cmd.Program != argv[0] {
+				texts = append(texts, strings.Join(append([]string{cmd.Program}, cmd.Args...), " "))
+			}
 		}
 		// What could not be parsed, or is built at run time, is matched as
 		// one command too: a rule must not stop working because of a stray
 		// quote or an eval.
 		if in.ParseError != "" || len(in.Dynamic) > 0 {
 			texts = append(texts, in.Line)
+			if named := lineByName(in.Line); named != in.Line {
+				texts = append(texts, named)
+			}
 		}
 		for _, text := range texts {
 			ds = append(ds, matches(Deny, c.Deny, text)...)
@@ -69,10 +74,17 @@ func (c rulesChecker) Check(ctx context.Context, in Input) (Decision, error) {
 		for _, path := range in.Writes {
 			ds = append(ds, c.write(path, in.Home)...)
 		}
-		// A file known only at run time may be anywhere. Parse marks it
-		// computed, so a line without the mark writes none.
-		if a := c.WriteOutsideHome; a != "" && a != Allow && slices.Contains(in.Dynamic, dynComputed) && unknownWrite(in.Line, in.shell().pwd, in.shell().home) {
-			ds = append(ds, Decision{Action: a, Reason: "writes a file known only at run time"})
+		if a := c.WriteOutsideHome; a != "" && a != Allow {
+			// A file known only at run time may be anywhere.
+			if in.UnknownWrite {
+				ds = append(ds, Decision{Action: a, Reason: "writes a file known only at run time"})
+			}
+			// bash runs a line up to its error, and the code the line hands
+			// to a shell is in it as well, quoted: any > of a line that did
+			// not parse may be a redirection.
+			if in.ParseError != "" && strings.Contains(in.Line, ">") {
+				ds = append(ds, Decision{Action: a, Reason: "cannot parse the line to see where it writes"})
+			}
 		}
 	case in.Tool == "write_file", in.Tool == "edit_file":
 		ds = append(ds, c.write(in.Path, in.Home)...)
@@ -88,55 +100,19 @@ func (c rulesChecker) write(path, home string) []Decision {
 	return nil
 }
 
-// unknownWrite tells whether a redirection in line writes a file known only
-// at run time: one built of expansions (> "$f") or a relative one in a line
-// with a cd. Parse marks both computed, as it marks a program built at run
-// time, yet `$cmd > ~/x` writes a known file; so the line is walked again
-// as Parse walks it, the code it hands to a shell included, and only its
-// redirections are asked about.
-func unknownWrite(line, cwd, home string) bool {
-	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: home}
-	unknown := false
-	todo := []snippet{{src: line}}
-	for depth := 0; depth <= maxDepth && len(todo) > 0 && !unknown; depth++ {
-		var nested []snippet
-		for _, s := range todo {
-			f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(s.src), "")
-			if err != nil {
-				continue
-			}
-			p.remote = s.remote
-			done := map[*syntax.CallExpr]bool{}
-			syntax.Walk(f, func(n syntax.Node) bool {
-				switch n := n.(type) {
-				case *syntax.Stmt:
-					if call, ok := n.Cmd.(*syntax.CallExpr); ok {
-						done[call] = true
-						nested = append(nested, p.call(call, n.Redirs)...)
-					}
-				case *syntax.CallExpr:
-					if !done[n] {
-						nested = append(nested, p.call(n, nil)...)
-					}
-				case *syntax.Redirect:
-					// A parser of its own: the marks of p are the
-					// programs' too.
-					r := &parser{kinds: map[string]bool{}, cwd: cwd, home: home, remote: s.remote}
-					r.redirect(n)
-					unknown = unknown || r.kinds[dynComputed]
-					p.writes = append(p.writes, r.writes...)
-				}
-				return true
-			})
-		}
-		todo = nested
+// lineByName is a line matched whole with its first word, taken for the
+// program, called by its name: without the quotes and backslashes the
+// shell takes away and without its directory.
+func lineByName(line string) string {
+	line = strings.TrimLeft(line, " \t\n")
+	first, rest := line, ""
+	if i := strings.IndexAny(line, " \t\n"); i >= 0 {
+		first, rest = line[:i], line[i:]
 	}
-	for _, w := range p.writes {
-		if w.rel && p.chdir {
-			return true
-		}
+	if first = strings.NewReplacer(`\`, "", `'`, "", `"`, "").Replace(first); first != "" {
+		first = filepath.Base(first)
 	}
-	return unknown
+	return first + rest
 }
 
 func matches(action string, patterns []string, text string) []Decision {

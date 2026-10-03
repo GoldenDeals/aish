@@ -34,6 +34,11 @@ type Script struct {
 	// them; a file not known before the line runs is marked "computed"
 	// instead. Empty without a cwd.
 	Writes []string
+	// UnknownWrite tells that a redirection writes such a file: one built
+	// of expansions (> "$f") or a relative one in a line with a cd. Dynamic
+	// has "computed" for a program built at run time too, which writes no
+	// file a policy could know of.
+	UnknownWrite bool
 }
 
 // The kinds of Script.Dynamic.
@@ -74,12 +79,14 @@ func Parse(src, cwd, home string) (Script, error) {
 			// A cd anywhere in the line may run before the write: the
 			// directory it writes in is not cwd any longer.
 			p.mark(dynComputed)
+			p.unknown = true
 		case cwd != "":
 			if path := walk(t.path); !slices.Contains(s.Writes, path) {
 				s.Writes = append(s.Writes, path)
 			}
 		}
 	}
+	s.UnknownWrite = p.unknown
 	for k := range p.kinds {
 		s.Dynamic = append(s.Dynamic, k)
 	}
@@ -93,6 +100,8 @@ type parser struct {
 	cwd, home string
 	// writes are the files of the redirections that write, as spelled.
 	writes []write
+	// unknown is a redirection to a file known only at run time.
+	unknown bool
 	// chdir is a cd, pushd or popd somewhere in the line.
 	chdir bool
 	// remote tells that the code being walked runs on another machine,
@@ -754,6 +763,7 @@ func (p *parser) redirect(r *syntax.Redirect) {
 	path, rel, ok := p.target(r.Word)
 	if !ok {
 		p.mark(dynComputed)
+		p.unknown = true
 		return
 	}
 	p.writes = append(p.writes, write{path, rel})

@@ -50,6 +50,9 @@ type Input struct {
 	Dynamic []string `json:"dynamic,omitempty"`
 	// Writes is Script.Writes of Line: the files its redirections write.
 	Writes []string `json:"writes,omitempty"`
+	// UnknownWrite is Script.UnknownWrite of Line: a redirection in it
+	// writes a file known only at run time.
+	UnknownWrite bool `json:"-"`
 	// Remote is Script.Remote of Line: the commands of Commands that run
 	// on another machine.
 	Remote []int `json:"-"`
@@ -183,6 +186,7 @@ func (in *Input) HandOff(line string) {
 	s, err := Parse(line, sh.pwd, sh.home)
 	in.Commands, in.Dynamic, in.Writes = s.Commands, s.Dynamic, s.Writes
 	in.Remote = s.Remote
+	in.UnknownWrite = s.UnknownWrite
 	if err != nil {
 		in.ParseError = err.Error()
 	}
