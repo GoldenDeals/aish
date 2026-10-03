@@ -106,7 +106,7 @@ func TestRestoreScreenViewer(t *testing.T) {
 	before := len(out.String())
 	p.restoreScreen()
 	s := out.String()[before:]
-	if !strings.HasPrefix(s, "\x1b[?1049l\x1b[?25h") || !strings.Contains(s, "Which approach?") || !strings.HasSuffix(s, "\x1b[?25h") {
+	if !strings.HasPrefix(s, "\x1b[?1049l\x1b[?25l") || !strings.Contains(s, "Which approach?") || !strings.HasSuffix(s, "\x1b[?25h") {
 		t.Errorf("closed with %q", s)
 	}
 	if p.view != nil || p.form != nil || p.held != nil {

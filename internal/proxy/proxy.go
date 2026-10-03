@@ -435,8 +435,15 @@ func (p *Proxy) viewFolds() []Fold {
 	return folds
 }
 
+// closeView shows the cursor the viewer hid, unless an open question or
+// form keeps it hidden. What was held goes after it, so that a spinner
+// drawn meanwhile hides it again.
 func (p *Proxy) closeView() {
-	_, _ = p.out.Write(p.view.close())
+	cursor := "\x1b[?25h"
+	if p.ask != nil || p.form != nil {
+		cursor = "\x1b[?25l"
+	}
+	_, _ = p.out.Write(append(p.view.close(), cursor...))
 	_, _ = p.out.Write(p.held)
 	p.view, p.held = nil, nil
 }

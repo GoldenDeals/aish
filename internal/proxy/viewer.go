@@ -80,7 +80,9 @@ func (v *viewer) open() []byte {
 	return append([]byte("\x1b[?1049h\x1b[?25l"), v.render()...)
 }
 
-func (v *viewer) close() []byte { return []byte("\x1b[?1049l\x1b[?25h") }
+// close leaves the cursor hidden: a question or a form may keep it so, and
+// closeView knows whether one is open.
+func (v *viewer) close() []byte { return []byte("\x1b[?1049l") }
 
 func (v *viewer) render() []byte {
 	rows, title := v.rows, v.title
