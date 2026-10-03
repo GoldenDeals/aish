@@ -252,6 +252,14 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 
 	old, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
+		// bash is running already. A bash that traps the hangup of the
+		// deferred ptmx.Close would outlive aish without its $AISH_RUN,
+		// which the deferred RemoveAll takes.
+		stopSignals()
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
 		return 1, err
 	}
 	defer term.Restore(int(os.Stdin.Fd()), old)
@@ -272,11 +280,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	case <-time.After(200 * time.Millisecond):
 	}
 	p.restoreScreen()
-	var exitErr *exec.ExitError
-	if errors.As(waitErr, &exitErr) {
-		return exitErr.ExitCode(), nil
-	}
-	return 0, waitErr
+	return exitCode(waitErr)
 }
 
 // makeRunDir creates the session's directory with the command wrappers in

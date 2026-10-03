@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"sync"
 	"syscall"
 	"time"
@@ -80,4 +82,19 @@ func forwardSignals(sigs <-chan os.Signal, proc *os.Process, grace time.Duration
 		once.Do(func() { close(done) })
 		<-finished
 	}
+}
+
+// exitCode turns the shell's Wait error into aish's exit code. A shell
+// killed by a signal (the hangup forwardSignals sends, SIGKILL after the
+// grace) gets the shell's 128 + signal, not ExitCode's -1, which the
+// process would turn into 255.
+func exitCode(err error) (int, error) {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return 0, err
+	}
+	if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal()), nil
+	}
+	return exitErr.ExitCode(), nil
 }
