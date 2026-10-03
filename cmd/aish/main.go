@@ -6,7 +6,8 @@
 //	aish skills                  the skills that apply here and their problems
 //	aish hooks                   the hooks that run here, by event, and their problems
 //	aish agents                  the subagents that apply here and their problems
-//	aish policy [TOOL ARGS...]   check the policies, or ask them about one call
+//	aish policy [--agent NAME] [TOOL ARGS...]
+//	                             check the policies, or ask them about one call (of subagent NAME)
 //	aish trust [--revoke|--list] let the .aish.toml here run the repository's hooks and tools
 //	aish init bash               print the bash integration script
 //	aish tool [NAME ARGS...]     list tools or run one
@@ -52,7 +53,9 @@ var usage = `usage:
   aish skills                show the skills of this directory and their problems
   aish hooks                 show the hooks of this directory in the order they run
   aish agents                show the subagents of this directory and their problems
-  aish policy [TOOL ARGS...] check the policies, or ask them about one call
+  aish policy [--agent NAME] [TOOL ARGS...]
+                             check the policies, or ask them about one call (as
+                             one of subagent NAME)
   aish trust [--revoke|--list]
                              let the .aish.toml here run hooks and tools from the
                              repository, as it is now; or take that back; or list

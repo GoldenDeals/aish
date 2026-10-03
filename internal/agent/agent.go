@@ -115,6 +115,10 @@ type Agent struct {
 	hooks   hookState // found once per request
 	// subs are the subagents the task tool runs: see AddSubagents.
 	subs []subagent.Def
+	// name is the subagent this agent is, "" for the host agent. Its
+	// calls carry it to the pre-tool hooks; the policy has it from the
+	// engine runSub gives the subagent as well (Engine.Subagent).
+	name string
 	// windowFull is set when the context window cut the last reply: the
 	// session is summed up before the next turn, however small the estimate.
 	// Like the agent it lives through to the next request.
@@ -422,6 +426,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	}
 	in.Server = tools.ServerOf(t)
 	in.Model = a.Cfg.Model
+	in.Agent = a.name
 	d, err := a.Policy.Check(ctx, in)
 	if err != nil {
 		return false, err

@@ -15,9 +15,14 @@ import (
 
 // policyCmd loads the policies, so that a validation error shows up right
 // after editing a file, and with a tool call asks them about it without
-// running the model: `aish policy bash 'sudo ls'`. The [policy] rules of
-// the config are one more checker of the engine and answer there too.
+// running the model: `aish policy bash 'sudo ls'`; with --agent NAME, as a
+// call of subagent NAME. The [policy] rules of the config are one more
+// checker of the engine and answer there too.
 func policyCmd(cfg config.Config, args []string) int {
+	agent, args, err := agentFlag(args)
+	if err != nil {
+		return fail(err)
+	}
 	global := rulesOf(cfg).Len()
 	// The project's policies too, as the agent would have them here.
 	cwd, _ := os.Getwd()
@@ -56,6 +61,7 @@ func policyCmd(cfg config.Config, args []string) int {
 	if client, err := rpc.FromEnv(); err == nil {
 		in.Model = shellConfig(cfg, client).Model
 	}
+	in.Agent = agent
 	d, err := eng.Check(ctx, in)
 	if err != nil {
 		return fail(err)
@@ -66,6 +72,33 @@ func policyCmd(cfg config.Config, args []string) int {
 	}
 	fmt.Printf("%s: %s\n", d.Action, d.Reason)
 	return 1
+}
+
+// agentFlag takes a leading --agent NAME off the arguments of aish policy:
+// the policies are asked about the call that follows as one of subagent
+// NAME, which they see as context.agent. A flag after the tool's name is
+// the tool's own.
+func agentFlag(args []string) (string, []string, error) {
+	usage := fmt.Errorf("usage: aish policy [--agent NAME] [TOOL ARGS...]")
+	if len(args) == 0 {
+		return "", args, nil
+	}
+	name, ok := strings.CutPrefix(args[0], "--agent=")
+	switch {
+	case ok:
+		args = args[1:]
+	case args[0] != "--agent":
+		return "", args, nil
+	case len(args) > 1:
+		name, args = args[1], args[2:]
+	default:
+		return "", nil, usage
+	}
+	// Without a call there is nothing to ask as the subagent.
+	if name == "" || len(args) == 0 {
+		return "", nil, usage
+	}
+	return name, args, nil
 }
 
 // policyLine says what policies are in force: the Cedar files of dir with

@@ -169,7 +169,7 @@ func (a *Agent) preTool(ctx context.Context, t tools.Tool, c session.ToolCall, i
 					cur.HandOff(line)
 				}
 			}
-			cur.Server, cur.Model = in.Server, in.Model
+			cur.Server, cur.Model, cur.Agent = in.Server, in.Model, in.Agent
 			v.replaced = true
 			fmt.Fprintf(a.UI, "%s  (arguments replaced by %s)%s\n", dim, h, reset)
 		}
