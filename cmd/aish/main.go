@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -217,6 +218,28 @@ func loadTools(cfg config.Config, warn func(string)) *tools.Registry {
 	return reg
 }
 
+// runnable is whether aish tool runs t: a command for the shell is typed as
+// one, not through aish; questions for the user are the agent's to ask.
+func runnable(t tools.Tool) bool {
+	_, handsOff := t.(tools.HandsOff)
+	return !handsOff && !tools.IsDialog(t)
+}
+
+// listTools prints the tools that can be run as `aish tool NAME`, one a line.
+func listTools(w io.Writer, reg *tools.Registry) {
+	var list []tools.Tool
+	width := 12
+	for _, t := range reg.All() {
+		if runnable(t) {
+			list = append(list, t)
+			width = max(width, len(t.Name()))
+		}
+	}
+	for _, t := range list {
+		fmt.Fprintf(w, "%-*s %s\n", width, t.Name(), firstSentence(t.Desc()))
+	}
+}
+
 func toolCmd(cfg config.Config, args []string) int {
 	// The project's tools too, as the agent would have them here.
 	cwd, _ := os.Getwd()
@@ -232,13 +255,7 @@ func toolCmd(cfg config.Config, args []string) int {
 	var problems []string
 	reg := loadTools(cfg, func(s string) { problems = append(problems, s) })
 	if len(args) == 0 {
-		w := 12
-		for _, t := range reg.All() {
-			w = max(w, len(t.Name()))
-		}
-		for _, t := range reg.All() {
-			fmt.Printf("%-*s %s\n", w, t.Name(), firstSentence(t.Desc()))
-		}
+		listTools(os.Stdout, reg)
 		for _, p := range problems {
 			fmt.Fprintf(os.Stderr, "\x1b[2mmcp: %s\x1b[0m\n", p)
 		}
@@ -248,9 +265,7 @@ func toolCmd(cfg config.Config, args []string) int {
 	if !ok {
 		fmt.Fprint(os.Stderr, untrustedNote(cfg, project))
 	}
-	// A command for the shell is typed as one, not through aish; questions
-	// for the user are the agent's to ask.
-	if _, handsOff := t.(tools.HandsOff); !ok || handsOff || tools.IsDialog(t) {
+	if !ok || !runnable(t) {
 		return fail(fmt.Errorf("no tool %q", args[0]))
 	}
 	if len(args) > 1 && (args[1] == "-h" || args[1] == "--help") {

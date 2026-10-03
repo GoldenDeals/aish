@@ -480,7 +480,7 @@ func TestRunExternalFails(t *testing.T) {
 
 // The agent runs in the proxy, not in the shell: tools take the shell's
 // directory and environment from Exec.
-func TestExecuteIn(t *testing.T) {
+func TestExecuteExec(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("hello\n"), 0o644); err != nil {
 		t.Fatal(err)
