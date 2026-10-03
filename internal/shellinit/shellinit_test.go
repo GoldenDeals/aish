@@ -53,7 +53,7 @@ func TestRoute(t *testing.T) {
 	}
 	cmd := exec.Command("bash", "--norc", "--noprofile", "-i")
 	cmd.Stdin = strings.NewReader(script.String())
-	cmd.Env = append(os.Environ(), "PS1=", "HISTFILE=/dev/null", "LC_ALL=C.UTF-8")
+	cmd.Env = cleanEnv("PS1=", "HISTFILE=/dev/null", "LC_ALL=C.UTF-8")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestMarkerNonce(t *testing.T) {
 	cmd := exec.Command("bash", "--norc", "--noprofile", "-i")
 	cmd.Dir = wd
 	cmd.Stdin = strings.NewReader(script)
-	cmd.Env = append(os.Environ(), "PS1=", "HISTFILE=/dev/null", "AISH_RUN="+run, "AISH_BIN="+stub)
+	cmd.Env = cleanEnv("PS1=", "HISTFILE=/dev/null", "AISH_RUN="+run, "AISH_BIN="+stub)
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)

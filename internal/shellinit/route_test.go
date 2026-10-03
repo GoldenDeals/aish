@@ -34,7 +34,7 @@ func routed(t *testing.T, route, bashrc, script string) []string {
 	cmd := exec.Command("bash", "--norc", "--noprofile", "-i")
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(bashrc + "\nsource " + init + " 2>/dev/null\n" + script)
-	cmd.Env = append(os.Environ(), "PS1=", "PS2=", "HISTFILE=/dev/null", "LC_ALL=C.UTF-8",
+	cmd.Env = cleanEnv("PS1=", "PS2=", "HISTFILE=/dev/null", "LC_ALL=C.UTF-8",
 		"HOME="+dir, "XDG_CONFIG_HOME="+filepath.Join(dir, "xdg"), "AISH_RUN="+run)
 	out, err := cmd.Output()
 	if err != nil {
