@@ -5,11 +5,14 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // term is as much of a terminal as the Writer's output needs: rows that
-// wrap at cols with xterm's pending wrap, "\n" as the PTY's onlcr sends
-// it, cursor up and down, erase in line and below, styles ignored. Erase
+// wrap at cols with xterm's pending wrap, wide characters that go whole to
+// the next row when they do not fit, "\n" as the PTY's onlcr sends it,
+// cursor up, down and forward, erase in line and below, styles ignored. Erase
 // below from the top-left corner is what tmux takes for clearing the
 // screen: with scroll-on-clear, on by default, it first moves the screen
 // to its history.
@@ -30,12 +33,19 @@ func newTerm(cols, height int) *term {
 
 func (s *term) blank() []rune { return []rune(strings.Repeat(" ", s.cols)) }
 
+// wideTail fills the cell under the right half of a wide character.
+const wideTail = 0
+
+func text(row []rune) string {
+	return strings.TrimRight(strings.ReplaceAll(string(row), string(rune(wideTail)), ""), " ")
+}
+
 func (s *term) down() {
 	if s.y < len(s.rows)-1 {
 		s.y++
 		return
 	}
-	s.history = append(s.history, strings.TrimRight(string(s.rows[0]), " "))
+	s.history = append(s.history, text(s.rows[0]))
 	s.rows = append(s.rows[1:], s.blank())
 }
 
@@ -62,15 +72,19 @@ func (s *term) write(t *testing.T, out string) {
 			s.csi(t, string(rs[i+2:j]), rs[j])
 			i = j
 		default:
-			if s.wrap {
+			w := runewidth.RuneWidth(r)
+			if s.wrap || s.x+w > s.cols {
 				s.x, s.wrap = 0, false
 				s.down()
 			}
 			s.rows[s.y][s.x] = r
-			if s.x == s.cols-1 {
-				s.wrap = true
+			if w == 2 {
+				s.rows[s.y][s.x+1] = wideTail
+			}
+			if s.x+w == s.cols {
+				s.x, s.wrap = s.cols-1, true
 			} else {
-				s.x++
+				s.x += w
 			}
 		}
 	}
@@ -94,6 +108,8 @@ func (s *term) csi(t *testing.T, param string, final rune) {
 		s.y, s.wrap = max(s.y-n, 0), false
 	case 'B':
 		s.y, s.wrap = min(s.y+n, len(s.rows)-1), false
+	case 'C':
+		s.x, s.wrap = min(s.x+n, s.cols-1), false
 	case 'K':
 		if param != "" {
 			t.Fatalf("CSI %sK", param)
@@ -111,7 +127,7 @@ func (s *term) csi(t *testing.T, param string, final rune) {
 				}
 			}
 			for _, row := range s.rows[:last] {
-				s.history = append(s.history, strings.TrimRight(string(row), " "))
+				s.history = append(s.history, text(row))
 			}
 		}
 		copy(s.rows[s.y][s.x:], s.blank())
@@ -126,7 +142,7 @@ func (s *term) csi(t *testing.T, param string, final rune) {
 func (s *term) lines() []string {
 	var out []string
 	for _, row := range s.rows {
-		out = append(out, strings.TrimRight(string(row), " "))
+		out = append(out, text(row))
 	}
 	return out
 }

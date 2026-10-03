@@ -6,7 +6,6 @@ package markdown
 import (
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -27,6 +26,12 @@ const (
 
 // Writer renders markdown written to it onto a terminal.
 type Writer struct {
+	// Col is the column the line being received starts at, 0 unless the
+	// host set it before the first Write; the Writer keeps it as it goes.
+	// It may be the width of what was on the line before, wrapped rows
+	// and all: it counts modulo the terminal width.
+	Col int
+
 	w    io.Writer
 	size func() (cols, rows int)
 
@@ -83,6 +88,9 @@ func (m *Writer) out(s string) {
 	if s != "" {
 		io.WriteString(m.w, s)
 		m.wrote = true
+		if strings.HasSuffix(s, "\n") {
+			m.Col = 0
+		}
 	}
 }
 
@@ -92,7 +100,7 @@ func (m *Writer) preview() {
 		return
 	}
 	cols, rows := m.size()
-	if lineRows(string(m.line), cols) >= rows-1 {
+	if lineRows(string(m.line), m.col(cols), cols) >= rows-1 {
 		m.frozen = true
 	}
 	m.out(string(m.line[m.shown:]))
@@ -103,17 +111,23 @@ func (m *Writer) complete() {
 	raw := string(m.line)
 	if m.shown > 0 && !m.frozen {
 		cols, _ := m.size()
-		up := lineRows(raw[:m.shown], cols) - 1
-		// The first row is erased by itself and the rest from the row
-		// below: erase below from the top-left corner is a clear screen to
-		// tmux, which with scroll-on-clear keeps the screen, the raw line
-		// with it, in its history. A line of one row has nothing below,
-		// and it may be on the bottom row, where cursor down stays put.
-		erase := "\r\x1b[K"
+		col := m.col(cols)
+		up := lineRows(raw[:m.shown], col, cols) - 1
+		// The rows below the first are erased from the start of the second
+		// and the first by itself, from the line's column to keep what was
+		// before it: erase below from the top-left corner is a clear
+		// screen to tmux, which with scroll-on-clear keeps the screen, the
+		// raw line with it, in its history. A line of one row has nothing
+		// below, and it may be on the bottom row, where cursor down stays
+		// put.
+		erase := "\r"
 		if up > 0 {
-			erase = fmt.Sprintf("\r\x1b[%dA\x1b[K\x1b[B\x1b[J\x1b[A", up)
+			erase += fmt.Sprintf("\x1b[%dA\x1b[B\x1b[J\x1b[A", up)
 		}
-		m.out(erase)
+		if col > 0 {
+			erase += fmt.Sprintf("\x1b[%dC", col)
+		}
+		m.out(erase + "\x1b[K")
 	}
 	rendered := m.render(raw)
 	if m.frozen {
@@ -123,12 +137,30 @@ func (m *Writer) complete() {
 	m.line, m.shown, m.frozen = m.line[:0], 0, false
 }
 
-func lineRows(s string, cols int) int {
-	w := runewidth.StringWidth(s)
-	if w == 0 || cols <= 0 {
+// col is the column the line being received starts at.
+func (m *Writer) col(cols int) int {
+	if cols <= 0 {
+		return 0
+	}
+	return m.Col % cols
+}
+
+// lineRows is how many rows s takes on a terminal cols wide when it starts
+// at column col. A wide character that does not fit in what is left of a
+// row goes whole to the next one, as the terminal moves it.
+func lineRows(s string, col, cols int) int {
+	if cols <= 0 {
 		return 1
 	}
-	return int(math.Ceil(float64(w) / float64(cols)))
+	rows, x := 1, col
+	for _, r := range s {
+		w := runewidth.RuneWidth(r)
+		if x+w > cols {
+			rows, x = rows+1, 0
+		}
+		x += w
+	}
+	return rows
 }
 
 var (
