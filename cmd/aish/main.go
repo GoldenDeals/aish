@@ -352,15 +352,30 @@ func expandCmd() int {
 		return 0
 	}
 	for _, f := range folds {
-		f.Text = strings.ReplaceAll(f.Text, "\r\n", "\n") // captured from the PTY
-		fmt.Printf("\x1b[0m\x1b[36m%s\x1b[0m\n", f.Title)
-		fmt.Print(f.Text)
-		if !strings.HasSuffix(f.Text, "\n") {
-			fmt.Println()
-		}
-		fmt.Print("\x1b[0m")
+		printFold(os.Stdout, f)
 	}
 	return 0
+}
+
+// printFold prints one fold the way the Ctrl+O viewer shows it: the title
+// line by line, the lines after the first indented, then the text.
+func printFold(w io.Writer, f rpc.Fold) {
+	fmt.Fprint(w, "\x1b[0m")
+	for i, l := range strings.Split(f.Title, "\n") {
+		if i > 0 {
+			l = "  " + l
+		}
+		fmt.Fprintf(w, "\x1b[36m%s\x1b[0m\n", strings.ReplaceAll(l, "\t", "        "))
+	}
+	// The text is captured from the PTY; a command without output gets no
+	// empty line under its title.
+	if text := strings.ReplaceAll(f.Text, "\r\n", "\n"); text != "" {
+		fmt.Fprint(w, text)
+		if !strings.HasSuffix(text, "\n") {
+			fmt.Fprintln(w)
+		}
+	}
+	fmt.Fprint(w, "\x1b[0m")
 }
 
 func printEntry(e session.Entry) {
