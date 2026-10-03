@@ -7,6 +7,7 @@ import (
 
 	"github.com/inebotov/aish/internal/capture"
 	"github.com/inebotov/aish/internal/config"
+	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/session"
 )
 
@@ -35,7 +36,9 @@ func compactLimit(cfg config.Config) int {
 // same: then what keeps the context above the limit is what the one turn
 // since brought, and its results are cut instead. A reply the window cut
 // (windowFull) is summed up whatever the estimate, and with an unknown
-// window too: the API counted the window full.
+// window too: the API counted the window full. A summary that fails past
+// compact_at is not asked for again till the next request: every try sends
+// the whole history.
 func (a *Agent) autoCompact(ctx context.Context) error {
 	limit := compactLimit(a.Cfg)
 	tokens := a.contextTokens(a.entries)
@@ -55,6 +58,9 @@ func (a *Agent) autoCompact(ctx context.Context) error {
 			dim, session.Short(tokens), reset)
 		return nil
 	}
+	if a.compactFailed && !full {
+		return nil
+	}
 
 	if full {
 		fmt.Fprintf(a.UI, "%sthe context window is full, compacting…%s\n", dim, reset)
@@ -68,14 +74,20 @@ func (a *Agent) autoCompact(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		// The turn may still fit: the size is an estimate.
-		fmt.Fprintf(a.UI, "%s[aish: could not compact: %v]%s\n", dim, err, reset)
+		// The turn may still fit: the size is an estimate. A full window
+		// has the summary asked for again, as it was.
+		again := ""
+		if !full {
+			a.compactFailed = true
+			again = "; not tried again in this request"
+		}
+		fmt.Fprintf(a.UI, "%s[aish: could not compact: %s%s]%s\n", dim, llm.Short(err), again, reset)
 		return nil
 	}
 	if err := a.append(sum); err != nil {
 		return err
 	}
-	a.windowFull = false
+	a.windowFull, a.compactFailed = false, false
 	// As after `aish compact`, instruction files are read again: everything
 	// before the summary is gone for the model, and the request goes on.
 	inst := instructions(session.Current(a.entries), cwd)

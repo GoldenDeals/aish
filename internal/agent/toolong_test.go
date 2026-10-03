@@ -81,7 +81,7 @@ func TestPromptTooLongCompacts(t *testing.T) {
 		t.Errorf("after the summary the model got %+v", next)
 	}
 	out := ui.String()
-	if !strings.Contains(out, "[aish: the context does not fit the window; compacting]") || !strings.Contains(out, "compacted: ") {
+	if !strings.Contains(out, "the context window is full, compacting") || !strings.Contains(out, "compacted: ") {
 		t.Errorf("terminal:\n%s", out)
 	}
 	if a.windowFull {
@@ -104,7 +104,7 @@ func TestPromptTooLongAfterSummary(t *testing.T) {
 	if got := kinds(j.es); got != "user assistant user summary user" {
 		t.Errorf("journal %s", got)
 	}
-	if out := ui.String(); strings.Count(out, "compacting") != 2 { // the reason and autoCompact's line
+	if out := ui.String(); strings.Count(out, "compacting") != 1 { // autoCompact's line
 		t.Errorf("terminal:\n%s", out)
 	}
 }

@@ -119,6 +119,9 @@ type Agent struct {
 	// session is summed up before the next turn, however small the estimate.
 	// Like the agent it lives through to the next request.
 	windowFull bool
+	// compactFailed is set when a summary past compact_at could not be
+	// made: autoCompact does not ask for it again till the next request.
+	compactFailed bool
 	// paused is set when the API broke the last turn off for the model to
 	// go on from it: drive makes another turn, though the reply looks final.
 	paused bool
@@ -126,7 +129,7 @@ type Agent struct {
 
 // Start records a new request made in ex and works on it.
 func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
-	a.exec, a.env = ex, ""
+	a.exec, a.env, a.compactFailed = ex, "", false
 	a.load(true)
 	if err := a.closePending(ctx); err != nil {
 		return err
@@ -299,7 +302,7 @@ func (a *Agent) drive(ctx context.Context) error {
 			return err
 		default:
 			// The estimate said the context fits; the API counts for sure.
-			fmt.Fprintf(a.UI, "%s[aish: the context does not fit the window; compacting]%s\n", dim, reset)
+			// autoCompact says it compacts, as for a reply the window cut.
 			a.windowFull, compacted = true, true
 		}
 	}

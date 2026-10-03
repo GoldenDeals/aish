@@ -98,8 +98,11 @@ func (p *responsesProvider) response(r *responses.Response) *Response {
 		CachedTokens: int(r.Usage.InputTokensDetails.CachedTokens),
 		OutputTokens: int(r.Usage.OutputTokens),
 	}
-	if r.IncompleteDetails.Reason == "max_output_tokens" {
+	switch r.IncompleteDetails.Reason {
+	case "max_output_tokens":
 		resp.StopReason = StopMaxTokens // as the agent knows a reply cut short
+	case "content_filter":
+		resp.StopReason = StopRefusal
 	}
 	var raw []json.RawMessage
 	for _, it := range r.Output {

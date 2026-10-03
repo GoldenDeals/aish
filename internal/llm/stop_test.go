@@ -42,7 +42,7 @@ func TestStopReason(t *testing.T) {
 		{"openai length", "openai", openaiStop("length"), StopMaxTokens},
 		{"openai stop", "openai", openaiStop("stop"), "stop"},
 		{"responses max_output_tokens", "openai-responses", responsesStop("incomplete", `{"reason":"max_output_tokens"}`), StopMaxTokens},
-		{"responses content_filter", "openai-responses", responsesStop("incomplete", `{"reason":"content_filter"}`), "incomplete"},
+		{"responses content_filter", "openai-responses", responsesStop("incomplete", `{"reason":"content_filter"}`), StopRefusal},
 		{"responses completed", "openai-responses", responsesStop("completed", `null`), "completed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
