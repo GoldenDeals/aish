@@ -95,6 +95,7 @@ type Proxy struct {
 	held    []byte              // shell output that arrived while the viewer was open
 	ask     *prompt             // a question the agent waits for the user to answer
 	form    *openForm           // the questions of ask_user while the user answers them
+	early   *early              // keys typed before readline has the terminal, see early.go
 	done    map[string]rpc.Output
 	waiters map[string]chan struct{}
 	mcp     *mcp.Manager
@@ -277,6 +278,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), old)
 
+	p.holdEarly(ptmx) // before the output is read: no prompt has gone by
 	go p.input(os.Stdin, ptmx)
 
 	outDone := make(chan struct{})
@@ -400,6 +402,9 @@ const ctrlO = 0x0f
 func (p *Proxy) key(b []byte) []byte {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.early != nil {
+		return p.earlyKey(b)
+	}
 	if p.panes != nil && p.panes.shown {
 		return p.paneKey(b)
 	}
@@ -547,6 +552,7 @@ func (p *Proxy) pump(r io.Reader, f *Filter) {
 func (p *Proxy) output(b []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.earlyOutput(b)
 	show := b
 	if cleared, from := p.screen.Feed(b); cleared && !p.asking {
 		p.cleared()
@@ -607,6 +613,7 @@ func (p *Proxy) marker(m Marker) {
 		p.user = nil
 	case "cmd-end":
 		defer p.drawStatus() // once the command is in the journal
+		p.earlyPrompt()
 		p.at = nil
 		p.asking = false
 		p.handed = "" // cut short by Ctrl+C or return, or never run
