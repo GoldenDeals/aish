@@ -71,7 +71,7 @@ func (c rulesChecker) Check(ctx context.Context, in Input) (Decision, error) {
 		}
 		// A file known only at run time may be anywhere. Parse marks it
 		// computed, so a line without the mark writes none.
-		if a := c.WriteOutsideHome; a != "" && a != Allow && slices.Contains(in.Dynamic, dynComputed) && unknownWrite(in.Line, in.Cwd, in.Home) {
+		if a := c.WriteOutsideHome; a != "" && a != Allow && slices.Contains(in.Dynamic, dynComputed) && unknownWrite(in.Line, in.shell().pwd, in.shell().home) {
 			ds = append(ds, Decision{Action: a, Reason: "writes a file known only at run time"})
 		}
 	case in.Tool == "write_file", in.Tool == "edit_file":

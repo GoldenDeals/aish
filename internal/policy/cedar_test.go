@@ -122,12 +122,12 @@ func TestMCPTool(t *testing.T) {
 		`@reason("public") forbid(principal, action == Action::"call", resource)
 		 when { resource.hasTag("private") && resource.getTag("private") == "false" &&
 		        resource.hasTag("name") && resource.getTag("name") == "secret" };` + "\n"})
-	in := NewInput("create_repo", map[string]any{"name": "x"}, "/")
+	in := NewInput("create_repo", map[string]any{"name": "x"}, "/", nil)
 	in.Server = "github"
 	if d := check(t, e, in); d.Action != Deny || d.Reason != "no github" {
 		t.Errorf("github: %+v", d)
 	}
-	in = NewInput("create_repo", map[string]any{"name": "secret", "private": false}, "/")
+	in = NewInput("create_repo", map[string]any{"name": "secret", "private": false}, "/", nil)
 	in.Server = "gitea"
 	if d := check(t, e, in); d.Action != Deny || d.Reason != "public" {
 		t.Errorf("public secret: %+v", d)
@@ -136,7 +136,7 @@ func TestMCPTool(t *testing.T) {
 	if d := check(t, e, in); d.Action != Allow {
 		t.Errorf("private secret: %+v", d)
 	}
-	if d := check(t, e, NewInput("weather", map[string]any{"city": "Oslo"}, "/")); d.Action != Allow {
+	if d := check(t, e, NewInput("weather", map[string]any{"city": "Oslo"}, "/", nil)); d.Action != Allow {
 		t.Errorf("external tool: %+v", d)
 	}
 }
@@ -175,7 +175,7 @@ func TestHomeAndCwdDirs(t *testing.T) {
 		{"read_file", "../x", Deny},
 		{"read_file", "/etc/hosts", Deny},
 	} {
-		d := check(t, e, NewInput(c.tool, map[string]any{"path": c.path}, cwd))
+		d := check(t, e, NewInput(c.tool, map[string]any{"path": c.path}, cwd, nil))
 		if d.Action != c.want {
 			t.Errorf("%s %s: %+v, want %s", c.tool, c.path, d, c.want)
 		}

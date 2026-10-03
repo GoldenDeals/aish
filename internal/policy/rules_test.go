@@ -108,7 +108,7 @@ func TestRulesWriteOutsideHome(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		d, err := e.Check(ctx, NewInput("write_file", map[string]any{"path": "/etc/hosts"}, home))
+		d, err := e.Check(ctx, NewInput("write_file", map[string]any{"path": "/etc/hosts"}, home, nil))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -304,7 +304,7 @@ func (a *Agent) runSub(ctx context.Context, d subagent.Def, prompt string, out L
 			break
 		}
 		var o rpc.Output
-		if why := refused(scope, cmd, ex.Dir); why != "" {
+		if why := refused(scope, cmd, ex.Dir, ex.Env); why != "" {
 			fmt.Fprintf(out, "%s  ✗ %s%s\n", red, why, reset)
 			o = rpc.Output{Output: "not run: " + why, Exit: 126, Cwd: ex.Dir}
 		} else {
@@ -531,11 +531,11 @@ func (b subBash) Command(args map[string]any) (string, bool) {
 
 func (b subBash) Title(args map[string]any) string { return tools.Title(b.Tool, args) }
 
-// refused tells why cmd, run in cwd, is not one a subagent with scope may
-// run; "" when it is. Every simple command of the line, those in $(…) and
-// bash -c included, must match a pattern, and code made at run time
-// cannot be checked, so it does not run.
-func refused(s *bashScope, cmd, cwd string) string {
+// refused tells why cmd, run in cwd with env, is not one a subagent with
+// scope may run; "" when it is. Every simple command of the line, those in
+// $(…) and bash -c included, must match a pattern, and code made at run
+// time cannot be checked, so it does not run.
+func refused(s *bashScope, cmd, cwd string, env []string) string {
 	if s == nil {
 		return ""
 	}
@@ -543,7 +543,7 @@ func refused(s *bashScope, cmd, cwd string) string {
 		// Without it the policy's parser does not tell the files written.
 		return "no working directory to check the command in"
 	}
-	in := policy.NewInput(tools.Bash, nil, cwd)
+	in := policy.NewInput(tools.Bash, nil, cwd, env)
 	in.HandOff(cmd)
 	switch {
 	case in.ParseError != "":

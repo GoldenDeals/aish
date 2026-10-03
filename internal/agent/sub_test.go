@@ -277,11 +277,11 @@ func TestMatchCommand(t *testing.T) {
 		"git push --force":               false,
 		"git diff; X=1 sh -c 'git diff'": false,
 	} {
-		if got := refused(scope, cmd, "/") == ""; got != ok {
-			t.Errorf("%q: allowed %v, want %v (%s)", cmd, got, ok, refused(scope, cmd, "/"))
+		if got := refused(scope, cmd, "/", nil) == ""; got != ok {
+			t.Errorf("%q: allowed %v, want %v (%s)", cmd, got, ok, refused(scope, cmd, "/", nil))
 		}
 	}
-	if refused(nil, "rm -rf x", "/") != "" {
+	if refused(nil, "rm -rf x", "/", nil) != "" {
 		t.Error("no scope refused a command")
 	}
 }

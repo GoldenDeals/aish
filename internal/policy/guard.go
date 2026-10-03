@@ -109,6 +109,7 @@ func (g guarded) line(in Input) bool {
 		return true
 	}
 	enters, copying := false, false
+	sh := in.shell()
 	for _, argv := range in.Commands {
 		if len(argv) == 0 {
 			continue
@@ -116,7 +117,7 @@ func (g guarded) line(in Input) bool {
 		if trusts(argv) {
 			return true
 		}
-		paths := guardPaths(argv, in.Cwd, in.Home)
+		paths := guardPaths(argv, sh)
 		if slices.ContainsFunc(paths, g.names) {
 			return true
 		}
@@ -136,22 +137,22 @@ func (g guarded) line(in Input) bool {
 // Paths of Analyze, the value of a name=value or --opt=value word (dd
 // of=FILE) and a word Analyze takes for no path at all, as a name in cwd:
 // trusted.json is the file when cwd is the trust file's directory.
-func guardPaths(argv []string, cwd, home string) []string {
-	c := Analyze(argv, cwd, home)
+func guardPaths(argv []string, sh shell) []string {
+	c := sh.analyze(argv)
 	ps := c.Paths
 	for _, w := range c.Args {
 		if _, v, ok := strings.Cut(w, "="); ok {
-			if p, ok := pathOf(v, cwd, home); ok {
+			for _, p := range sh.paths(v) {
 				ps = append(ps, walk(p))
 			}
 		}
 	}
-	if cwd == "" {
+	if sh.pwd == "" {
 		return ps
 	}
 	for _, op := range c.Operands {
-		if _, ok := pathOf(op, cwd, home); !ok && op != "" && op != "-" {
-			ps = append(ps, walk(cwd+"/"+op))
+		if len(sh.paths(op)) == 0 && op != "" && op != "-" {
+			ps = append(ps, walk(sh.pwd+"/"+op))
 		}
 	}
 	return ps
@@ -208,17 +209,16 @@ func extracts(args []string) bool {
 // blind tells whether a line may do what the guard does not see: it did
 // not parse (bash runs a line up to its error), it runs code built at run
 // time (Dynamic: a file written by > "$f" among them), or a word of it is
-// an expansion other than of $HOME and $PWD, or braces.
+// an expansion other than of $HOME, $PWD, ~ and ~user ($OLDPWD in ~- among
+// them), or braces.
 func blind(in Input) bool {
 	if in.ParseError != "" || len(in.Dynamic) > 0 {
 		return true
 	}
+	sh := in.shell()
 	for _, argv := range in.Commands {
 		for _, w := range argv {
-			if p, ok := pathOf(w, in.Cwd, in.Home); ok {
-				w = p
-			}
-			if strings.ContainsAny(w, "$`") || braces(w) {
+			if words, ok := sh.expand(w); !ok || strings.ContainsAny(words[0], "$`") || braces(w) {
 				return true
 			}
 		}

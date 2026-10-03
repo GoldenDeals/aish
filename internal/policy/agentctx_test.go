@@ -19,10 +19,10 @@ when { context has agent && context.agent == "reviewer" };
 forbid(principal, action == Action::"call", resource)
 when { context has agent && context.agent == "reviewer" };
 `})
-	write := NewInput("write_file", map[string]any{"path": "x", "content": "y"}, home)
+	write := NewInput("write_file", map[string]any{"path": "x", "content": "y"}, home, nil)
 	git := callInput("bash", map[string]any{"command": "git status"}, home)
 	redirect := callInput("bash", map[string]any{"command": "echo y > x"}, home)
-	weather := NewInput("weather", map[string]any{"city": "Oslo"}, home)
+	weather := NewInput("weather", map[string]any{"city": "Oslo"}, home, nil)
 	for _, c := range []struct {
 		name string
 		in   Input

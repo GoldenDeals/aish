@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 )
 
@@ -44,7 +46,7 @@ type Input struct {
 	Commands   [][]string `json:"commands,omitempty"`
 	ParseError string     `json:"parse_error,omitempty"`
 	// Dynamic is Script.Dynamic of Line: what in it runs code no policy
-	// has seen.
+	// has seen; a cd to where no policy can follow is "computed" too.
 	Dynamic []string `json:"dynamic,omitempty"`
 	// Writes is Script.Writes of Line: the files its redirections write.
 	Writes []string `json:"writes,omitempty"`
@@ -55,6 +57,10 @@ type Input struct {
 	Model string `json:"model,omitempty"`
 	// Agent is the subagent making the call; "" for the host agent.
 	Agent string `json:"agent,omitempty"`
+	// sh is the shell the call is made in, as NewInput finds it in its
+	// environment: the commands of Line take ~ and $HOME from its HOME,
+	// not from Home, and relative paths from its logical directory.
+	sh shell
 }
 
 // Engine holds the checkers of a policy directory.
@@ -114,13 +120,21 @@ func Load(ctx context.Context, dir string, rules Rules) (*Engine, error) {
 	return e, nil
 }
 
-// NewInput fills the derived fields of the input for a tool call. Cwd is
-// resolved as the paths are, so that `context.paths == [context.cwd]` holds
-// for `cd .` in a directory reached through a symlink.
-func NewInput(tool string, args map[string]any, cwd string) Input {
+// NewInput fills the derived fields of the input for a tool call made from
+// cwd in a shell whose environment is env (nil: the process's own, as for
+// tools.Exec). Cwd is resolved as the paths are, so that
+// `context.paths == [context.cwd]` holds for `cd .` in a directory reached
+// through a symlink. A file tool's relative path is taken from cwd as
+// given, as the tool takes it: from a link, ../x is next to the link.
+func NewInput(tool string, args map[string]any, cwd string, env []string) Input {
 	home, _ := os.UserHomeDir()
-	cwd = resolve(cwd)
-	in := Input{Tool: tool, Args: args, Cwd: cwd, Home: resolve(home)}
+	in := Input{Tool: tool, Args: args, Cwd: resolve(cwd), Home: resolve(home)}
+	in.sh = shell{
+		pwd:    logical(cwd, getenv(env, "PWD"), in.Cwd),
+		home:   getenv(env, "HOME"),
+		cdpath: getenv(env, "CDPATH"),
+		env:    true,
+	}
 	if p, ok := args["path"].(string); ok && p != "" {
 		p = homePath(p, home)
 		if !filepath.IsAbs(p) {
@@ -131,17 +145,73 @@ func NewInput(tool string, args map[string]any, cwd string) Input {
 	return in
 }
 
+// getenv is the value of name in env, or in the process's environment when
+// env is nil, as tools.Exec.Getenv has it.
+func getenv(env []string, name string) string {
+	if env == nil {
+		return os.Getenv(name)
+	}
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+			return v
+		}
+	}
+	return ""
+}
+
+// logical is the shell's name for the directory cwd, whose resolved path
+// is real: PWD when it names that directory, as bash takes PWD from its
+// environment and os.Getwd does, else cwd as given.
+func logical(cwd, pwd, real string) string {
+	if filepath.IsAbs(pwd) && resolve(pwd) == real {
+		return filepath.Clean(pwd)
+	}
+	if cwd == "" {
+		return ""
+	}
+	return filepath.Clean(cwd)
+}
+
 // HandOff marks the call as one that hands line to the user's shell, so
 // that the policies judge its commands one by one and the files its
-// redirections write. Cwd and Home are those of the call by then.
+// redirections write, in the shell of the call: NewInput's, or Cwd and
+// Home of an input made otherwise.
 func (in *Input) HandOff(line string) {
 	in.Line = line
-	s, err := Parse(line, in.Cwd, in.Home)
+	in.sh.quoted = quotedPrefix(line)
+	sh := in.shell()
+	s, err := Parse(line, sh.pwd, sh.home)
 	in.Commands, in.Dynamic, in.Writes = s.Commands, s.Dynamic, s.Writes
 	in.Remote = s.Remote
 	if err != nil {
 		in.ParseError = err.Error()
 	}
+	// A cd to where no policy can follow is as unknown as a command built
+	// at run time, and so is all that runs there after it. A cd over ssh
+	// moves a shell of another machine.
+	for i, argv := range in.Commands {
+		if slices.Contains(in.Remote, i) {
+			continue
+		}
+		if sh.analyze(argv).lost && !slices.Contains(in.Dynamic, dynComputed) {
+			in.Dynamic = append(in.Dynamic, dynComputed)
+			sort.Strings(in.Dynamic)
+		}
+	}
+}
+
+// Analyze is Analyze of argv in the shell the call is made in: from its
+// logical directory, with its HOME and CDPATH.
+func (in Input) Analyze(argv []string) Command {
+	return in.shell().analyze(argv)
+}
+
+// shell is in.sh, or Cwd and Home for an input NewInput did not make.
+func (in Input) shell() shell {
+	if in.sh.env {
+		return in.sh
+	}
+	return shell{pwd: in.Cwd, home: in.Home, quoted: in.sh.quoted}
 }
 
 // maxLinks is MAXSYMLINKS of Linux: after as many links on one path the

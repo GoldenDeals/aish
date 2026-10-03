@@ -50,7 +50,7 @@ func policyCmd(cfg config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	in := policy.NewInput(t.Name(), targs, cwd)
+	in := policy.NewInput(t.Name(), targs, cwd, os.Environ())
 	if h, ok := t.(tools.HandsOff); ok {
 		if line, ok := h.Command(targs); ok {
 			in.HandOff(line)

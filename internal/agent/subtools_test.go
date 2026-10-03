@@ -156,7 +156,7 @@ func TestSubToolsEntries(t *testing.T) {
 		}
 	}
 	reg, scope := subTools(host, []string{"Grep"})
-	if why := refused(scope, "rm x", "/"); !strings.Contains(why, "rm is not among the commands this subagent may run: cat *, find *") {
+	if why := refused(scope, "rm x", "/", nil); !strings.Contains(why, "rm is not among the commands this subagent may run: cat *, find *") {
 		t.Errorf("rm with Grep: %q", why)
 	}
 	if b, _ := reg.Get(tools.Bash); !strings.Contains(b.Desc(), "-delete") || !strings.Contains(b.Desc(), "grep *, head *") {
@@ -184,7 +184,7 @@ func TestReadOnlyBash(t *testing.T) {
 		"cat $(find . -name x)",
 		"f=a; cat $f",
 	} {
-		if why := refused(ro, cmd, dir); why != "" {
+		if why := refused(ro, cmd, dir, nil); why != "" {
 			t.Errorf("%q refused: %s", cmd, why)
 		}
 	}
@@ -228,7 +228,7 @@ func TestReadOnlyBash(t *testing.T) {
 		"cat <(rm y)":                   "rm is not among",
 		"cd /tmp && ls":                 "cd is not among",
 	} {
-		if why := refused(ro, cmd, dir); !strings.Contains(why, want) {
+		if why := refused(ro, cmd, dir, nil); !strings.Contains(why, want) {
 			t.Errorf("%q: %q, want %q in it", cmd, why, want)
 		}
 	}
@@ -241,12 +241,12 @@ func TestReadOnlyBash(t *testing.T) {
 		"git log > out; cat a": false,
 		"git log; cat a > out": false,
 	} {
-		if got := refused(mixed, cmd, dir) == ""; got != ok {
-			t.Errorf("%q with git log *: allowed %v, want %v (%s)", cmd, got, ok, refused(mixed, cmd, dir))
+		if got := refused(mixed, cmd, dir, nil) == ""; got != ok {
+			t.Errorf("%q with git log *: allowed %v, want %v (%s)", cmd, got, ok, refused(mixed, cmd, dir, nil))
 		}
 	}
 	// A line of no command at all may not write either.
-	if why := refused(&bashScope{patterns: []string{"git *"}}, "> out", dir); !strings.Contains(why, "writes to") {
+	if why := refused(&bashScope{patterns: []string{"git *"}}, "> out", dir, nil); !strings.Contains(why, "writes to") {
 		t.Errorf("> out with git *: %q", why)
 	}
 }

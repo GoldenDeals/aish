@@ -57,7 +57,7 @@ func TestAnalyzeCdLogical(t *testing.T) {
 		{[]string{"cd", "-e", "-P", "home/link/.."}, physical},
 		// An option after the operand is not an option to cd.
 		{[]string{"cd", "home/link/..", "-P"}, both},
-		{[]string{"cd", "--", "-P", "home/link/.."}, both},
+		{[]string{"cd", "--", "-P", "home/link/.."}, []string{root + "/-P", home, outside}},
 		// Both ways lead to the same place: one path.
 		{[]string{"cd", "home/link"}, []string{outside + "/dir"}},
 		{[]string{"cd", "home/link/../.."}, []string{root}},

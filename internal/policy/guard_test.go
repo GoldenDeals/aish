@@ -166,7 +166,7 @@ func TestGuard(t *testing.T) {
 			}
 		}
 		for _, c := range files {
-			d, err := e.Check(ctx, NewInput(c.tool, map[string]any{"path": c.path, "content": "{}"}, home))
+			d, err := e.Check(ctx, NewInput(c.tool, map[string]any{"path": c.path, "content": "{}"}, home, nil))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -183,7 +183,7 @@ func TestGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := e.Check(ctx, NewInput("write_file", map[string]any{"path": filepath.Join(xdg, "aish", "trusted.json")}, home))
+	d, err := e.Check(ctx, NewInput("write_file", map[string]any{"path": filepath.Join(xdg, "aish", "trusted.json")}, home, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

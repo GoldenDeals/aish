@@ -176,7 +176,7 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 	case in.Line != "":
 		var reqs []types.Request
 		run := func(argv []string, remote bool) {
-			c := Analyze(argv, in.Cwd, in.Home)
+			c := in.Analyze(argv)
 			if remote {
 				// The command of ssh names files of another machine.
 				c.Paths = nil

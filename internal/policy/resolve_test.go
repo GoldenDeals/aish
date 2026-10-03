@@ -100,7 +100,7 @@ func TestInputHome(t *testing.T) {
 		{"~x", "/w/~x"},
 		{"a/~/x", "/w/a/~/x"},
 	} {
-		if got := NewInput("write_file", map[string]any{"path": c.path}, "/w").Path; got != c.want {
+		if got := NewInput("write_file", map[string]any{"path": c.path}, "/w", nil).Path; got != c.want {
 			t.Errorf("path %s: %s, want %s", c.path, got, c.want)
 		}
 	}
@@ -124,7 +124,7 @@ func TestDanglingLinkOutOfHome(t *testing.T) {
 		{"updang", Deny, "writes outside home: " + out + "/new"},
 		{"inside", Allow, ""},
 	} {
-		d, err := e.Check(ctx, NewInput("write_file", map[string]any{"path": c.path}, home))
+		d, err := e.Check(ctx, NewInput("write_file", map[string]any{"path": c.path}, home, nil))
 		if err != nil {
 			t.Fatal(err)
 		}

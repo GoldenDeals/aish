@@ -106,7 +106,7 @@ func TestSymlinkOutOfHome(t *testing.T) {
 		{"notes.txt", Allow},
 		{"new/notes.txt", Allow},
 	} {
-		in := NewInput("write_file", map[string]any{"path": c.path}, home)
+		in := NewInput("write_file", map[string]any{"path": c.path}, home, nil)
 		d, err := e.Check(ctx, in)
 		if err != nil {
 			t.Fatal(err)

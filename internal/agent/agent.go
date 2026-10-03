@@ -418,7 +418,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		return false, a.append(toolResult(c, err.Error(), true))
 	}
 
-	in := policy.NewInput(t.Name(), args, a.exec.Dir)
+	in := policy.NewInput(t.Name(), args, a.exec.Dir, a.exec.Env)
 	if h, ok := t.(tools.HandsOff); ok {
 		if line, ok := h.Command(args); ok {
 			in.HandOff(line)

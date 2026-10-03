@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -9,9 +10,10 @@ import (
 )
 
 // callInput builds the input of a call as the agent does: bash hands its
-// command to the shell, as shell.Command gives it.
+// command to the shell, as shell.Command gives it. The shell has HOME of
+// the test, and no PWD or CDPATH of the one running it.
 func callInput(tool string, args map[string]any, cwd string) Input {
-	in := NewInput(tool, args, cwd)
+	in := NewInput(tool, args, cwd, []string{"HOME=" + os.Getenv("HOME")})
 	if c, ok := args["command"].(string); ok && tool == "bash" && strings.TrimSpace(c) != "" {
 		in.HandOff(c)
 	}
