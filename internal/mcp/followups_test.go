@@ -35,7 +35,7 @@ func TestHTTPSessionClosed(t *testing.T) {
 	if len(res.Tools) != 1 || len(res.Errors) != 0 {
 		t.Fatalf("listing: %+v", res)
 	}
-	if got, want := res.Tools[0].Timeout, startTimeout+2*7*time.Second; got != want {
+	if got, want := res.Tools[0].Timeout, 2*(startTimeout+7*time.Second); got != want {
 		t.Errorf("timeout %v, want %v", got, want)
 	}
 

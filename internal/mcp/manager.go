@@ -32,8 +32,9 @@ type ToolInfo struct {
 	Schema      json.RawMessage `json:"schema,omitempty"`
 	Expose      string          `json:"expose,omitempty"`
 	// Timeout is how long a call may take in the proxy, the server's start
-	// included, and for an HTTP server its repeat in a new session: the
-	// client waits as long. Set by List, not cached.
+	// included, and twice that for an HTTP server, where the call may be
+	// repeated in a new session after its start: the client waits as long.
+	// Set by List, not cached.
 	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
@@ -159,7 +160,7 @@ func (m *Manager) List(ctx context.Context, wait bool) ListResult {
 		for _, t := range s.tools {
 			t.Timeout = startTimeout + s.timeout()
 			if s.cfg.URL != "" {
-				t.Timeout += s.timeout() // Call repeats it once in a new session
+				t.Timeout *= 2 // Call may start a new session and repeat it there
 			}
 			res.Tools = append(res.Tools, t)
 		}

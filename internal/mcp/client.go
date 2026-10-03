@@ -27,7 +27,7 @@ const protocolVersion = "2025-06-18"
 
 // cancelTimeout bounds what is said to a server only as a courtesy, with
 // nobody waiting for the outcome: the cancellation of a request the caller
-// has gone from, the end of a session.
+// has gone from, the end of a session, the reply to the server's request.
 const cancelTimeout = 2 * time.Second
 
 // Server is one entry of mcp.yaml: a command speaking MCP on stdio, or the
@@ -157,9 +157,12 @@ type stdio struct {
 	dead    chan struct{}
 	err     error
 	closed  bool // given up on, though the process may still be exiting
-	// orphan is set while wmu is held by a notification given up on, its
-	// line still not taken by the server: nobody waits for it to give the
-	// server up.
+	// reaped is set once Wait returns: the process's pid, which is also the
+	// id of its group, may be another process's after that.
+	reaped bool
+	// orphan is set while wmu is held by a notification or a reply given up
+	// on, its line still not taken by the server: nobody waits for it to
+	// give the server up.
 	orphan bool
 
 	stop sync.Once
@@ -210,7 +213,11 @@ func (c *stdio) read(r io.Reader) {
 			}
 			// Not in this goroutine: a server that does not read would stop
 			// the reading too, and with it the answers to the calls that wait.
-			go c.write(context.Background(), reply, false)
+			go func() {
+				ctx, stop := context.WithTimeout(context.Background(), cancelTimeout)
+				defer stop()
+				c.write(ctx, reply, false)
+			}()
 		case m.Method == "":
 			c.mu.Lock()
 			ch := c.pending[string(m.ID)]
@@ -223,6 +230,7 @@ func (c *stdio) read(r io.Reader) {
 	}
 	err := c.cmd.Wait()
 	c.mu.Lock()
+	c.reaped = true
 	c.err = fmt.Errorf("server exited (%v)%s", err, c.stderr.String())
 	c.mu.Unlock()
 	close(c.dead)
@@ -230,10 +238,10 @@ func (c *stdio) read(r io.Reader) {
 
 // write sends m unless ctx ends first. A call whose line the server does
 // not take is given up with the server: the line it got may be cut short,
-// and nothing can be said to it after that. A notification is not worth
-// the server, which may be busy rather than deaf: its line is left to go
-// through when the server reads again, and only a call stuck behind it
-// gives the server up.
+// and nothing can be said to it after that. A notification or a reply to
+// the server is not worth the server, which may be busy rather than deaf:
+// its line is left to go through when the server reads again, and only a
+// call stuck behind it gives the server up.
 func (c *stdio) write(ctx context.Context, m message, call bool) error {
 	m.JSONRPC = "2.0"
 	b, err := json.Marshal(m)
@@ -382,15 +390,27 @@ func (c *stdio) close() {
 	c.stop.Do(func() {
 		// Also wakes up a write blocked on the pipe.
 		c.in.Close()
-		if c.cmd.Process != nil {
-			syscall.Kill(-c.cmd.Process.Pid, syscall.SIGTERM)
+		if c.signal(syscall.SIGTERM) {
 			select {
 			case <-c.dead:
 			case <-time.After(time.Second):
-				syscall.Kill(-c.cmd.Process.Pid, syscall.SIGKILL)
+				c.signal(syscall.SIGKILL)
 			}
 		}
 	})
+}
+
+// signal sends sig to the server's process group unless the server is
+// reaped. Children it left behind are not signalled then: the group's id
+// is no longer known to be theirs.
+func (c *stdio) signal(sig syscall.Signal) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.reaped || c.cmd.Process == nil {
+		return false
+	}
+	syscall.Kill(-c.cmd.Process.Pid, sig)
+	return true
 }
 
 // tail keeps the end of a server's stderr for error messages.
