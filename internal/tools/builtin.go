@@ -163,7 +163,8 @@ func Builtins() []Tool {
 				"Usage:\n" +
 				"- Stdin is /dev/null: do not run interactive programs (editors, pagers, prompts); use non-interactive flags.\n" +
 				"- Never run `exit`, `exec` or `logout`: it would close the user's shell.\n" +
-				"- Try to maintain the current working directory by using absolute paths and avoiding `cd`; a cd stays in effect for the user.\n" +
+				"- Avoid `cd` and use absolute paths: a cd stays in effect for the user. Unless the user asked to go somewhere, return in the same command " +
+				"(`cd dir && make; cd -`, or a subshell: `(cd dir && make)`). Never cd into the directory the shell is already in.\n" +
 				"- Always quote file paths that contain spaces with double quotes.\n" +
 				"- Do not run long-running servers or watchers in the foreground; start them in the background with output redirected to a file.\n" +
 				"- Do not sleep between commands that can run immediately — just run them.\n" +
