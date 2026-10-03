@@ -46,9 +46,9 @@ __aish_fresh=1   # 1 while readline is at the primary prompt (not PS2)
 __aish_buf=      # full text of the command being entered (multi-line aware)
 __aish_ps0=      # marker emitted by PS0, set only for user commands
 
-# The locals here and in __aish_to_llm are __aish_ names: the request
-# __aish_expand expands sees them, and $line means the user's. __aish_rc
-# is the code of the user's last command, for $? in the request.
+# The locals here, in __aish_to_llm and __aish_expanding are __aish_ names:
+# the request __aish_expand expands sees them, and $line means the user's.
+# __aish_rc is the code of the user's last command, for $? in the request.
 __aish_route() {
 	local __aish_rc=$? __aish_line=$READLINE_LINE
 	if [[ $__aish_fresh != 1 ]]; then
@@ -208,6 +208,31 @@ __aish_eof
 
 __aish_status() { return "$1"; }
 
+# __aish_expanding sets __aish_x, a local of its caller, to $1 expanded,
+# and fails as __aish_expand does. A $(...) may take long: a dim
+# "expanding…" stands meanwhile for the line bash erased for bind -x, and
+# Ctrl+C ends only the substitution. Untrapped, it would throw the shell
+# out of bind -x, and the rest of the Enter macro would accept an empty
+# line at a prompt more. __aish_intr keeps the code, 130 or that of the
+# signal that killed the substitution, for __aish_ask to return unasked.
+__aish_expanding() {
+	if [[ $1 != *'$('* ]]; then
+		__aish_x=$(__aish_expand "$1" </dev/null)
+		return
+	fi
+	local __aish_p __aish_s
+	__aish_p=$(trap -p INT)
+	trap '__aish_intr=130' INT
+	printf '\e[2mexpanding…\e[0m\r' >&2
+	__aish_x=$(__aish_expand "$1" </dev/null)
+	__aish_s=$?
+	printf '\e[K' >&2
+	if [[ -n $__aish_p ]]; then eval "$__aish_p"; else trap - INT; fi
+	((__aish_s > 128)) && __aish_intr=$__aish_s
+	[[ -z ${__aish_intr-} ]] || return 1
+	return $__aish_s
+}
+
 # __aish_to_llm rewrites the line into a request. The text is expanded
 # here, before READLINE_LINE, for the screen, the journal and the model to
 # get the same one; history gets what was typed (__aish_typed). A second
@@ -216,7 +241,7 @@ __aish_to_llm() {
 	local __aish_t=$1 __aish_x
 	__aish_t=${__aish_t#"${__aish_t%%[![:space:]]*}"}
 	if [[ -z ${2-} && $__aish_route_expand == true && $__aish_t == *'$'* ]]; then
-		__aish_x=$(__aish_expand "$__aish_t" </dev/null) && __aish_t=$__aish_x
+		__aish_expanding "$__aish_t" && __aish_t=$__aish_x
 	fi
 	if [[ -z $__aish_t ]]; then
 		READLINE_LINE=
@@ -266,6 +291,7 @@ __aish_precmd() {
 	printf '\e]6973;%s;cmd-end;%s;%s\a' "$__aish_nonce" "$__aish_rc" "${PWD//[$'\a\e']/}"
 	__aish_fresh=1
 	__aish_ps0=
+	__aish_intr=
 	return $__aish_rc
 }
 
@@ -347,6 +373,11 @@ __aish_ask() {
 	# user typed instead.
 	[[ -o history ]] && builtin history -s -- "${__aish_typed:-$__aish_q}"
 	__aish_typed=
+	# Ctrl+C cut its expansion short: on the screen and in history, unsent.
+	if [[ -n ${__aish_intr-} ]]; then
+		__aish_rc=$__aish_intr __aish_intr=
+		return "$__aish_rc"
+	fi
 
 	printf '\e]6973;%s;ask-start\a' "$__aish_nonce"
 	"$AISH_BIN" agent start -- "$__aish_q" || return
