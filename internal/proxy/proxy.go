@@ -49,6 +49,12 @@ type segment struct {
 	buf     *capture.Buffer
 	fold    *fold // agent commands only
 	cleared bool  // the command erased the screen
+
+	// last follows the line an agent command's output leaves open when it
+	// has no fold, as the fold does: the end of the command ends that line,
+	// which the spinner of the next turn (it starts with \r and erases the
+	// line) or the prompt would take.
+	last lastLine
 }
 
 // Fold is one output hidden behind "ctrl+o to expand".
@@ -552,6 +558,8 @@ func (p *Proxy) output(b []byte) {
 		s.buf.Write(b)
 		if s.fold != nil {
 			show = s.fold.write(b)
+		} else {
+			s.last.feed(b)
 		}
 	}
 	if p.tool != nil {
@@ -611,6 +619,8 @@ func (p *Proxy) marker(m Marker) {
 			p.finish(id, rpc.Output{Output: out, Exit: 130, TUI: tui})
 			if seg.fold != nil {
 				p.finishFold(seg.fold, 130)
+			} else if seg.last.text {
+				p.emit([]byte("\r\n"))
 			}
 		}
 		clear(p.agent)
@@ -659,6 +669,8 @@ func (p *Proxy) marker(m Marker) {
 		exit, _ := strconv.Atoi(f[1])
 		if seg.fold != nil {
 			p.finishFold(seg.fold, exit)
+		} else if seg.last.text {
+			p.emit([]byte("\r\n"))
 		}
 		out, tui := render(seg.buf)
 		p.finish(id, rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui})
