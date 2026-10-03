@@ -339,7 +339,9 @@ func TestPaneKeys(t *testing.T) {
 		{"0\x03", "\x03", -1},
 		{"\x03", "\x03", -1},
 	} {
-		if got := p.key([]byte(k.in)); string(got) != k.pass || ps.zoom != k.zoom || !ps.shown {
+		got := p.key([]byte(k.in))
+		settled(p) // a lone Esc, once nothing follows it
+		if string(got) != k.pass || ps.zoom != k.zoom || !ps.shown {
 			t.Errorf("%q: passed %q, zoom %d, shown %v", k.in, got, ps.zoom, ps.shown)
 		}
 	}

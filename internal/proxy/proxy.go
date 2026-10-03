@@ -96,6 +96,7 @@ type Proxy struct {
 	ask     *prompt             // a question the agent waits for the user to answer
 	form    *openForm           // the questions of ask_user while the user answers them
 	early   *early              // keys typed before readline has the terminal, see early.go
+	seq     keySeq              // keys a read cut, and pastes, see pastebrackets.go
 	done    map[string]rpc.Output
 	waiters map[string]chan struct{}
 	mcp     *mcp.Manager
@@ -407,6 +408,14 @@ func (p *Proxy) key(b []byte) []byte {
 	defer p.mu.Unlock()
 	if p.early != nil {
 		return p.earlyKey(b)
+	}
+	return p.takeKeys(p.wholeKeys(b))
+}
+
+// takeKeys is key for the keys wholeKeys gave whole. Called under p.mu.
+func (p *Proxy) takeKeys(b []byte) []byte {
+	if len(b) == 0 {
+		return nil
 	}
 	if p.panes != nil && p.panes.shown {
 		return p.paneKey(b)
