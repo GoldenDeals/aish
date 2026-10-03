@@ -164,18 +164,16 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	// what the status compares the shell's profile with, and where a shell
 	// goes whose profile is gone. It fails where the shell's profile may
 	// not, on a profile $AISH_PROFILE or the profile key names and
-	// config.toml has not: LoadProfile tells what is wrong if the shell's
-	// profile is too, tellDefErr if not.
+	// config.toml has not: tellDefErr tells of it, and a shell whose
+	// profile is gone too goes to the top level.
 	def, defErr := config.LoadEnv(ex.Getenv)
 	p.mu.Lock()
 	if defErr == nil {
 		p.defProfile = def.Profile
-		if _, ok := def.Profiles[p.profile]; p.profile != "" && !ok {
-			if err := p.leaveGone(def); err != nil {
-				p.mu.Unlock()
-				return nil, err
-			}
-		}
+	}
+	if err := p.leaveGone(def, defErr); err != nil {
+		p.mu.Unlock()
+		return nil, err
 	}
 	// One moment for all of them: `aish model` may land in between. The
 	// shell's profile, not the one config.toml selects, which `aish model`
@@ -191,6 +189,7 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	}
 	if fresh {
 		p.tellDefErr(defErr)
+		p.tellConfigPath(ex.Getenv)
 	}
 	cfg, project, err := config.Project(cfg, ex.Dir)
 	if err != nil {

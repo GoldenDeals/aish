@@ -103,7 +103,7 @@ func TestGoneProfile(t *testing.T) {
 
 // A profile config.toml selects but has not, by $AISH_PROFILE or by the
 // profile key, does not fail the request of a shell on another one; the
-// shell's own gone too, the request tells why it fails.
+// shell's own gone too, the shell goes to the top level.
 func TestSelectedProfileGone(t *testing.T) {
 	renamed := strings.Replace(profilesTOML, "[profiles.work]", "[profiles.corp]", 1)
 	for _, tc := range []struct{ name, env, toml string }{
@@ -127,10 +127,12 @@ func TestSelectedProfileGone(t *testing.T) {
 			}
 
 			rewrite(t, strings.Replace(tc.toml, "[profiles.local]", "[profiles.lan]", 1))
-			p.marker(Marker{Kind: "ask-start"})
-			ap := rpc.AgentParams{Text: "hi", Cwd: filepath.Join(os.Getenv("HOME"), "work")}
-			if _, err := call(t, p, rpc.MethodAgentStart, ap); err == nil || !strings.Contains(err.Error(), `no profile "local"`) {
-				t.Errorf("the shell's profile gone too: %v", err)
+			ask(t, p, nil)
+			p.mu.Lock()
+			profile = p.profile
+			p.mu.Unlock()
+			if profile != "" {
+				t.Errorf("the shell's profile gone too, the shell is on %q", profile)
 			}
 		})
 	}
