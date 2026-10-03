@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/session"
 	"github.com/inebotov/aish/internal/tools"
 )
@@ -71,9 +72,23 @@ func (a *Agent) summarize(ctx context.Context, note, cwd string) (session.Entry,
 	cols, _ := a.UI.Size()
 	sp := startSpinner(a.UI, cols > 0)
 	resp, err := a.Provider.Complete(ctx, req, nil)
+	if ctx.Err() == nil && (llm.PromptTooLong(err) || err == nil && resp.StopReason == llm.StopContextWindow) {
+		// The history does not fit with the summary: it is what the
+		// outputs in it are sent cut for, once.
+		if cut := cutOutputs(es); cut != nil {
+			resp, err = a.Provider.Complete(ctx, a.request(cut), nil)
+		}
+	}
 	sp.Stop()
 	if err != nil {
 		return session.Entry{}, err
+	}
+	// A summary cut short would be taken for the whole session.
+	switch resp.StopReason {
+	case llm.StopMaxTokens:
+		return session.Entry{}, errors.New("the summary was cut at max_tokens")
+	case llm.StopContextWindow:
+		return session.Entry{}, errors.New("the summary was cut: the context window is full")
 	}
 	text := strings.TrimSpace(resp.Text)
 	if text == "" {

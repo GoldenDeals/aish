@@ -131,6 +131,9 @@ func (p *openaiProvider) Complete(ctx context.Context, req Request, onText func(
 	if resp.StopReason == "length" {
 		resp.StopReason = StopMaxTokens
 	}
+	if resp.StopReason == "content_filter" {
+		resp.StopReason = StopRefusal
+	}
 	for _, c := range ch.Message.ToolCalls {
 		args := json.RawMessage(c.Function.Arguments)
 		if !json.Valid(args) {

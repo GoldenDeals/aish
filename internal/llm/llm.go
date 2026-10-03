@@ -76,6 +76,10 @@ type Response struct {
 const (
 	StopMaxTokens     = "max_tokens"     // the reply hit max_tokens
 	StopContextWindow = "context_window" // the context window is full
+	StopRefusal       = "refusal"        // the model declined to answer
+	// StopPause is a turn the API broke off to be sent back as is: the
+	// model goes on from its own reply.
+	StopPause = "pause_turn"
 )
 
 // ModelInfo is a model the API offers. Window is 0 when it is not reported.

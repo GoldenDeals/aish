@@ -119,6 +119,9 @@ type Agent struct {
 	// session is summed up before the next turn, however small the estimate.
 	// Like the agent it lives through to the next request.
 	windowFull bool
+	// paused is set when the API broke the last turn off for the model to
+	// go on from it: drive makes another turn, though the reply looks final.
+	paused bool
 }
 
 // Start records a new request made in ex and works on it.
@@ -240,9 +243,15 @@ const mcpNote = "# Additional tools\n" +
 	"More tools (from MCP servers) are available as shell commands, run with the bash tool: " +
 	"`aish tool` lists them, `aish tool NAME -h` shows how to call one. They are named SERVER_TOOL."
 
+// maxPauses is how many turns in a row the API may pause before the
+// request ends as if the model were done.
+const maxPauses = 3
+
 // drive runs tool calls and LLM turns until a bash command is handed to the
 // shell or the model gives its final answer.
 func (a *Agent) drive(ctx context.Context) error {
+	pauses := 0
+	compacted := false // since the last turn the API took
 	for {
 		for _, c := range pending(a.entries) {
 			handedOff, err := a.call(ctx, c)
@@ -250,9 +259,18 @@ func (a *Agent) drive(ctx context.Context) error {
 				return err
 			}
 		}
-		if finished(a.entries) {
-			a.stop(ctx)
-			return nil
+		if a.paused && pauses < maxPauses {
+			a.paused = false
+			pauses++
+		} else {
+			if a.paused {
+				fmt.Fprintf(a.UI, "%s[aish: the model paused its turn; ask to continue]%s\n", dim, reset)
+			}
+			a.paused, pauses = false, 0
+			if finished(a.entries) {
+				a.stop(ctx)
+				return nil
+			}
 		}
 		if a.Cfg.MaxSteps > 0 && steps(a.entries) >= a.Cfg.MaxSteps {
 			fmt.Fprintf(a.UI, "%s[aish: stopped after %d steps; ask to continue]%s\n", dim, a.Cfg.MaxSteps, reset)
@@ -265,8 +283,24 @@ func (a *Agent) drive(ctx context.Context) error {
 		if err := a.autoCompact(ctx); err != nil {
 			return err
 		}
-		if err := a.turn(ctx); err != nil {
+		err := a.turn(ctx)
+		switch {
+		case err == nil:
+			compacted = false
+		case ctx.Err() != nil || !llm.PromptTooLong(err):
 			return err
+		case a.Cfg.CompactAt <= 0:
+			// Not wrapped: the proxy would print the SDK's error alone.
+			return fmt.Errorf("%s; aish compact frees it", llm.Short(err))
+		case compacted || a.windowFull || !compactable(a.entries):
+			// The summary did not free the window, could not be made (it
+			// was tried before this turn), or there is nothing to sum up:
+			// the request itself is too big.
+			return err
+		default:
+			// The estimate said the context fits; the API counts for sure.
+			fmt.Fprintf(a.UI, "%s[aish: the context does not fit the window; compacting]%s\n", dim, reset)
+			a.windowFull, compacted = true, true
 		}
 	}
 }
@@ -320,6 +354,11 @@ func (a *Agent) turn(ctx context.Context) error {
 			hint = "; aish compact frees it"
 		}
 		fmt.Fprintf(a.UI, "%s[aish: reply cut: the context window is full%s]%s\n", dim, hint, reset)
+	case llm.StopRefusal:
+		fmt.Fprintf(a.UI, "%s[aish: the model declined to answer]%s\n", dim, reset)
+	case llm.StopPause:
+		// Sent back as is (Raw), the reply is where the model goes on from.
+		a.paused = true
 	}
 	return a.append(e)
 }
