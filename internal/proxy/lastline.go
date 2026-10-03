@@ -1,12 +1,15 @@
 package proxy
 
+import "strings"
+
 // lastLine follows whether the output so far leaves text on the cursor's
 // line. Output shown as it came may end inside a line, and the spinner of
 // the agent's next turn, which starts with \r and erases to the end of the
 // line, would draw over it. Sequences print nothing: many programs end
 // with one after their last newline (ls resets its colours, others show
 // the cursor again), and those lines are ended. Erasing the line from its
-// start empties it; the alternate screen's text is gone when it closes.
+// start, or the screen, empties it; the alternate screen's text is gone
+// when it closes.
 type lastLine struct {
 	text bool // the line holds text
 	col0 bool // the cursor is at the start of the line
@@ -89,13 +92,21 @@ func (l *lastLine) csi(param string, final byte) {
 		if param == "?1049" || param == "?1047" || param == "?47" {
 			l.alt = final == 'h'
 		}
-	case 'K':
+	case 'K', 'J':
+		// Erasing the screen leaves the cursor where it was, on a line
+		// with no text: `clear` after an unended line needs no newline.
+		// 3J erases only the scrollback.
 		if !l.alt && (param == "2" || l.col0 && (param == "" || param == "0")) {
 			l.text = false
 		}
 	case 'G':
 		if !l.alt {
 			l.col0 = param == "" || param == "0" || param == "1"
+		}
+	case 'H', 'f':
+		if !l.alt {
+			_, col, _ := strings.Cut(param, ";")
+			l.col0 = col == "" || col == "0" || col == "1"
 		}
 	}
 }

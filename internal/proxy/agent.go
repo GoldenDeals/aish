@@ -401,11 +401,13 @@ func (u *ui) CommandAt(col int, _ bool, hidden int) {
 }
 
 // live is an external tool's output as it runs, folded like a command's;
-// without folding (fold_lines < 0) it passes through.
+// without folding (fold_lines < 0) it passes through, and Finish ends the
+// line it left open, as the fold's finish does.
 type live struct {
-	p  *Proxy
-	f  *fold
-	cr crlf
+	p    *Proxy
+	f    *fold
+	cr   crlf
+	last lastLine // without a fold
 }
 
 func (l *live) Write(b []byte) (int, error) {
@@ -414,6 +416,8 @@ func (l *live) Write(b []byte) (int, error) {
 	show := l.cr.fix(b)
 	if l.f != nil {
 		show = l.f.write(show)
+	} else {
+		l.last.feed(show)
 	}
 	l.p.emit(show)
 	return len(b), nil
@@ -422,6 +426,10 @@ func (l *live) Write(b []byte) (int, error) {
 func (l *live) Finish(exit int) {
 	l.p.mu.Lock()
 	defer l.p.mu.Unlock()
+	if l.f == nil && l.last.text {
+		l.last.feed([]byte("\r\n"))
+		l.p.emit([]byte("\r\n"))
+	}
 	if l.f != nil && l.p.tool == l.f {
 		l.p.finishFold(l.f, exit)
 		l.p.tool = nil
