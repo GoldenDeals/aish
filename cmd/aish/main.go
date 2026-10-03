@@ -44,7 +44,7 @@ import (
 	"github.com/inebotov/aish/internal/tools"
 )
 
-const usage = `usage:
+var usage = `usage:
   aish [--resume]            start bash with aish (--resume continues the latest session)
   aish resume [ID|NAME]      continue a session: its history, env, functions, aliases
                              and cwd; without an argument choose one (r renames it)
@@ -76,9 +76,31 @@ const usage = `usage:
 
 In the shell: commands run as usual; text that is not a command goes to the
 assistant. Prefix with ? to force the assistant, with ! to force bash.
-The subcommands from resume to expand also work without "aish" in front
-(status, model high, compact), unless a command of that name is on PATH.
-`
+The following subcommands also work without "aish" in front (status,
+model high), unless a command of that name is on PATH:
+` + wordList(UserCommands)
+
+// wordList lays words out as a comma-separated list indented by two
+// spaces, in lines of at most 80 columns.
+func wordList(words []string) string {
+	var b strings.Builder
+	line := ""
+	for i, w := range words {
+		if i < len(words)-1 {
+			w += ","
+		}
+		switch {
+		case line == "":
+			line = "  " + w
+		case len(line)+1+len(w) > 80:
+			b.WriteString(line + "\n")
+			line = "  " + w
+		default:
+			line += " " + w
+		}
+	}
+	return b.String() + line + "\n"
+}
 
 func main() {
 	os.Exit(run(os.Args[1:]))

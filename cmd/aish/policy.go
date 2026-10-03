@@ -72,7 +72,11 @@ func policyCmd(cfg config.Config, args []string) int {
 // their policy counts and the [policy] rules, global from config.toml and
 // the rest from the project's file. `aish policy` and `aish status` print it.
 func policyLine(eng *policy.Engine, dir string, global, total int, project string) string {
-	dirs := strings.Join(filepath.SplitList(dir), ", ")
+	var list []string
+	for _, d := range filepath.SplitList(dir) {
+		list = append(list, home(d))
+	}
+	dirs := strings.Join(list, ", ")
 	n := 0
 	var files []string
 	for _, s := range eng.Summary() {

@@ -103,6 +103,12 @@ aish подскажет префикс `?`. Свой `command_not_found_handle` 
 | скиллы | `SKILL.md` из `~/.claude/skills/` и `.claude/skills/` |
 | MCP | инструменты серверов из `~/.config/aish/mcp.yaml` |
 
+`write_file` и `edit_file` пишут файл целиком или никак: во временный файл рядом, затем `rename`
+поверх; симлинк остаётся симлинком, а с файла пропадают его ACL, xattr и биты setuid/setgid. Файл с
+жёсткими ссылками, файл чужого владельца или группы и файл в каталоге, закрытом для записи, пишутся
+на месте — без этой гарантии, но со всем, что у них было. FIFO и устройство `write_file` тоже пишет
+на месте, а `read_file` и `edit_file` их не открывают.
+
 Встроенные инструменты, внешние и MCP — ещё и команды shell: `read_file main.go 1 20` можно набрать
 самому, `aish tool` покажет полный список.
 
@@ -201,9 +207,10 @@ aish подскажет префикс `?`. Свой `command_not_found_handle` 
   профиль с другим `provider` без `effort` берёт уровень по умолчанию, а не верхнего уровня.
 
 Внутри aish эти команды работают и без префикса: `status`, `model claude-sonnet-5 xhigh`, `compact`,
-`session show`, `resume ИМЯ`, `mcp`, `skills`, `agents`. Это обёртки в `$AISH_RUN/bin`, как у
-инструментов, и правило то же: имя, занятое командой в `PATH`, обёртки не получает — так `expand`
-остаётся coreutils, а свёрнутое показывают `aish expand` и Ctrl+O. Функция или алиас из `~/.bashrc`
+`session show`, `resume ИМЯ`, `new ИМЯ`, `mcp`, `skills`, `hooks`, `agents`, `policy`. Это обёртки в
+`$AISH_RUN/bin`, как у инструментов, и правило то же: имя, занятое командой в `PATH`, обёртки не
+получает — так `clear` и `expand` остаются системными, а новую сессию начинает `aish clear`,
+свёрнутое показывают `aish expand` и Ctrl+O. Функция или алиас из `~/.bashrc`
 с таким именем имеет приоритет. Инструмент или скилл с именем `status`, `model` и т. п. командой не
 станет — только `aish tool ИМЯ`.
 
@@ -509,7 +516,7 @@ Cedar — default deny: без `permit` запрещено всё, поэтом�
 загрузки, стоит в `aish status`.
 
 Пример `examples/policy/default.cedar` запрещает `sudo`, `rm -rf` (и `--recursive`) для `/` и
-`$HOME`, `git push --force` и `git push` с `+refspec`, `exit`/`exec`, запись вне `$HOME` и
+`$HOME`, `git push --force` и `git push` с `+refspec`, `exit`/`exec`/`logout`, запись вне `$HOME` и
 спрашивает перед установкой пакетов.
 
 ## Хуки
@@ -522,7 +529,7 @@ Cedar — default deny: без `permit` запрещено всё, поэтом�
 | событие | когда | вход (и везде `event`, `cwd`, `session`) | ответ |
 |---|---|---|---|
 | `user-prompt` | запрос, до модели | `prompt` | `{"context": "…"}` — дописать к запросу: модель получит текст вместе с ним, с маскировкой секретов, как у вывода команд, а журнал хранит его отдельной записью, и `aish session show` его не печатает; `{"deny": "причина"}` — отклонить: запрос не уйдёт модели и не попадёт в журнал |
-| `pre-tool` | вызов инструмента, после политики | что видит политика: `tool`, `args`, `commands`, `path`, `home`, `server`, `model`; `policy` — её вердикт, `{"action", "reason"}` | `{"action": "allow\|deny\|ask", "reason": "…"}`; `{"args": {…}}` — подменить аргументы |
+| `pre-tool` | вызов инструмента, после политики | что видит политика: `tool`, `args`, `line` (строка, отданная shell), `commands`, `parse_error`, `dynamic`, `path`, `home`, `server`, `model`; `policy` — её вердикт, `{"action", "reason"}` | `{"action": "allow\|deny\|ask", "reason": "…"}`; `{"args": {…}}` — подменить аргументы |
 | `post-tool` | результат инструмента, до записи | `tool`, `args`, `output`, `is_error` | `{"output": "…"}` — заменить результат |
 | `stop` | запрос закончен | `text` — последний ответ, `steps`, `input_tokens`, `cached_tokens`, `output_tokens` | ничего, stdout не читается |
 

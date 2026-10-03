@@ -38,17 +38,17 @@ func TestPolicyLine(t *testing.T) {
 		project string
 		want    string
 	}{
-		{"nothing", empty, policy.Rules{}, 0, "", "no policies in " + empty},
-		{"cedar", cedar, policy.Rules{}, 0, "", "2 policies in " + cedar + ": x.cedar (2)"},
-		{"one policy", one, policy.Rules{}, 0, "", "1 policy in " + one + ": y.cedar (1)"},
+		{"nothing", empty, policy.Rules{}, 0, "", "no policies in ~/empty"},
+		{"cedar", cedar, policy.Rules{}, 0, "", "2 policies in ~/cedar: x.cedar (2)"},
+		{"one policy", one, policy.Rules{}, 0, "", "1 policy in ~/one: y.cedar (1)"},
 		{"one global rule", empty, policy.Rules{Deny: []string{"sudo *"}}, 1, "",
-			"no policies in " + empty + " + 1 rule from config.toml"},
+			"no policies in ~/empty + 1 rule from config.toml"},
 		{"global and project rules", empty,
 			policy.Rules{Deny: []string{"sudo *", "rm -rf *", "dd *"}, Ask: []string{"git push*"}, WriteOutsideHome: policy.Ask},
 			3, project,
-			"no policies in " + empty + " + 3 rules from config.toml + 2 rules from ~/proj/.aish.toml"},
+			"no policies in ~/empty + 3 rules from config.toml + 2 rules from ~/proj/.aish.toml"},
 		{"dir list", empty + string(filepath.ListSeparator) + cedar, policy.Rules{}, 0, "",
-			"2 policies in " + empty + ", " + cedar + ": x.cedar (2)"},
+			"2 policies in ~/empty, ~/cedar: x.cedar (2)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			eng, err := policy.Load(context.Background(), tc.dir, tc.rules)
