@@ -420,7 +420,8 @@ problem: ~/proj/.claude/agents/draft.md: no description in the frontmatter
   `git diff *`, шаблоны в одних скобках разделяются запятой: `Bash(git log, git diff)`. Остальные
   команды не исполняются, как и код, собранный во время исполнения (`eval "$x"`, `$cmd`,
   перенаправление в `$file`): его не проверить. Переменные строка задаёт только в нижнем регистре и
-  локаль: `PATH=. git log`, `export GIT_DIR=…`, `env GIT_SSH_COMMAND=…` и арифметика над переменными
+  локаль, кроме переменных прокси (`https_proxy` и др.): `PATH=. git log`, `export GIT_DIR=…`,
+  `env GIT_SSH_COMMAND=…`, `https_proxy=… git push` и арифметика над переменными
   не исполняются. Если в `tools` есть ещё `Bash` без шаблона, bash не
   ограничен. Шаблоны других инструментов (`Read(src/**)`) не поддерживаются: такая запись не
   включает ничего.

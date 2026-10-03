@@ -637,13 +637,22 @@ func onlyReads(cmd string) string {
 
 // harmlessVar tells whether setting name leaves the commands of a line as
 // they are: programs read variables in upper case, and bash has no special
-// one in lower case. Of those in upper case only the locale's are harmless.
+// one in lower case. Of those in upper case only the locale's are harmless;
+// of those in lower case the proxy's are not, as git, curl and wget read
+// them in lower case: https_proxy=… git push goes through any proxy.
 func harmlessVar(name string) bool {
 	switch {
+	case proxyVars[name]:
+		return false
 	case strings.ToLower(name) == name, strings.HasPrefix(name, "LC_"):
 		return true
 	}
 	return name == "LANG" || name == "LANGUAGE" || name == "TZ" || name == "NO_COLOR"
+}
+
+var proxyVars = map[string]bool{
+	"all_proxy": true, "ftp_proxy": true, "http_proxy": true, "https_proxy": true, "no_proxy": true,
+	"rsync_proxy": true, "socks_proxy": true,
 }
 
 // literal tells whether a word is the same text whatever the shell's
