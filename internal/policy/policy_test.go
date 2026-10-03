@@ -48,8 +48,8 @@ func TestRulesWithoutCedar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(e.checkers) != 1 {
-		t.Fatalf("checkers: %#v, want the rules alone", e.checkers)
+	if len(e.checkers) != 2 {
+		t.Fatalf("checkers: %#v, want the guard and the rules alone", e.checkers)
 	}
 	// Rules are not default deny: what they do not name is allowed.
 	for cmd, want := range map[string]string{"sudo ls": Deny, "git push origin": Ask, "git status": Allow} {

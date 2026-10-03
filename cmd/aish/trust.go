@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/inebotov/aish/internal/config"
+	"github.com/inebotov/aish/internal/policy"
+	"github.com/inebotov/aish/internal/rpc"
 )
 
 // trustCmd is aish trust [--revoke | --list]: the project file of this
@@ -25,6 +27,9 @@ func trustCmd(cfg config.Config, args []string) int {
 		revoke = true
 	default:
 		return fail(errors.New(trustUsage))
+	}
+	if assistantAsks() {
+		return fail(errors.New(policy.TrustReason))
 	}
 	cwd, _ := os.Getwd()
 	_, path, err := config.Project(cfg, cwd)
@@ -61,6 +66,20 @@ func trustCmd(cfg config.Config, args []string) int {
 		fmt.Println("  " + k)
 	}
 	return 0
+}
+
+// assistantAsks tells whether a request of the assistant is in progress
+// in this shell, so that the command is the assistant's: the policies
+// deny it aish trust, but not through code they cannot see into, a
+// script or python -c. A proxy that does not answer is taken for no: a
+// command that unsets AISH_SOCK gets past this anyway.
+func assistantAsks() bool {
+	client, err := rpc.FromEnv()
+	if err != nil {
+		return false
+	}
+	var info rpc.Info
+	return client.Call(rpc.MethodInfo, nil, &info) == nil && info.Asking
 }
 
 // untrustedNote is the dim line, with its newline, for a command that

@@ -12,6 +12,7 @@ func TestTrustCmd(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
+	t.Setenv("AISH_SOCK", "") // not the proxy of the shell running the tests
 	repo := filepath.Join(root, "repo")
 	sub := filepath.Join(repo, "sub")
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {

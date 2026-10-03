@@ -62,14 +62,14 @@ type Engine struct {
 // overrides Cedar's default deny, and a cloned repository's
 // `permit(principal, action, resource);` would undo every prohibition the
 // user's set keeps by not permitting. A missing or empty dir and no rules
-// give an engine that allows everything; a *.rego file is an error even
-// next to Cedar files, because ignoring a file of prohibitions is not an
-// option.
+// give an engine that allows everything but trusting a project (the
+// guard, in every engine); a *.rego file is an error even next to Cedar
+// files, because ignoring a file of prohibitions is not an option.
 func Load(ctx context.Context, dir string, rules Rules) (*Engine, error) {
 	if err := rules.check(); err != nil {
 		return nil, err
 	}
-	e := &Engine{}
+	e := &Engine{checkers: []Checker{guardChecker{}}}
 	if rules.Len() > 0 {
 		e.checkers = append(e.checkers, rulesChecker{rules})
 	}
