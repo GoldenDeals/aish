@@ -77,10 +77,12 @@ func (p *Proxy) statusText() (text, color string) {
 // drawStatus puts the status at the right edge of the line the prompt is
 // about to be printed on. The cursor is put back, so bash and readline
 // never know: no PS1 to keep in sync with prompts that rebuild it. Till
-// the next command, p.line keeps it off the line being typed.
+// the next command, p.line keeps it off the line being typed. A prompt
+// the command's output left off the first column gets none: p.line counts
+// its columns from 0.
 func (p *Proxy) drawStatus() {
 	p.dropLine()
-	if !p.promptStatus || p.size == nil {
+	if !p.promptStatus || p.size == nil || p.col.off {
 		return
 	}
 	text, color := p.statusText()

@@ -81,6 +81,7 @@ type Proxy struct {
 	tool    *fold               // live output of an external tool, while it runs
 	at      *statusAt           // where the agent left the cursor after printing its next command
 	line    *inputLine          // the line typed at the prompt, kept off its status
+	col     firstCol            // whether the shell's output left the next prompt off the first column
 	folds   []Fold              // folded outputs of the last request, for Ctrl+O
 	view    *viewer             // open while Ctrl+O shows the folds
 	held    []byte              // shell output that arrived while the viewer was open
@@ -537,6 +538,10 @@ func (p *Proxy) output(b []byte) {
 	}
 	if p.tool != nil {
 		show = p.tool.write(b)
+	}
+	if !p.asking {
+		// A request ends with the agent's own output, which ends its line.
+		p.col.feed(b)
 	}
 	if p.line != nil {
 		show = p.line.feed(show)

@@ -53,8 +53,8 @@ func TestPromptStatusHides(t *testing.T) {
 	if p.line != nil {
 		t.Error("cmd-start: the line is still followed")
 	}
-	p.output([]byte("\r\nx"))
-	expect("command output", "\r\nx")
+	p.output([]byte("\r\nx\r\n"))
+	expect("command output", "\r\nx\r\n")
 
 	p.marker(Marker{Kind: "cmd-end", Payload: "0;" + dir})
 	expect("cmd-end", drawLs)
@@ -62,8 +62,8 @@ func TestPromptStatusHides(t *testing.T) {
 	if p.line != nil {
 		t.Error("resized: the line is still followed")
 	}
-	p.output([]byte("x"))
-	expect("after resizing", "x")
+	p.output([]byte("x\r\n"))
+	expect("after resizing", "x\r\n")
 
 	p.marker(Marker{Kind: "cmd-end", Payload: "0;" + dir})
 	expect("cmd-end", drawLs)
