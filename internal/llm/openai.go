@@ -3,6 +3,8 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
@@ -92,18 +94,27 @@ func (p *openaiProvider) Complete(ctx context.Context, req Request, onText func(
 		}))
 	}
 
-	stream := p.client.Chat.Completions.NewStreaming(ctx, params)
+	var end streamEnd
+	stream := p.client.Chat.Completions.NewStreaming(ctx, params, end.option())
 	defer stream.Close()
 	var acc openai.ChatCompletionAccumulator
+	finished := false
 	for stream.Next() {
 		chunk := stream.Current()
 		acc.AddChunk(chunk)
 		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" && onText != nil {
 			onText(chunk.Choices[0].Delta.Content)
 		}
+		for _, c := range chunk.Choices {
+			finished = finished || c.FinishReason != ""
+		}
 	}
 	if err := stream.Err(); err != nil {
 		return nil, err
+	}
+	if !finished && !end.done {
+		// Closed with nothing wrong to read: what came is not the reply.
+		return nil, fmt.Errorf("openai: stream ended early: %w", io.ErrUnexpectedEOF)
 	}
 
 	resp := &Response{

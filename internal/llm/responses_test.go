@@ -193,9 +193,9 @@ func TestResponsesEnd(t *testing.T) {
 		name, event, stop, err string
 	}{
 		{"cut short", `{"type":"response.incomplete","sequence_number":1,"response":{"id":"r","object":"response","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}}`, "max_tokens", ""},
-		{"failed", `{"type":"response.failed","sequence_number":1,"response":{"id":"r","object":"response","status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}}`, "", "response failed: boom (server_error)"},
-		{"error", `{"type":"error","sequence_number":1,"code":"rate_limit_exceeded","message":"slow down","param":null}`, "", "slow down (rate_limit_exceeded)"},
-		{"no end", `{"type":"response.created","sequence_number":0,"response":{"id":"r","object":"response","status":"in_progress","output":[]}}`, "", "the stream ended before the response"},
+		{"failed", `{"type":"response.failed","sequence_number":1,"response":{"id":"r","object":"response","status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}}`, "", "server_error: boom"},
+		{"error", `{"type":"error","sequence_number":1,"code":"rate_limit_exceeded","message":"slow down","param":null}`, "", "rate_limit_exceeded: slow down"},
+		{"no end", `{"type":"response.created","sequence_number":0,"response":{"id":"r","object":"response","status":"in_progress","output":[]}}`, "", "openai-responses: stream ended early: unexpected EOF"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

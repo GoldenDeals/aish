@@ -3,8 +3,8 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"io"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -70,16 +70,22 @@ func (p *responsesProvider) Complete(ctx context.Context, req Request, onText fu
 		case responses.ResponseIncompleteEvent:
 			done = &ev.Response
 		case responses.ResponseFailedEvent:
-			return nil, fmt.Errorf("response failed: %s (%s)", ev.Response.Error.Message, ev.Response.Error.Code)
+			e := &APIError{Code: string(ev.Response.Error.Code), Message: ev.Response.Error.Message}
+			if *e == (APIError{}) {
+				e.Message = "the response failed"
+			}
+			return nil, e
 		case responses.ResponseErrorEvent:
-			return nil, fmt.Errorf("%s (%s)", ev.Message, ev.Code)
+			// Not the SDK's StreamError: this event has no error object.
+			return nil, &APIError{Code: ev.Code, Message: ev.Message}
 		}
 	}
 	if err := stream.Err(); err != nil {
 		return nil, err
 	}
 	if done == nil {
-		return nil, errors.New("the stream ended before the response")
+		// Closed with nothing wrong to read: what came is not the reply.
+		return nil, fmt.Errorf("openai-responses: stream ended early: %w", io.ErrUnexpectedEOF)
 	}
 	return p.response(done), nil
 }

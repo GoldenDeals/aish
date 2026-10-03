@@ -66,6 +66,11 @@ func (p *Proxy) request(ctx context.Context, ex tools.Exec, fresh bool, fn func(
 	p.mu.Lock()
 	p.overhead = o
 	p.mu.Unlock()
+	if s := llm.Short(err); s != "" && !errors.Is(err, context.Canceled) {
+		// The shell prints it: an SDK's error carries the URL, the request
+		// ID and the raw body besides the API's type and message.
+		err = errors.New(s)
+	}
 	return err
 }
 

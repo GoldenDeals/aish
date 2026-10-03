@@ -38,17 +38,42 @@ func Retryable(err error) bool {
 	// OpenAI's error in the middle of a stream is an event, not a status.
 	var se *ssestream.StreamError
 	if errors.As(err, &se) {
-		e := bodyError(se.Event.Data)
-		if code, perr := strconv.Atoi(e.Code); perr == nil {
-			return retryableStatus(code)
-		}
-		return retryableKinds[e.Type] || retryableKinds[e.Code]
+		return retryableKind(bodyError(se.Event.Data))
+	}
+	var ee *APIError
+	if errors.As(err, &ee) {
+		return retryableKind(apiError{Code: ee.Code})
 	}
 	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) {
 		return true
 	}
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
+}
+
+// APIError is a failure an API reports in an event of a stream of its own,
+// one the SDK does not take for an error: the Responses API's error and
+// response.failed. Code is the API's ("server_error"), what Retryable goes
+// by.
+type APIError struct {
+	Code, Message string
+}
+
+// Error is what Short makes of an error object, "code: message".
+func (e *APIError) Error() string {
+	if s := (apiError{Code: e.Code, Message: e.Message}).String(); s != "" {
+		return s
+	}
+	return "the API reported an error"
+}
+
+// retryableKind tells by its code, or else its type, whether an error an
+// API reported in a stream is worth a retry.
+func retryableKind(e apiError) bool {
+	if code, err := strconv.Atoi(e.Code); err == nil {
+		return retryableStatus(code)
+	}
+	return retryableKinds[e.Type] || retryableKinds[e.Code]
 }
 
 // retryableKinds are the types and codes of a stream's error event that
