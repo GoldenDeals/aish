@@ -19,6 +19,7 @@ type picker struct {
 	dir  string
 	list []session.Info
 	cur  string // the session of this shell, inside aish
+	def  string // the profile config.toml selects, which goes unnamed
 	sel  int
 	top  int
 	w, h int
@@ -30,7 +31,7 @@ type picker struct {
 	msg      string
 }
 
-func pickSession(dir string, list []session.Info, cur string) (session.Info, bool, error) {
+func pickSession(dir string, list []session.Info, cur, def string) (session.Info, bool, error) {
 	in, out := int(os.Stdin.Fd()), int(os.Stdout.Fd())
 	old, err := term.MakeRaw(in)
 	if err != nil {
@@ -40,7 +41,7 @@ func pickSession(dir string, list []session.Info, cur string) (session.Info, boo
 	fmt.Print("\x1b[?1049h\x1b[?25l")
 	defer fmt.Print("\x1b[?25h\x1b[?1049l")
 
-	p := &picker{dir: dir, list: list, cur: cur}
+	p := &picker{dir: dir, list: list, cur: cur, def: def}
 	buf := make([]byte, 256)
 	for {
 		p.w, p.h, err = term.GetSize(out)
@@ -208,7 +209,7 @@ func (p *picker) render() string {
 		if i.Cwd != "" {
 			where += "  " + home(i.Cwd)
 		}
-		if m := sessionModel(i); m != "" {
+		if m := sessionModel(i, p.def); m != "" {
 			where += "  " + m
 		}
 		switch {

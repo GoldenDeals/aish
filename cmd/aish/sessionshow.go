@@ -22,8 +22,9 @@ func modelLine(prev, e session.Entry) string {
 	if e.Provider != "" {
 		model = e.Provider + "/" + e.Model
 	}
-	// An entry's "" profile is the top level, as it is for a state with
-	// TopLevel: named the way aish resume names a session's.
-	where := sessionModel(session.Info{Profile: e.Profile, TopLevel: e.Profile == "", Model: model})
+	// The profile always, config.Root for an entry's "": the list of
+	// sessions leaves out the one config.toml selects, but here the
+	// profile is part of what changed.
+	where := profileName(e.Profile) + " · " + model
 	return fmt.Sprintf("\x1b[2m%s model %s\x1b[0m", e.Time.Format("15:04:05"), where)
 }

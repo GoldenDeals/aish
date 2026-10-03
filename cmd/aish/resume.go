@@ -55,7 +55,7 @@ func resumeCmd(cfg config.Config, args []string) int {
 			return fail(errors.New("usage: aish resume ID|NAME (choosing needs a terminal)"))
 		}
 		var ok bool
-		if pick, ok, err = pickSession(dir, list, cur); err != nil {
+		if pick, ok, err = pickSession(dir, list, cur, cfg.Profile); err != nil {
 			return fail(err)
 		} else if !ok {
 			return 0
@@ -77,7 +77,7 @@ func resumeCmd(cfg config.Config, args []string) int {
 			fmt.Fprintln(os.Stderr, "\x1b[2mthe session you left was not saved\x1b[0m")
 		}
 		if sess, err := session.Load(dir, pick.ID); err == nil {
-			printResumed(pick, sess)
+			printResumed(pick, sess, cfg.Profile)
 		}
 		return 0
 	}
@@ -101,7 +101,7 @@ func startShell(cfg config.Config, sess *session.Session, resume bool) int {
 		if list, err := session.List(cfg.SessionsDir); err == nil {
 			for _, i := range list {
 				if i.ID == sess.ID {
-					printResumed(i, sess)
+					printResumed(i, sess, cfg.Profile)
 				}
 			}
 		}
@@ -116,7 +116,7 @@ func startShell(cfg config.Config, sess *session.Session, resume bool) int {
 }
 
 // printResumed reminds what the session was about: its last entries.
-func printResumed(i session.Info, sess *session.Session) {
+func printResumed(i session.Info, sess *session.Session, def string) {
 	if n := sess.BadLines(); n > 0 {
 		fmt.Fprintf(os.Stderr, "aish: %s.jsonl: %d bad lines\n", sess.ID, n)
 	}
@@ -129,7 +129,7 @@ func printResumed(i session.Info, sess *session.Session) {
 	if i.Cwd != "" {
 		parts = append(parts, home(i.Cwd))
 	}
-	if m := sessionModel(i); m != "" {
+	if m := sessionModel(i, def); m != "" {
 		parts = append(parts, m)
 	}
 	fmt.Printf("\x1b[1mresumed %s\x1b[0m \x1b[2m(%s)\x1b[0m\n", i.Title(), strings.Join(parts, " · "))
@@ -145,13 +145,15 @@ func printResumed(i session.Info, sess *session.Session) {
 
 // sessionModel is where a session's requests go: the profile and the
 // model, "local · qwen3:8b", config.Root for the top level; the model alone
-// for a state saved before there were profiles, whose profile is the
-// shell's; "" when the session has no model saved.
-func sessionModel(i session.Info) string {
+// when the profile is def, the one config.toml selects, which most
+// sessions have and the status by the prompt does not name either, and for
+// a state saved before there were profiles, whose profile is the shell's;
+// "" when the session has no model saved.
+func sessionModel(i session.Info, def string) string {
 	switch {
 	case i.Model == "":
 		return ""
-	case i.Profile != "" || i.TopLevel:
+	case (i.Profile != "" || i.TopLevel) && i.Profile != def:
 		return profileName(i.Profile) + " · " + i.Model
 	}
 	return i.Model
