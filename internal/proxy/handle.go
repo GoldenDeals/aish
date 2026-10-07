@@ -10,17 +10,37 @@ import (
 	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
+// handle answers a call of the commands in the shell (rpc.Serve).
 func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessage) (any, error) {
-	switch method {
-	case rpc.MethodInfo:
+	h, ok := handlers[method]
+	if !ok {
+		return nil, fmt.Errorf("unknown method %q", method)
+	}
+	return h(p, ctx, params)
+}
+
+// handler answers one RPC method. Who may call it is its own to check:
+// fromShell, p.asking, p.handed.
+type handler func(p *Proxy, ctx context.Context, params json.RawMessage) (any, error)
+
+// decoded is a handler whose params decode into a T.
+func decoded[T any](f func(p *Proxy, ctx context.Context, v T) (any, error)) handler {
+	return func(p *Proxy, ctx context.Context, params json.RawMessage) (any, error) {
+		var v T
+		if err := json.Unmarshal(params, &v); err != nil {
+			return nil, err
+		}
+		return f(p, ctx, v)
+	}
+}
+
+var handlers = map[string]handler{
+	rpc.MethodInfo: func(p *Proxy, _ context.Context, _ json.RawMessage) (any, error) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		return p.info(), nil
-	case rpc.MethodModel:
-		var mp rpc.ModelParams
-		if err := json.Unmarshal(params, &mp); err != nil {
-			return nil, err
-		}
+	},
+	rpc.MethodModel: decoded(func(p *Proxy, ctx context.Context, mp rpc.ModelParams) (any, error) {
 		if mp.Model == "" {
 			return nil, errors.New("no model given")
 		}
@@ -34,58 +54,49 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 			return nil, fg
 		}
 		return p.switchModel(mp)
-	case rpc.MethodApplyConfig:
-		var ap rpc.AgentParams
-		if err := json.Unmarshal(params, &ap); err != nil {
-			return nil, err
-		}
+	}),
+	rpc.MethodApplyConfig: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
 		return p.applyConfig(ctx, ap)
-	case rpc.MethodConfig:
-		var cp rpc.ConfigParams
-		if err := json.Unmarshal(params, &cp); err != nil {
-			return nil, err
-		}
+	}),
+	rpc.MethodConfig: decoded(func(p *Proxy, ctx context.Context, cp rpc.ConfigParams) (any, error) {
 		return p.configFor(ctx, cp)
-	case rpc.MethodModels:
-		var mp rpc.ModelsParams
-		if err := json.Unmarshal(params, &mp); err != nil {
-			return nil, err
-		}
+	}),
+	rpc.MethodModels: decoded(func(p *Proxy, ctx context.Context, mp rpc.ModelsParams) (any, error) {
 		return p.models(ctx, mp)
-	case rpc.MethodPolicy:
-		var pp rpc.PolicyParams
-		if err := json.Unmarshal(params, &pp); err != nil {
-			return nil, err
-		}
+	}),
+	rpc.MethodPolicy: decoded(func(p *Proxy, ctx context.Context, pp rpc.PolicyParams) (any, error) {
 		return p.checkPolicy(ctx, pp)
-	case rpc.MethodStatus:
+	}),
+	rpc.MethodStatus: func(p *Proxy, _ context.Context, _ json.RawMessage) (any, error) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		return p.status(), nil
-	case rpc.MethodHistory:
+	},
+	rpc.MethodHistory: func(p *Proxy, _ context.Context, _ json.RawMessage) (any, error) {
 		return p.session().Entries(), nil
-	case rpc.MethodAgentStart, rpc.MethodAgentResume, rpc.MethodCompact:
-		var ap rpc.AgentParams
-		if err := json.Unmarshal(params, &ap); err != nil {
-			return nil, err
-		}
-		switch method {
-		case rpc.MethodAgentStart:
-			return nil, p.agentStart(ctx, ap)
-		case rpc.MethodAgentResume:
-			return nil, p.agentResume(ctx, ap)
-		}
+	},
+	rpc.MethodAgentStart: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
+		return nil, p.agentStart(ctx, ap)
+	}),
+	rpc.MethodAgentResume: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
+		return nil, p.agentResume(ctx, ap)
+	}),
+	rpc.MethodCompact: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
 		return nil, p.compact(ctx, ap)
-	case rpc.MethodAgentCancel:
+	}),
+	rpc.MethodAgentCancel: func(p *Proxy, _ context.Context, _ json.RawMessage) (any, error) {
 		p.cancelRequest()
 		return nil, nil
-	case rpc.MethodFolds:
+	},
+	rpc.MethodFolds: func(p *Proxy, _ context.Context, _ json.RawMessage) (any, error) {
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		return append([]Fold{}, p.folds...), nil
-	case rpc.MethodTasks:
+	},
+	rpc.MethodTasks: func(p *Proxy, _ context.Context, params json.RawMessage) (any, error) {
 		return p.tasks(params)
-	case rpc.MethodClear:
+	},
+	rpc.MethodClear: func(p *Proxy, ctx context.Context, params json.RawMessage) (any, error) {
 		var cp rpc.ClearParams
 		if len(params) > 0 { // none at all: plain `aish clear`
 			if err := json.Unmarshal(params, &cp); err != nil {
@@ -93,26 +104,17 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 			}
 		}
 		return p.clear(ctx, cp)
-	case rpc.MethodResume:
-		var rp rpc.ResumeParams
-		if err := json.Unmarshal(params, &rp); err != nil {
-			return nil, err
-		}
+	},
+	rpc.MethodResume: decoded(func(p *Proxy, ctx context.Context, rp rpc.ResumeParams) (any, error) {
 		return p.resume(ctx, rp.ID)
-	case rpc.MethodMCPStatus:
+	}),
+	rpc.MethodMCPStatus: func(p *Proxy, _ context.Context, _ json.RawMessage) (any, error) {
 		return p.mcp.Status(), nil
-	case rpc.MethodMCPList:
-		var lp mcp.ListParams
-		if err := json.Unmarshal(params, &lp); err != nil {
-			return nil, err
-		}
+	},
+	rpc.MethodMCPList: decoded(func(p *Proxy, ctx context.Context, lp mcp.ListParams) (any, error) {
 		return p.mcp.List(ctx, lp.Wait), nil
-	case rpc.MethodMCPCall:
-		var cp mcp.CallParams
-		if err := json.Unmarshal(params, &cp); err != nil {
-			return nil, err
-		}
+	}),
+	rpc.MethodMCPCall: decoded(func(p *Proxy, ctx context.Context, cp mcp.CallParams) (any, error) {
 		return p.mcp.Call(ctx, cp.Name, cp.Args)
-	}
-	return nil, fmt.Errorf("unknown method %q", method)
+	}),
 }
