@@ -37,6 +37,10 @@ func (p *parser) evaluates(n syntax.Node) {
 			p.quoted(n.Slice.Offset)
 			p.quoted(n.Slice.Length)
 		}
+		if e := n.Exp; e != nil && e.Word != nil && (e.Op == syntax.AssignUnset || e.Op == syntax.AssignUnsetOrNull) {
+			// ${x:=a[\$(id)]} assigns as x=… does.
+			p.value(e.Word)
+		}
 	case *syntax.DblQuoted:
 		p.defaults(n.Parts)
 	case *syntax.Redirect:
@@ -82,11 +86,10 @@ func (p *parser) evaluates(n syntax.Node) {
 
 // value looks at the value of an assignment, which bash reads as
 // arithmetic when the variable is an integer or is read in arithmetic:
-// the code of its subscripts runs then.
+// the code of its subscripts runs then. Of a value with expansions, that
+// of the text written out in it: x="a[\$(id)]$y"; ((x)) runs id.
 func (p *parser) value(w *syntax.Word) {
-	if v, ok := literal(w); ok {
-		p.subscript(v)
-	}
+	p.subscript(written(w))
 }
 
 // testWord looks at an operand of [[ ]] that bash takes for a name or
@@ -162,9 +165,9 @@ func runs(s string) bool {
 const docStop = "MVDAN_CC_SH_SYNTAX_EOF"
 
 // dqBody keeps the code of text that bash expands as the body of double
-// quotes: what $(…) and `…` run, wherever they are in it. Quotes are text
-// there, and what single ones hold is expanded too. Text that does not
-// parse is marked.
+// quotes: what $(…) and `…` run, wherever they are in it, and ${x@P} (see
+// prompt). Quotes are text there, and what single ones hold is expanded
+// too. Text that does not parse is marked.
 func (p *parser) dqBody(text string) {
 	if !strings.ContainsAny(text, "$`") {
 		return
@@ -193,6 +196,8 @@ func (p *parser) dqBody(text string) {
 				p.dqBody(ansiC(n.Value))
 			}
 			return false
+		case *syntax.ParamExp:
+			p.prompt(n)
 		}
 		return true
 	})
@@ -361,6 +366,26 @@ func literal(w *syntax.Word) (string, bool) {
 		}
 	}
 	return b.String(), true
+}
+
+// written is the text written out in w, as literal makes it, with what its
+// expansions give left out: that may be nothing.
+func written(w *syntax.Word) string {
+	var b strings.Builder
+	for _, part := range w.Parts {
+		switch part := part.(type) {
+		case *syntax.DblQuoted:
+			for _, q := range part.Parts {
+				if lit, ok := q.(*syntax.Lit); ok {
+					b.WriteString(unescapeOnly(lit.Value, "$`\"\\"))
+				}
+			}
+		case *syntax.Lit, *syntax.SglQuoted:
+			s, _ := literal(&syntax.Word{Parts: []syntax.WordPart{part}})
+			b.WriteString(s)
+		}
+	}
+	return b.String()
 }
 
 // ansiC decodes the escapes of $'…' as bash does: \x24 is $.

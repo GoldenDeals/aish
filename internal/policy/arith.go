@@ -44,8 +44,10 @@ type reparsed struct {
 // backslashes escaping as in double quotes, and its substitutions kept
 // whole, for the parser to see the commands in them. Single quotes in
 // arithmetic quote nothing to bash, and in the string they do not either.
-// ok is false when err is in no such construct, or the parser stops in the
-// rewritten one again.
+// $((…) …) and ((…) …), which the parser takes for arithmetic and bash for
+// a substitution and a subshell (see arithEnd), get a space between their
+// parentheses instead. ok is false when err is in no such construct, or
+// the parser stops in the rewritten one again.
 func arith(src string, err error) (r reparsed, ok bool) {
 	var pe syntax.ParseError
 	if !errors.As(err, &pe) {
@@ -65,12 +67,16 @@ func arith(src string, err error) (r reparsed, ok bool) {
 		if c.close < 0 || at >= c.end {
 			continue
 		}
-		body, quoted := dquote(src[c.open:c.close])
-		if !quoted {
+		var fixed string
+		switch body, quoted := dquote(src[c.open:c.close]); {
+		case c.sub:
+			fixed = src[:c.open] + " " + src[c.open:]
+		case quoted:
+			fixed = src[:c.open] + c.prefix + body + c.suffix + src[c.close:]
+		default:
 			continue
 		}
 		rewrites++
-		fixed := src[:c.open] + c.prefix + body + c.suffix + src[c.close:]
 		stmts, e := upToError(fixed)
 		// The parser has got past the construct when it stops after it,
 		// or at EOF on something open before it: what precedes it is the
@@ -88,9 +94,12 @@ func arith(src string, err error) (r reparsed, ok bool) {
 // opened is a construct of bash that opens at an offset of a line: its
 // text is src[open:close], what ends it src[close:end]; close is -1 when
 // nothing does. prefix and suffix go around the string its text becomes.
+// sub is $((…) …) or ((…) …) that bash takes for $( (…) …) or ( (…) …),
+// with open between the two parentheses, where a space goes.
 type opened struct {
 	open, close, end int
 	prefix, suffix   string
+	sub              bool
 }
 
 // construct tells whether an opener of arithmetic or of ${…} is at src[q].
@@ -98,15 +107,16 @@ func construct(src string, q int) (opened, bool) {
 	s := src[q:]
 	switch {
 	case strings.HasPrefix(s, "$(("):
-		return arithEnd(src, q+3, ""), true
+		return arithEnd(src, q+3, "", true), true
 	case strings.HasPrefix(s, "((") && (q == 0 || src[q-1] != '$'):
 		// for ((i=0; i<n; i++)) wants its two semicolons, outside the
-		// string.
+		// string, and is never a subshell.
 		suffix := ""
-		if forLoop(src[:q]) {
+		loop := forLoop(src[:q])
+		if loop {
 			suffix = ";;"
 		}
-		return arithEnd(src, q+2, suffix), true
+		return arithEnd(src, q+2, suffix, !loop), true
 	case strings.HasPrefix(s, "${"):
 		return ended(src, q+2, '{', '}', "_:+"), true
 	case strings.HasPrefix(s, "$["):
@@ -118,11 +128,20 @@ func construct(src string, q int) (opened, bool) {
 }
 
 // arithEnd is the construct of $(( or (( whose text starts at open: bash
-// ends it at the ) that closes its second ( when another follows.
-func arithEnd(src string, open int, suffix string) opened {
+// ends it at the ) that closes its second ( when another follows. When
+// none does, and sub allows, bash takes the first ( for that of a
+// substitution or a subshell, and the second for a subshell in it:
+// $((sudo ls) ) runs sudo ls, and so does ((sudo ls) ).
+func arithEnd(src string, open int, suffix string, sub bool) opened {
 	c := opened{open: open, close: -1, suffix: suffix}
-	if i := closing(src, open, '(', ')'); i >= 0 && i+1 < len(src) && src[i+1] == ')' {
+	switch i := closing(src, open, '(', ')'); {
+	case i < 0:
+	case i+1 < len(src) && src[i+1] == ')':
 		c.close, c.end = i, i+2
+	case sub:
+		if j := closing(src, i+1, '(', ')'); j >= 0 {
+			c = opened{open: open - 1, close: open - 1, end: j + 1, sub: true}
+		}
 	}
 	return c
 }

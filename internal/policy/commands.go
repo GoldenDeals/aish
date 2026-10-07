@@ -152,6 +152,8 @@ type parser struct {
 	// modes are where the line runs its commands under set -k and shopt -s
 	// cdable_vars (see modesOf).
 	modes [numModes]mode
+	// prompts follows ${x@P} through the line (see prompt).
+	prompts prompts
 }
 
 // snippet is code a line hands to a shell, here or on another machine.
@@ -198,6 +200,7 @@ func (p *parser) parse(src string, depth int, remote bool) error {
 			p.iter(n)
 		case *syntax.ParamExp:
 			p.defaulted(n)
+			p.prompt(n)
 		case *syntax.Redirect:
 			// Of any statement: { …; } > f and done > f write too.
 			p.redirect(n)
@@ -607,6 +610,10 @@ func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*synt
 			p.assignedTo(name, value)
 		default:
 			p.assigned(name)
+			// The value is read as that of x=… is (see assignedTo): what is
+			// written out in it, the \x24( of $'…' decoded, as bash does in
+			// env $'x=a[\x24(id)]' bash -c '((x))'.
+			p.subscript(ansiC(value))
 		}
 	}
 	var code []string

@@ -40,8 +40,13 @@ func loads(name string) bool {
 
 // assignedTo marks an assignment of value, static, to the variable name:
 // the code a variable of commandVars holds is parsed after the walk of
-// the line, with the code the line hands to shells.
+// the line, with the code the line hands to shells. Whatever the name, the
+// code of the subscripts in value runs when it is read as arithmetic (see
+// value), and all of it in ${name@P} (see prompt): of x=…, for x in …,
+// ${x:=…} and env x=… alike.
 func (p *parser) assignedTo(name, value string) {
+	p.subscript(value)
+	p.shown(name, value)
 	if !commandVars[name] {
 		p.assigned(name)
 		return
