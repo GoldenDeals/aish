@@ -31,3 +31,9 @@ func (c Config) SessionsMaxAge() time.Duration {
 	d, _ := ParseAge(c.SessionsTTL) // check has made sure it parses
 	return d
 }
+
+// CacheMaxAge is cache_ttl as a duration: 0 is off, not "always expired".
+func (c Config) CacheMaxAge() time.Duration {
+	d, _ := ParseAge(c.CacheTTL) // check has made sure it parses
+	return d
+}

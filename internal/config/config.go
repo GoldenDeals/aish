@@ -71,6 +71,14 @@ type Config struct {
 	// CompactAt is the share of the window past which the agent sums the
 	// session up before its next turn, as `aish compact` does; 0 never.
 	CompactAt float64 `toml:"compact_at"`
+	// CacheTTL is how long the provider keeps a session cached after its
+	// last turn: past it a request in a session of ColdWarnTokens or more
+	// is told that it pays for all of it again. A Go duration (5m, 1h) or
+	// days (1d); "0" does not check.
+	CacheTTL string `toml:"cache_ttl"`
+	// ColdWarnTokens is the size of a session, in tokens, from which a
+	// cache that expired or is not read is worth a word; 0 never.
+	ColdWarnTokens int `toml:"cold_warn_tokens"`
 	// PromptStatus shows the context size and the model at the right of the
 	// prompt.
 	PromptStatus bool `toml:"prompt_status"`
@@ -162,6 +170,8 @@ func Default() Config {
 		CodeStyle:      "monokai",
 		PromptStatus:   true,
 		CompactAt:      0.8,
+		CacheTTL:       "5m",
+		ColdWarnTokens: 50000,
 		JournalIgnore:  []string{"*secret*", "env", "printenv", "cat *credentials*", "history"},
 		StateIgnore:    []string{"*TOKEN*", "*SECRET*", "*KEY*", "*PASSWORD*", "AWS_*"},
 		PolicyDir:      filepath.Join(Dir(), "policy"),
@@ -280,6 +290,7 @@ func (c Config) check() error {
 		{"max_steps", int64(c.MaxSteps)},
 		{"max_output_bytes", int64(c.MaxOutputBytes)},
 		{"context_window", int64(c.ContextWindow)},
+		{"cold_warn_tokens", int64(c.ColdWarnTokens)},
 		{"route.min_words", int64(c.Route.MinWords)},
 	} {
 		if f.n < 0 {
@@ -291,6 +302,9 @@ func (c Config) check() error {
 	}
 	if _, err := ParseAge(c.SessionsTTL); err != nil {
 		return fmt.Errorf("sessions_ttl = %q: %w", c.SessionsTTL, err)
+	}
+	if _, err := ParseAge(c.CacheTTL); err != nil {
+		return fmt.Errorf("cache_ttl = %q: %w", c.CacheTTL, err)
 	}
 	switch c.Policy.WriteOutsideHome {
 	case "", "allow", "ask", "deny":

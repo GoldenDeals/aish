@@ -135,6 +135,9 @@ type Agent struct {
 	// paused is set when the API broke the last turn off for the model to
 	// go on from it: drive makes another turn, though the reply looks final.
 	paused bool
+	// coldNoted is the journal (Journal.ID) whose uncached prefix warnCold
+	// has told of: once a session is enough.
+	coldNoted string
 }
 
 // Start records a new request made in ex and works on it.
@@ -177,6 +180,7 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	if err := a.append(session.Entry{Kind: session.KindUser, Text: text, Cwd: cwd}); err != nil {
 		return err
 	}
+	a.warnCold()
 	return a.drive(ctx)
 }
 
