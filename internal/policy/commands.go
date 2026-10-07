@@ -44,6 +44,9 @@ type Script struct {
 	// has "computed" for a program built at run time too, which writes no
 	// file a policy could know of.
 	UnknownWrite bool
+	// sites holds where the line runs each command of Commands, for its
+	// paths (see shell.at); nil without a cwd.
+	sites []site
 }
 
 // The kinds of Script.Dynamic.
@@ -51,7 +54,8 @@ const (
 	// dynComputed is a program or code made of expansions: $x -rf,
 	// "$(which rm)", eval "$x", bash -c "$x"; the name of a variable made
 	// of them, read "$v"; code the line does not hold: a bind macro, the
-	// history fc runs.
+	// history fc runs; a path no policy can know before the line runs (see
+	// shell.at, lineVars).
 	dynComputed = "computed"
 	// dynSource is source or ., whose file may change after the check.
 	dynSource = "source"
@@ -84,9 +88,19 @@ func Commands(src string) ([][]string, error) {
 // which bash runs, and those of the rest of the code in the line; the
 // error is the line's own, else that of the first code that fails.
 func Parse(src, cwd, home string) (Script, error) {
-	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: home}
+	return parseIn(src, shell{pwd: cwd, home: home})
+}
+
+// parseIn is Parse in the shell sh, whose CDPATH a cd in the line looks
+// in.
+func parseIn(src string, sh shell) (Script, error) {
+	cwd := sh.pwd
+	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: sh.home}
+	if cwd != "" {
+		p.line = &lines{sh: sh, at: map[*syntax.CallExpr]where{}}
+	}
 	err := p.parse(src, 0, false)
-	s := Script{Commands: p.out, Remote: p.remotes}
+	s := Script{Commands: p.out, Remote: p.remotes, sites: p.settle()}
 	for _, t := range p.writes {
 		switch {
 		case t.rel && p.chdir:
@@ -126,6 +140,10 @@ type parser struct {
 	// varCode is the code of the variables of commandVars the walk of a
 	// line assigns: it is parsed after the walk, as that of bash -c is.
 	varCode []snippet
+	// line follows where the commands of the line run, sites holds it by
+	// the index of each in out; nil without a cwd.
+	line  *lines
+	sites []site
 }
 
 // snippet is code a line hands to a shell, here or on another machine.
@@ -146,6 +164,9 @@ func (p *parser) mark(kind string) { p.kinds[kind] = true }
 func (p *parser) parse(src string, depth int, remote bool) error {
 	stmts, err := p.statements(src)
 	p.remote = remote
+	if depth == 0 && p.line != nil {
+		p.line.track(stmts)
+	}
 	var nested []snippet
 	done := map[*syntax.CallExpr]bool{}
 	visit := func(n syntax.Node) bool {
@@ -155,11 +176,11 @@ func (p *parser) parse(src string, depth int, remote bool) error {
 			// it runs reads from stdin.
 			if call, ok := n.Cmd.(*syntax.CallExpr); ok {
 				done[call] = true
-				nested = append(nested, p.call(call, n.Redirs)...)
+				nested = append(nested, p.placed(call, n.Redirs)...)
 			}
 		case *syntax.CallExpr:
 			if !done[n] {
-				nested = append(nested, p.call(n, nil)...)
+				nested = append(nested, p.placed(n, nil)...)
 			}
 		case *syntax.DeclClause:
 			p.decl(n)
@@ -1164,13 +1185,14 @@ var rebindVars = map[string]bool{
 
 // assigned marks an assignment to the variable name of a value not known
 // before the line runs: one of commandVars runs code made at run time.
+// One of lineVars changes the paths after it whatever its value.
 func (p *parser) assigned(name string) {
 	switch {
 	case promptVars[name]:
 		p.mark(dynPrompt)
 	case rebindVars[name], loads(name):
 		p.mark(dynRebind)
-	case commandVars[name]:
+	case commandVars[name], lineVars[name]:
 		p.mark(dynComputed)
 	}
 }

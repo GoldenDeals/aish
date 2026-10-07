@@ -60,6 +60,8 @@ type Input struct {
 	Model string `json:"model,omitempty"`
 	// Agent is the subagent making the call; "" for the host agent.
 	Agent string `json:"agent,omitempty"`
+	// sites is Script.sites of Line: where it runs each of Commands.
+	sites []site
 	// sh is the shell the call is made in, as NewInput finds it in its
 	// environment: the commands of Line take ~ and $HOME from its HOME,
 	// not from Home, and relative paths from its logical directory.
@@ -183,9 +185,9 @@ func (in *Input) HandOff(line string) {
 	in.Line = line
 	in.sh.quoted = quotedPrefix(line)
 	sh := in.shell()
-	s, err := Parse(line, sh.pwd, sh.home)
+	s, err := parseIn(line, sh)
 	in.Commands, in.Dynamic, in.Writes = s.Commands, s.Dynamic, s.Writes
-	in.Remote = s.Remote
+	in.Remote, in.sites = s.Remote, s.sites
 	in.UnknownWrite = s.UnknownWrite
 	if err != nil {
 		in.ParseError = err.Error()
@@ -205,7 +207,9 @@ func (in *Input) HandOff(line string) {
 }
 
 // Analyze is Analyze of argv in the shell the call is made in: from its
-// logical directory, with its HOME and CDPATH.
+// logical directory, with its HOME and CDPATH. A command of Line may run
+// elsewhere, after a cd: the policies take its paths from there (see
+// command).
 func (in Input) Analyze(argv []string) Command {
 	return in.shell().analyze(argv)
 }

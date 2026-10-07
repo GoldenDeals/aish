@@ -17,7 +17,7 @@ type Command struct {
 	Args     []string // argv[1:] as written
 	Flags    []string // "-rf" → "r", "f"; "--force" → "force"; "--opt=v" → "opt"; none after "--"
 	Operands []string // non-option args, "--" dropped
-	Paths    []string // operands that look like paths, absolute and resolved as the kernel opens them; for cd and pushd every place they may enter (see shell.chdir)
+	Paths    []string // operands that look like paths, absolute and resolved as the kernel opens them; for cd and pushd every place they may enter (see shell.chdir); of a command of a line, also from where its cd took it and what its globs match (see shell.at)
 	Text     string   // argv joined with spaces
 	// lost tells that cd, pushd or popd may take the shell to a directory
 	// no policy can know before the line runs: $OLDPWD, one of the

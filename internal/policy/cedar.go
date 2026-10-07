@@ -175,8 +175,7 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 	switch {
 	case in.Line != "":
 		var reqs []types.Request
-		run := func(argv []string, remote bool) {
-			c := in.Analyze(argv)
+		run := func(c Command, remote bool) {
 			if remote {
 				// The command of ssh names files of another machine.
 				c.Paths = nil
@@ -209,11 +208,11 @@ func requests(in Input) ([]types.Request, types.EntityMap) {
 				Context:   types.NewRecord(ctx),
 			})
 		}
-		for i, argv := range in.Commands {
-			run(argv, slices.Contains(in.Remote, i))
+		for i := range in.Commands {
+			run(in.command(i), slices.Contains(in.Remote, i))
 		}
 		if len(in.Commands) == 0 || in.ParseError != "" {
-			run(nil, false)
+			run(in.Analyze(nil), false)
 		}
 		// A redirection writes as write_file does, without its arguments.
 		for _, path := range in.Writes {

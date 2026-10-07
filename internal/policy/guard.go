@@ -109,26 +109,34 @@ func (g guarded) line(in Input) bool {
 		return true
 	}
 	enters, copying := false, false
-	sh := in.shell()
-	for _, argv := range in.Commands {
+	for i, argv := range in.Commands {
 		if len(argv) == 0 {
 			continue
 		}
 		if trusts(argv) {
 			return true
 		}
-		paths := guardPaths(argv, sh)
+		// From the directory of the call and those a cd in the line takes
+		// the command to, with what its globs match.
+		paths := in.command(i).Paths
+		inDir := false
+		for _, sh := range in.within(i) {
+			paths = append(paths, guardPaths(argv, sh)...)
+			d := resolve(sh.pwd)
+			inDir = inDir || g.names(d) || g.over(d)
+		}
 		if slices.ContainsFunc(paths, g.names) {
 			return true
 		}
 		over := slices.ContainsFunc(paths, g.over)
 		copier, here := copies(argv)
-		if copier && (over || here && (g.names(in.Cwd) || g.over(in.Cwd))) {
+		if copier && (over || here && (inDir || g.names(in.Cwd) || g.over(in.Cwd))) {
 			return true
 		}
 		copying = copying || copier
-		// cd runs the copier after it from there, its . and bare names too.
-		enters = enters || over && chdirs[filepath.Base(argv[0])]
+		// cd, env -C and the like run the copier after them, or their
+		// own, from there, its . and bare names too.
+		enters = enters || over && moves(argv)
 	}
 	return enters && copying || blind(in) && mentions(in.Line)
 }

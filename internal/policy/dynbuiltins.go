@@ -309,7 +309,8 @@ func (p *parser) read(args []string, static []bool) []string {
 	return nil
 }
 
-// unset PATH leaves bash looking for a command in the current directory.
+// unset PATH leaves bash looking for a command in the current directory;
+// unset HOME, CDPATH and the like change the paths after it (lineVars).
 func (p *parser) unset(args []string, static []bool) []string {
 	if slices.Contains(static, false) {
 		p.mark(dynRebind)
@@ -320,8 +321,12 @@ func (p *parser) unset(args []string, static []bool) []string {
 		return nil
 	}
 	for _, i := range ops {
-		if name, _, _ := strings.Cut(args[i], "["); name == "PATH" {
+		switch name, _, _ := strings.Cut(args[i], "["); {
+		case name == "PATH":
 			p.mark(dynRebind)
+		case lineVars[name]:
+			// unset HOME makes $HOME/x /x.
+			p.mark(dynComputed)
 		}
 	}
 	return nil
