@@ -19,19 +19,19 @@ type Script struct {
 	// Commands holds the argv of every simple command in the line: in
 	// pipelines, $(...), subshells, behind wrappers, and in the code the
 	// line hands to eval, bash -c, a shell's here-string or here-document,
-	// env -S, alias, trap, su -c, runuser -c, flock -c, script -c, watch,
-	// sudo -s and -i and, on another machine, ssh HOST CMD or the
-	// here-string of ssh HOST. Words that are not static
-	// (expansions, substitutions) are kept in their source form, e.g.
-	// "$HOME".
+	// env -S, alias, trap, bind -x, complete -C, compgen -C, mapfile -C,
+	// su -c, runuser -c, flock -c, script -c, watch, sudo -s and -i and, on
+	// another machine, ssh HOST CMD or the here-string of ssh HOST. Words
+	// that are not static (expansions, substitutions) are kept in their
+	// source form, e.g. "$HOME".
 	Commands [][]string
 	// Remote holds the indexes in Commands of the commands that run on
 	// another machine, in the command of ssh: their words name no files
 	// of this one, and their redirections are not in Writes.
 	Remote []int
 	// Dynamic names what in the line runs code the parser cannot see:
-	// "computed", "source", "stdin", "prompt", "depth". Sorted, no
-	// repeats; empty when every command is known.
+	// "computed", "source", "stdin", "prompt", "rebind", "depth". Sorted,
+	// no repeats; empty when every command is known.
 	Dynamic []string
 	// Writes holds the files the line writes by redirections (>, >>, &>,
 	// <>, …) wherever they are, absolute and resolved as the kernel opens
@@ -48,14 +48,20 @@ type Script struct {
 // The kinds of Script.Dynamic.
 const (
 	// dynComputed is a program or code made of expansions: $x -rf,
-	// "$(which rm)", eval "$x", bash -c "$x".
+	// "$(which rm)", eval "$x", bash -c "$x"; the name of a variable made
+	// of them, read "$v"; code the line does not hold: a bind macro, the
+	// history fc runs.
 	dynComputed = "computed"
 	// dynSource is source or ., whose file may change after the check.
 	dynSource = "source"
 	// dynStdin is a shell reading its commands from stdin: echo … | bash.
 	dynStdin = "stdin"
-	// dynPrompt is an assignment to a variable the shell runs later.
+	// dynPrompt is an assignment to a variable the shell runs later: by
+	// =, by declare and its kin, or by a builtin such as read and printf -v.
 	dynPrompt = "prompt"
+	// dynRebind makes a name of a command run another program or code:
+	// hash -p, enable, an assignment to PATH (see rebindVars).
+	dynRebind = "rebind"
 	// dynDepth is code nested deeper than maxDepth, left unparsed.
 	dynDepth = "depth"
 )
@@ -277,7 +283,7 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 }
 
 // program looks at what argv runs and returns the code it hands to eval,
-// alias, trap or, on stdin, a shell.
+// alias, trap, one of setters or, on stdin, a shell.
 func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect) []string {
 	if !static[0] {
 		p.mark(dynComputed)
@@ -327,6 +333,8 @@ func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect
 		} else if len(args) > 1 && args[0] != "-" {
 			return []string{args[0]}
 		}
+	case setters[name] != nil:
+		return setters[name](p, args, st)
 	}
 	return nil
 }
@@ -504,8 +512,8 @@ func (p *parser) unwrap(w wrapper, argv []string, static, split []bool) (int, []
 func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*syntax.Redirect) []string {
 	opts, cmd := w.read(args)
 	for i, a := range args[:cmd] {
-		if name, _, ok := strings.Cut(a, "="); ok && promptVars[name] && !valued(opts, args, i) {
-			p.mark(dynPrompt)
+		if name, _, ok := strings.Cut(a, "="); ok && !valued(opts, args, i) {
+			p.assigned(name)
 		}
 	}
 	if !has(opts, w.shell...) || has(opts, w.none...) {
@@ -1121,15 +1129,43 @@ func firstParam(q *syntax.DblQuoted) (*syntax.ParamExp, bool) {
 }
 
 // promptVars hold code the shell runs later, outside any check: at every
-// prompt, or in every bash or sh it starts.
+// prompt (MAILPATH's messages are expanded when mail comes), or in every
+// bash or sh it starts.
 var promptVars = map[string]bool{
 	"PROMPT_COMMAND": true, "PS0": true, "PS1": true, "PS2": true, "PS4": true,
-	"BASH_ENV": true, "ENV": true,
+	"BASH_ENV": true, "ENV": true, "MAILPATH": true,
+}
+
+// rebindVars tell which program or code a name of a command runs: PATH
+// and EXECIGNORE where it is looked for, BASH_CMDS is the table of hash
+// and BASH_ALIASES that of alias.
+var rebindVars = map[string]bool{
+	"PATH": true, "EXECIGNORE": true, "BASH_CMDS": true, "BASH_ALIASES": true,
+}
+
+// assigned marks an assignment to the variable name.
+func (p *parser) assigned(name string) {
+	switch {
+	case promptVars[name]:
+		p.mark(dynPrompt)
+	case rebindVars[name]:
+		p.mark(dynRebind)
+	}
+}
+
+// named marks an assignment to the variable a word names as text: NAME or
+// NAME[SUBSCRIPT], whose subscript bash expands, $(…) and all.
+func (p *parser) named(s string) {
+	name, sub, ok := strings.Cut(s, "[")
+	if ok && strings.ContainsAny(sub, "$`") {
+		p.mark(dynComputed)
+	}
+	p.assigned(name)
 }
 
 func (p *parser) assign(a *syntax.Assign) {
-	if a.Name != nil && !a.Naked && promptVars[a.Name.Value] {
-		p.mark(dynPrompt)
+	if a.Name != nil && !a.Naked {
+		p.assigned(a.Name.Value)
 	}
 }
 
@@ -1137,29 +1173,45 @@ func (p *parser) assign(a *syntax.Assign) {
 // typeset. Their arguments assign even when quoted whole, as in
 // `export 'PS1=$(id)'`, and declare -n r=PS1 makes r another name of PS1.
 func (p *parser) decl(d *syntax.DeclClause) {
+	export := d.Variant.Value == "export"
 	nameref := d.Variant.Value == "nameref"
 	for _, a := range d.Args {
 		switch {
 		case a.Name != nil:
 			p.assign(a)
-			if nameref && a.Value != nil && promptVars[word(a.Value)] {
-				p.mark(dynPrompt)
+			switch {
+			case !nameref || a.Value == nil:
+			case !isStatic(a.Value):
+				// It may name any variable.
+				p.mark(dynComputed)
+			default:
+				p.named(word(a.Value))
 			}
 		case a.Value == nil:
 		case !isStatic(a.Value):
 			p.mark(dynComputed)
 		default:
-			v := word(a.Value)
-			if strings.HasPrefix(v, "-") {
-				nameref = nameref || (d.Variant.Value != "export" && strings.Contains(v, "n"))
-				continue
-			}
-			name, _, ok := strings.Cut(v, "=")
-			name, _, _ = strings.Cut(name, "[")
-			if ok && promptVars[strings.TrimSuffix(name, "+")] {
-				p.mark(dynPrompt)
-			}
+			p.declWord(word(a.Value), export, &nameref)
 		}
+	}
+}
+
+// declWord looks at a word of export, declare, local, readonly or typeset
+// that the parser keeps as text: an option, with which -n makes the names
+// namerefs, or a NAME=VALUE quoted whole or of the builtin run as a
+// command.
+func (p *parser) declWord(v string, export bool, nameref *bool) {
+	if strings.HasPrefix(v, "-") {
+		*nameref = *nameref || !export && strings.Contains(v, "n")
+		return
+	}
+	name, value, ok := strings.Cut(v, "=")
+	if !ok {
+		return
+	}
+	p.named(strings.TrimSuffix(name, "+"))
+	if *nameref {
+		p.named(value)
 	}
 }
 

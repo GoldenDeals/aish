@@ -572,15 +572,21 @@ write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
 Команды bash-строки разбираются все: конвейеры, `$(...)`, `bash -c '...'` и обёртки — `sudo rm x`
 даёт запросы и для `sudo`, и для `rm`; вердикт вызова — худший из них. Так же разбирается код,
 который строка отдаёт shell: `eval` со статичными аргументами, here-string и here-document для
-`bash`/`sh`, `env -S`, значение `alias`, команда `trap`, строки `su -c`, `flock ФАЙЛ -c`, `script -c`
+`bash`/`sh`, `env -S`, значение `alias`, команда `trap`, `bind -x`, `complete -C`, `compgen -C` и
+`mapfile -C`, строки `su -c`, `flock ФАЙЛ -c`, `script -c`
 и `watch`. Удалённая команда `ssh ХОСТ КОМАНДА…` разбирается, как `bash -c`, но её пути и редиректы —
 файлы другой машины: ни в `paths`, ни в `Action::"write"` они не попадают. Чего нельзя знать до
 исполнения, помечено
 в `context.dynamic` (множество): `computed` — программа или код из подстановок и глобов (`$x`,
-`"$(which rm)"`, `eval "$x"`, `bash -c "$x"`) или файл редиректа, неизвестный до исполнения (`> "$f"`,
+`"$(which rm)"`, `eval "$x"`, `bash -c "$x"`, `complete -W '$(…)'`), имя переменной из них (`read "$v"`,
+`printf -v "$v"`, `declare -n r="$v"`), код, которого в строке нет (макрос `bind`, команды истории
+`fc`, кроме `fc -l`), или файл редиректа, неизвестный до исполнения (`> "$f"`,
 относительный путь в строке с `cd`), `source` — `source` и `.`, `stdin` — shell читает
 команды со stdin (`echo … | bash`), `prompt` — присваивание `PROMPT_COMMAND`, `PS0`, `PS1`, `PS2`,
-`PS4`, `BASH_ENV`, `ENV`, `depth` — вложенность глубже четырёх уровней. Пример спрашивает о любой
+`PS4`, `BASH_ENV`, `ENV`, `MAILPATH` — не только `=` и `export`, но и `read`, `printf -v`, `mapfile`,
+`declare -n`, `rebind` — имя команды начнёт запускать другое: присваивание `PATH` (и
+`export PATH=…:$PATH`), `EXECIGNORE`, `BASH_CMDS`, `BASH_ALIASES`, `unset PATH`, `hash -p`, `enable`
+(кроме `-n`, `-d` и списка), `depth` — вложенность глубже четырёх уровней. Пример спрашивает о любой
 пометке; отпустить `source` — `unless { context has dynamic && context.dynamic == ["source"] }`.
 `paths` — операнды,
 похожие на пути, уже абсолютные и с раскрытыми симлинками: `rm -rf ~/`, `rm -rf "$HOME"` и

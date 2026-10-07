@@ -617,7 +617,9 @@ func (b subBash) Title(args map[string]any) string { return tools.Title(b.Tool, 
 // scope may run; "" when it is. Every simple command of the line, those in
 // $(…) and bash -c included, must match a pattern, and code made at run
 // time cannot be checked, so it does not run; nor does a line that sets a
-// variable which may change what they run (setsVariable).
+// variable which may change what they run (setsVariable), or makes a name
+// of a command run another program: Dynamic "prompt" and "rebind" are
+// refused last, for a reason that names what the line sets.
 func refused(s *bashScope, cmd, cwd string, env []string) string {
 	if s == nil {
 		return ""
@@ -628,11 +630,12 @@ func refused(s *bashScope, cmd, cwd string, env []string) string {
 	}
 	in := policy.NewInput(tools.Bash, nil, cwd, env)
 	in.HandOff(cmd)
+	made := fmt.Sprintf("the command runs code made at run time (%s), which cannot be checked", strings.Join(in.Dynamic, ", "))
 	switch {
 	case in.ParseError != "":
 		return "cannot parse the command: " + in.ParseError
-	case len(in.Dynamic) > 0:
-		return fmt.Sprintf("the command runs code made at run time (%s), which cannot be checked", strings.Join(in.Dynamic, ", "))
+	case slices.ContainsFunc(in.Dynamic, func(k string) bool { return k != "prompt" && k != "rebind" }):
+		return made
 	}
 	// A line without commands may still write: > file.
 	reads := len(in.Commands) == 0
@@ -657,7 +660,11 @@ func refused(s *bashScope, cmd, cwd string, env []string) string {
 			return why
 		}
 	}
-	return setsVariable(cmd, in.Commands)
+	if why := setsVariable(cmd, in.Commands); why != "" || len(in.Dynamic) == 0 {
+		return why
+	}
+	// PATH=. and PS1=… are told above by name; hash -p, enable here.
+	return made
 }
 
 // unsafeOption is an option that makes a read command do more than read:
