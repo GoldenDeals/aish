@@ -83,6 +83,7 @@ type Proxy struct {
 	at      *statusAt           // where the agent left the cursor after printing its next command
 	hide    bool                // the agent's next command is not to be drawn (hide_work), see ui.HideCommand
 	waits   bool                // and its line of calls is left open for that command, until the agent writes
+	spin    *spin               // that line, kept turning while the command runs, see hidework.go
 	line    *inputLine          // the line typed at the prompt, kept off its status
 	col     firstCol            // whether the shell's output left the next prompt off the first column
 	folds   []Fold              // folded outputs of the last request, for Ctrl+O
@@ -516,6 +517,8 @@ func (p *Proxy) restoreScreen() {
 	if p.form != nil {
 		p.closeForm()
 	}
+	// The shell may have gone with the agent's command still running.
+	p.stopSpin()
 	p.setPaste(false) // even under a question, which waits for its request
 }
 
@@ -650,6 +653,7 @@ func (p *Proxy) marker(m Marker) {
 			p.emit([]byte("  " + dim + "(interrupted)" + reset + "\r\n"))
 		}
 		p.hide, p.waits = false, false
+		p.stopSpin()
 		rc, cwd, _ := strings.Cut(m.Payload, ";")
 		defer p.saveState(cwd) // with the command that changed it in the journal
 		seg := p.user
@@ -675,6 +679,9 @@ func (p *Proxy) marker(m Marker) {
 		seg := &segment{cmd: cmd, buf: capture.NewBuffer(headCap, tailCap)}
 		if p.hide {
 			seg.fold = newQuiet("❯ " + cmd)
+			if p.spin != nil {
+				p.spin.fold = seg.fold
+			}
 		} else if p.foldLines >= 0 {
 			seg.fold = newFold("❯ "+cmd, p.foldLines)
 			if p.foldLines == 0 {
@@ -684,6 +691,7 @@ func (p *Proxy) marker(m Marker) {
 		p.at, p.hide = nil, false
 		p.agent[id] = seg
 	case "agent-end":
+		p.stopSpin() // the agent goes on with its line
 		f := strings.SplitN(m.Payload, ";", 3)
 		if len(f) < 3 {
 			return

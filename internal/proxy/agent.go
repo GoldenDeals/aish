@@ -423,6 +423,7 @@ func (u *ui) Write(b []byte) (int, error) {
 	u.p.mu.Lock()
 	defer u.p.mu.Unlock()
 	u.p.waits = false // the agent has its line back
+	u.p.stopSpin()
 	u.p.emit(u.cr.fix(b))
 	return len(b), nil
 }
@@ -479,13 +480,14 @@ func (u *ui) Hidden(title, text string) {
 }
 
 // HideCommand has the command the shell runs next folded quietly: the
-// agent's line of calls stays as it is, the last on the screen, until the
-// agent goes on with it. If it does not, the command cut short, cmd-end
-// ends that line.
-func (u *ui) HideCommand() {
+// agent's line of calls stays the last on the screen, turning (line, see
+// hidework.go), until the agent goes on with it. If it does not, the
+// command cut short, cmd-end ends that line.
+func (u *ui) HideCommand(line func(n, cols int) string) {
 	u.p.mu.Lock()
 	defer u.p.mu.Unlock()
 	u.p.hide, u.p.waits = true, true
+	u.p.startSpin(line)
 }
 
 // CommandAt needs no long: the status goes at the right edge of the last

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
 
@@ -25,13 +27,20 @@ type hiderUI struct {
 	hidden   []string // titles, in the order kept
 	texts    []string
 	hideCmds int
+	lines    []func(n, cols int) string // to keep turning, by HideCommand
+	// keptAt is how much was written when each call was kept.
+	keptAt []int
 }
 
 func (u *hiderUI) Hidden(title, text string) {
 	u.hidden = append(u.hidden, title)
 	u.texts = append(u.texts, text)
+	u.keptAt = append(u.keptAt, u.Len())
 }
-func (u *hiderUI) HideCommand() { u.hideCmds++ }
+func (u *hiderUI) HideCommand(line func(n, cols int) string) {
+	u.hideCmds++
+	u.lines = append(u.lines, line)
+}
 
 // hidingAgent is newAgent with hide_work on, on a terminal 80 columns wide
 // that keeps the calls.
@@ -471,5 +480,94 @@ func TestWorkUIPanes(t *testing.T) {
 	}
 	if _, ok := wrapWork(&panesUI{fakeUI: &fakeUI{}}, g).(Panes); !ok {
 		t.Error("panes lost")
+	}
+}
+
+// slowTool takes its time, as task_wait or a server's tool may.
+type slowTool struct {
+	namedTool
+	d time.Duration
+}
+
+func (t slowTool) Execute(ctx context.Context, _ tools.Exec, _ map[string]any, _ io.Writer) (string, error) {
+	select {
+	case <-time.After(t.d):
+		return "waited", nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// groupFrames are the line of a group calling one tool as it turns, the
+// frame captured.
+var groupFrames = regexp.MustCompile(`\r\x1b\[36m(.) \x1b\[2mCalling 1 tool…\x1b\[0m\x1b\[K`)
+
+// A long call turns the line of the group while it runs, and stops before
+// its result is kept: nothing turns it after.
+func TestHideWorkSlowCall(t *testing.T) {
+	prov := &fakeProvider{replies: []*llm.Response{
+		{ToolCalls: []llm.ToolCall{toolCall("c1", "wait", `{}`)}},
+		{Text: "done"},
+	}}
+	a, _, _, ui, cwd := hidingAgent(t, prov)
+	a.Tools.Add(slowTool{namedTool{name: "wait"}, 500 * time.Millisecond})
+	if err := a.Start(context.Background(), "wait", tools.Exec{Dir: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ui.keptAt) != 1 {
+		t.Fatalf("kept %q", ui.hidden)
+	}
+	out := ui.String()
+	frames := map[string]bool{}
+	for _, m := range groupFrames.FindAllStringSubmatch(out[:ui.keptAt[0]], -1) {
+		frames[m[1]] = true
+	}
+	if len(frames) < 3 {
+		t.Errorf("the line turned through %d frames while the call ran: %q", len(frames), out[:ui.keptAt[0]])
+	}
+	// After it the line is the turn's spinner's, which hides the cursor,
+	// and then done.
+	if rest := out[ui.keptAt[0]:]; groupFrames.MatchString(rest) {
+		t.Errorf("the line turned after the result: %q", rest)
+	}
+	if want := []string{"● Called 1 tool" + workHint, "done", ""}; !slices.Equal(screenOf(out), want) {
+		t.Errorf("screen %q, want %q", screenOf(out), want)
+	}
+}
+
+// The line handed to the UI with a command goes on from the frame drawn,
+// with the label drawn, within the columns it is given.
+func TestHideWorkTurner(t *testing.T) {
+	prov := &fakeProvider{replies: []*llm.Response{
+		{ToolCalls: []llm.ToolCall{
+			toolCall("c1", "read_file", `{"path":"a.txt"}`),
+			toolCall("c2", "bash", `{"command":"sleep 5"}`),
+		}},
+	}}
+	a, _, _, ui, cwd := hidingAgent(t, prov)
+	if err := a.Start(context.Background(), "wait", tools.Exec{Dir: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ui.lines) != 1 {
+		t.Fatalf("%d lines to turn", len(ui.lines))
+	}
+	line := ui.lines[0]
+	drawn := screenOf(ui.String())
+	if got := stripCSI(line(0, 80)); len(drawn) != 1 || got != drawn[0] {
+		t.Errorf("frame 0 %q, drawn %q", got, drawn)
+	}
+	first, _ := utf8.DecodeRuneInString(drawn[0])
+	at := slices.Index(spinnerFrames, string(first))
+	for n := 1; n <= len(spinnerFrames); n++ {
+		got := stripCSI(line(n, 80))
+		want := spinnerFrames[(at+n)%len(spinnerFrames)] + " Reading 1 file, running 1 command…"
+		if got != want {
+			t.Errorf("frame %d %q, want %q", n, got, want)
+		}
+	}
+	for _, cols := range []int{10, 20, 40} {
+		if got := stripCSI(line(1, cols)); runewidth.StringWidth(got) > cols-1 || !strings.HasSuffix(got, "…") {
+			t.Errorf("%d columns: %q", cols, got)
+		}
 	}
 }

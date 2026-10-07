@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -28,11 +29,12 @@ import (
 // journal, the policy, the hooks and what the model gets are the same.
 //
 // The line of an open group is the last on the screen, the cursor on it:
-// drawn by call, or by the spinner of a turn in its place. To keep it so,
-// the agent's UI is a workUI while there is a group, which ends the line
-// before anything else is printed; the group and the spinner draw on the
-// UI beneath it. A command handed to the shell leaves the line open, the
-// proxy drawing nothing of it, and Resume goes on with the same group.
+// drawn by call, turning while a call runs, or by the spinner of a turn in
+// its place. To keep it so, the agent's UI is a workUI while there is a
+// group, which ends the line before anything else is printed; the group
+// and the spinner draw on the UI beneath it. A command handed to the shell
+// leaves the line open, the proxy drawing nothing of it and keeping the
+// line turning, and Resume goes on with the same group.
 
 // workKind is what a call does, as the line of the group counts it.
 type workKind int
@@ -161,7 +163,12 @@ func fit(s string, w int) string {
 // draws its own, with frame: within cols-1 columns, the last being kept
 // free as everywhere.
 func (g *workGroup) active(frame string, cols int) string {
-	label := g.label(true)
+	return activeLine(frame, g.label(true), cols)
+}
+
+// activeLine is the line of a group labelled label as its calls go on, see
+// active.
+func activeLine(frame, label string, cols int) string {
 	if cols > 0 {
 		label = fit(label, cols-1-runewidth.StringWidth(frame+" …"))
 	}
@@ -188,6 +195,47 @@ func (g *workGroup) draw() {
 	g.frame = (g.frame + 1) % len(spinnerFrames)
 	fmt.Fprintf(g.ui, "\r%s\x1b[K", g.active(spinnerFrames[g.frame], cols))
 	g.drawn = true
+}
+
+// spin keeps the line of the group turning while a call of it runs, as the
+// spinner of a turn does, until stop: the line stays then, with its last
+// frame. Not the spinner itself, which draws at once and takes its line
+// off: a call as quick as a read leaves the line as draw left it.
+func (g *workGroup) spin() (stop func()) {
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(spinnerTick)
+		defer t.Stop()
+		for {
+			select {
+			case <-quit:
+				return
+			case <-t.C:
+				g.draw()
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(quit)
+			<-done
+		})
+	}
+}
+
+// turner is the line of the group for the UI to keep turning while the
+// shell runs a command of it (Hider.HideCommand): the frames go on from
+// the one drawn, the label is as drawn. It takes no lock: the UI calls it
+// under its own, which draw takes while holding g.mu.
+func (g *workGroup) turner() func(n, cols int) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	label, frame := g.label(true), g.frame
+	return func(n, cols int) string {
+		return activeLine(spinnerFrames[(frame+n)%len(spinnerFrames)], label, cols)
+	}
 }
 
 // spinLabel is what the spinner of a turn shows over the open group, ""
@@ -361,21 +409,25 @@ func (a *Agent) handHidden(id, cmd string) error {
 	if err := a.Shell.HandOff(id, cmd); err != nil {
 		return err
 	}
-	g.hider.HideCommand()
+	g.hider.HideCommand(g.turner())
 	g.wait(true)
 	return nil
 }
 
 // callHidden runs a call of the group, titled title: counted, nothing of it
-// drawn, its result kept for Ctrl+O. A streaming tool gets no live output:
-// its result has what it printed. A call that fails is shown after all, as
-// it would be without hide_work, and not counted: it ends the group.
+// drawn but the line of the group, which turns while it runs, its result
+// kept for Ctrl+O. A streaming tool gets no live output: its result has
+// what it printed. A call that fails is shown after all, as it would be
+// without hide_work, and not counted: it ends the group.
 func (a *Agent) callHidden(ctx context.Context, t tools.Tool, c session.ToolCall, args map[string]any, title string) error {
 	g := a.work
 	k := kindOf(t)
 	g.add(k)
 	g.draw()
+	stop := g.spin()
+	defer stop() // a tool that panics too
 	res, err := t.Execute(ctx, a.exec, args, nil)
+	stop() // before the result, kept or shown
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return ctx.Err()

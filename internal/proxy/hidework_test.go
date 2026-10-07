@@ -2,11 +2,14 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/rpc"
@@ -25,7 +28,7 @@ func TestHiddenCommand(t *testing.T) {
 			p.foldLines = limit
 			u := &ui{p: p}
 			u.Write([]byte(agentLine))
-			u.HideCommand()
+			u.HideCommand(nil)
 			p.marker(Marker{Kind: "agent-start", Payload: "c1;seq 4"})
 			p.output([]byte(output))
 			if output != "" {
@@ -58,7 +61,7 @@ func TestHiddenCommand(t *testing.T) {
 func TestHiddenOneCommand(t *testing.T) {
 	p, out := statusProxy(t, 80)
 	u := &ui{p: p}
-	u.HideCommand()
+	u.HideCommand(nil)
 	p.marker(Marker{Kind: "agent-start", Payload: "c1;ls"})
 	p.output([]byte("a\r\n"))
 	p.marker(Marker{Kind: "agent-end", Payload: "c1;0;/tmp"})
@@ -94,7 +97,7 @@ func TestHiddenCommandCut(t *testing.T) {
 		p, out := statusProxy(t, 80)
 		u := &ui{p: p}
 		u.Write([]byte(agentLine))
-		u.HideCommand()
+		u.HideCommand(nil)
 		tc.run(p)
 		p.marker(Marker{Kind: "cmd-end", Payload: "130;/tmp"})
 		if got := strings.TrimPrefix(out.String(), agentLine); got != cut {
@@ -111,7 +114,7 @@ func TestHiddenCommandFullScreen(t *testing.T) {
 	p, out := statusProxy(t, 80)
 	u := &ui{p: p}
 	u.Write([]byte(agentLine))
-	u.HideCommand()
+	u.HideCommand(nil)
 	p.marker(Marker{Kind: "agent-start", Payload: "c1;vim"})
 	p.output([]byte("x\r\n"))
 	p.output([]byte("\x1b[?1049hscreen"))
@@ -163,9 +166,18 @@ func TestHideWorkRequest(t *testing.T) {
 	before := out.String()
 	p.marker(Marker{Kind: "agent-start", Payload: "c2;ls"})
 	p.output([]byte("a.txt\r\n"))
+	// The agent's line turns while the command runs, and nothing else is
+	// drawn of it.
+	time.Sleep(4 * spinTick)
 	p.marker(Marker{Kind: "agent-end", Payload: "c2;0;" + cwd})
-	if out.String() != before {
-		t.Errorf("the command drew %q", strings.TrimPrefix(out.String(), before))
+	turned := regexp.MustCompile(`\r\x1b\[36m(.) \x1b\[2mReading 1 file, running 1 command…\x1b\[0m\x1b\[K`)
+	drawn := strings.TrimPrefix(out.String(), before)
+	frames := map[string]bool{}
+	for _, m := range turned.FindAllStringSubmatch(drawn, -1) {
+		frames[m[1]] = true
+	}
+	if len(frames) < 2 || turned.ReplaceAllString(drawn, "") != "" {
+		t.Errorf("the command drew %q", drawn)
 	}
 	if _, err := call(t, p, rpc.MethodAgentResume, rpc.AgentParams{ID: "c2", RC: 0, Cwd: cwd}); err != nil {
 		t.Fatal(err)
@@ -183,5 +195,118 @@ func TestHideWorkRequest(t *testing.T) {
 	}
 	if got := journalKinds(p.sess); got != "user assistant tool_result tool_result assistant" {
 		t.Errorf("journal %s", got)
+	}
+}
+
+// spinLine is the agent's line of calls as HideCommand gets it to keep
+// turning: n frames after agentLine's, with the columns it is given.
+func spinLine(n, cols int) string {
+	frames := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	return fmt.Sprintf("%c Running 1 command… %d", frames[n%len(frames)], cols)
+}
+
+// spinDraws are the frames of spinLine drawn in place, the frame captured.
+var spinDraws = regexp.MustCompile(`\r(.) Running 1 command… 80\x1b\[K`)
+
+// spinning is statusProxy with the agent's line drawn and its command,
+// hidden, handed to the shell, which runs it.
+func spinning(t *testing.T) (*Proxy, *terminal, *ui) {
+	t.Helper()
+	p, out := statusProxy(t, 80)
+	t.Cleanup(func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.stopSpin()
+	})
+	u := &ui{p: p}
+	u.Write([]byte(agentLine))
+	u.HideCommand(spinLine)
+	p.marker(Marker{Kind: "agent-start", Payload: "c1;sleep 5"})
+	return p, out, u
+}
+
+func spinStopped(p *Proxy) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.spin == nil
+}
+
+// While the hidden command runs, the proxy turns the agent's line: frames
+// in its place and nothing else, none after agent-end.
+func TestHiddenCommandSpins(t *testing.T) {
+	p, out, _ := spinning(t)
+	p.output([]byte("a\r\n"))
+	time.Sleep(500 * time.Millisecond)
+	drawn := strings.TrimPrefix(out.String(), agentLine)
+	frames := map[string]bool{}
+	for _, m := range spinDraws.FindAllStringSubmatch(drawn, -1) {
+		frames[m[1]] = true
+	}
+	if len(frames) < 3 || spinDraws.ReplaceAllString(drawn, "") != "" {
+		t.Errorf("%d frames in 500ms: %q", len(frames), drawn)
+	}
+	p.marker(Marker{Kind: "agent-end", Payload: "c1;0;/tmp"})
+	ended := out.String()
+	time.Sleep(3 * spinTick)
+	if got := strings.TrimPrefix(out.String(), ended); got != "" || !spinStopped(p) {
+		t.Errorf("after agent-end: %q", got)
+	}
+}
+
+// The agent writing takes its line back, the command cut short leaves it
+// to the prompt: either stops it turning, and the prompt's word goes after
+// the last frame.
+func TestHiddenCommandSpinStops(t *testing.T) {
+	_, _, u := spinning(t)
+	u.Write([]byte("\r● Ran 1 command\x1b[K\n"))
+	if !spinStopped(u.p) {
+		t.Error("turning after the agent wrote")
+	}
+
+	p, out, _ := spinning(t)
+	time.Sleep(3 * spinTick)
+	p.output([]byte("^C"))
+	p.marker(Marker{Kind: "cmd-end", Payload: "130;/tmp"})
+	ended := out.String()
+	rows := screenRows(ended)
+	if len(rows) != 2 || !spinDraws.MatchString(ended) || !strings.HasSuffix(rows[0], " Running 1 command… 80  (interrupted)") {
+		t.Errorf("cut short: %q", ended)
+	}
+	time.Sleep(3 * spinTick)
+	if got := strings.TrimPrefix(out.String(), ended); got != "" || !spinStopped(p) {
+		t.Errorf("after the prompt: %q", got)
+	}
+}
+
+// The viewer has the screen: no frame goes there, nor waits for it to
+// close; the line turns again once it is closed. A full-screen program
+// stops it: what the command prints after it shows below the line.
+func TestHiddenCommandSpinScreen(t *testing.T) {
+	p, out, _ := spinning(t)
+	p.output([]byte("a\r\n"))
+	if b := p.key([]byte{ctrlO}); len(b) != 0 {
+		t.Fatalf("Ctrl+O went to the shell: %q", b)
+	}
+	opened := out.String()
+	time.Sleep(3 * spinTick)
+	p.mu.Lock()
+	viewing, held := p.view != nil, string(p.held)
+	p.mu.Unlock()
+	if got := strings.TrimPrefix(out.String(), opened); !viewing || got != "" || held != "" {
+		t.Errorf("viewer open %v: drew %q, held %q", viewing, got, held)
+	}
+	p.key([]byte("q"))
+	closed := out.String()
+	time.Sleep(3 * spinTick)
+	if got := strings.TrimPrefix(out.String(), closed); !spinDraws.MatchString(got) {
+		t.Errorf("after the viewer: %q", got)
+	}
+
+	p, out, _ = spinning(t)
+	p.output([]byte("\x1b[?1049hscreen"))
+	time.Sleep(3 * spinTick)
+	got := out.String()
+	if i := strings.Index(got, "\r\n\x1b[?1049hscreen"); i < 0 || got[i:] != "\r\n\x1b[?1049hscreen" || !spinStopped(p) {
+		t.Errorf("full-screen program: %q", got)
 	}
 }

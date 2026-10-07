@@ -95,7 +95,11 @@ type Hider interface {
 	Hidden(title, text string)
 	// HideCommand says the command the shell runs next is such a call:
 	// its output and status are kept for Ctrl+O, nothing of them drawn.
-	HideCommand()
+	// The agent's line of calls stays the last on the screen meanwhile,
+	// and the UI keeps it turning, the agent's request being over:
+	// line(n, cols) is that line with the n-th frame after the one drawn,
+	// within cols columns. It takes no lock.
+	HideCommand(line func(n, cols int) string)
 }
 
 // Live is a tool's output being shown; Finish ends it with the tool's exit
