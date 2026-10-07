@@ -547,6 +547,11 @@ servers:
 deny = ["sudo *", "rm -rf /", "git push --force*", "git push -f*"]
 ask  = ["apt install *", "pacman -S *", "git push*"]
 write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
+write_outside_home_hint = "write only under $HOME; for anything else tell the user the command"
+
+[policy.hints]                   # ключ — шаблон из deny или ask дословно
+"sudo *" = "sudo is forbidden: use doas"
+"git push*" = "never push; the user pushes himself"
 ```
 
 Шаблон сравнивается с каждой простой командой bash-строки — с её argv через пробел, в том числе
@@ -573,12 +578,34 @@ write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
 добавляется к глобальному — проект может только ужесточить. `aish policy` показывает и число
 правил.
 
+`[policy.hints]` и `write_outside_home_hint` — подсказки модели: пока правило действует, его текст стоит в
+системном промпте, и о запрете модель знает до первого отказа, а не тратит ход на попытку и обходные пути. На
+вердикт они не влияют. Ключ `[policy.hints]` — шаблон из `deny` или `ask` дословно; хинт шаблона, которого там нет,
+пустой текст и `write_outside_home_hint` без `write_outside_home = "ask"` или `"deny"` — ошибка конфига. Хинты из
+`.aish.toml` добавляются к глобальным и могут объяснять глобальные шаблоны; у шаблона, который объясняют оба файла, —
+оба текста, глобальный первым. `write_outside_home_hint` проекту нужен вместе с его собственным `write_outside_home`:
+хинт берётся, если значение проекта строже глобального, при равных — оба текста, иначе остаётся глобальный.
+
 Каждый вызов инструмента проверяется политиками на [Cedar](https://docs.cedarpolicy.com/) из
 `~/.config/aish/policy/*.cedar`. `forbid` возвращается модели с причиной, `forbid` с аннотацией
 `@ask("…")` спрашивает тебя Yes/No; `@reason("…")` — текст, который увидят модель и ты. Нет
 политик — разрешено всё, кроме `aish trust` и записи в его файл (см. «Настройки проекта»).
 Несколько каталогов (`policy_dir` списком или из `.aish.toml`) проверяются по отдельности, каждый —
 свой набор с default deny, побеждает строгий.
+
+`@hint("…")` у любой политики, `permit` или `forbid`, — текст для модели: пока политика загружена, он стоит в
+системном промпте (раздел `# Policy`, после хинтов `[policy]`), и правило модель знает заранее, а не по отказу. На
+вердикт он не влияет и показывается всегда, независимо от `when`: если правило условное (`context.agent == "reviewer"`),
+скажи это в самом тексте. Пустой `@hint` — ошибка загрузки с файлом и строкой.
+
+```cedar
+@reason("no sudo")
+@hint("sudo is forbidden here: use doas, or tell the user what needs root")
+forbid(principal, action == Action::"run", resource == Command::"sudo");
+```
+
+Хинты из `policy_dir` и `[policy]` проекта попадают в промпт без `aish trust` — как `system_prompt` и `CLAUDE.md`
+проекта.
 
 Что видит политика (principal везде — `Model::"<имя модели>"`):
 
@@ -794,6 +821,8 @@ expand = true                     # раскрывать $VAR и $(…) в за�
 deny = ["sudo *", "rm -rf /"]     # запретить; * ловит всё, включая пробелы и /
 ask = ["git push*"]               # спросить Yes/No
 write_outside_home = "ask"        # write_file и edit_file вне $HOME: "allow" | "ask" | "deny"
+write_outside_home_hint = "ask before writing outside $HOME" # подсказка модели в системном промпте
+hints = { "sudo *" = "sudo is forbidden: use doas" }       # подсказки к шаблонам deny и ask, см. «Политики»
 
 [profiles.work]                   # профиль, который выбирает profile: endpoint и модель поверх ключей выше, см. ниже
 base_url = "http://127.0.0.1:8317"

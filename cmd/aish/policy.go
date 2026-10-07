@@ -139,5 +139,6 @@ func policyLine(eng *policy.Engine, dir string, global, total int, project strin
 
 // rulesOf is the [policy] table of cfg as the policy package takes it.
 func rulesOf(cfg config.Config) policy.Rules {
-	return policy.Rules{Deny: cfg.Policy.Deny, Ask: cfg.Policy.Ask, WriteOutsideHome: cfg.Policy.WriteOutsideHome}
+	return policy.Rules{Deny: cfg.Policy.Deny, Ask: cfg.Policy.Ask, WriteOutsideHome: cfg.Policy.WriteOutsideHome,
+		Hints: cfg.Policy.Hints, WriteOutsideHomeHint: cfg.Policy.WriteOutsideHomeHint}
 }

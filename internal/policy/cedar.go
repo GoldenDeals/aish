@@ -35,6 +35,9 @@ type cedarChecker struct {
 	ps      *cedar.PolicySet
 	files   []string
 	summary []Summary
+	// notes are the @hint texts, in the order of the files and of the
+	// policies in each.
+	notes []string
 }
 
 // loadCedar parses the files into one policy set, naming the policies
@@ -77,6 +80,14 @@ func loadCedar(files []string) (*cedarChecker, error) {
 			if err := checkHas(ast, attrs); err != nil {
 				return nil, fmt.Errorf("policy: %s:%d: %w", f, p.Position().Line, err)
 			}
+			// An empty hint is a slip, @hint alone being @hint(""): the
+			// rule would go without the text its author meant for it.
+			if text, ok := p.Annotations()["hint"]; ok {
+				if strings.TrimSpace(string(text)) == "" {
+					return nil, fmt.Errorf("policy: %s:%d: @hint is empty", f, p.Position().Line)
+				}
+				c.notes = append(c.notes, string(text))
+			}
 			c.ps.Add(types.PolicyID(id), p)
 		}
 		c.summary = append(c.summary, Summary{File: base, Policies: len(list)})
@@ -96,6 +107,8 @@ func parseError(f string, err error) error {
 }
 
 func (c *cedarChecker) Summaries() []Summary { return c.summary }
+
+func (c *cedarChecker) hints() []string { return c.notes }
 
 func (c *cedarChecker) Check(ctx context.Context, in Input) (Decision, error) {
 	reqs, ents := requests(in)

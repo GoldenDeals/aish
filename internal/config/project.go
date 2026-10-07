@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -49,7 +48,8 @@ type project struct {
 // policy and tools packages take. Each key names one directory, a list
 // is an error; a relative one is taken from the file's own. The deny
 // and ask lists of [policy] are added to the global ones, and of the two
-// write_outside_home the stricter is kept.
+// write_outside_home the stricter is kept; its hints go with the rules
+// (layPolicy).
 // hooks_dir is added as tools_dir is: the project's hooks run after the
 // user's. Both run code from the repository and hold only if the file is
 // Trusted; otherwise they are left out and named in Untrusted.
@@ -104,10 +104,8 @@ func layProject(cfg Config, path string, data []byte, readErr error, trust func(
 		cfg.PolicyDir = addDir(cfg.PolicyDir, *pr.PolicyDir, dir)
 	}
 	if pr.Policy != nil {
-		cfg.Policy = Policy{
-			Deny:             slices.Concat(cfg.Policy.Deny, pr.Policy.Deny),
-			Ask:              slices.Concat(cfg.Policy.Ask, pr.Policy.Ask),
-			WriteOutsideHome: stricter(cfg.Policy.WriteOutsideHome, pr.Policy.WriteOutsideHome),
+		if cfg.Policy, err = layPolicy(cfg.Policy, *pr.Policy); err != nil {
+			return cfg, path, fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	codeOn := trust()

@@ -58,7 +58,8 @@ func (p *Proxy) applyFields(cfg config.Config) {
 
 // rulesOf are the simple rules of cfg's [policy].
 func rulesOf(cfg config.Config) policy.Rules {
-	return policy.Rules{Deny: cfg.Policy.Deny, Ask: cfg.Policy.Ask, WriteOutsideHome: cfg.Policy.WriteOutsideHome}
+	return policy.Rules{Deny: cfg.Policy.Deny, Ask: cfg.Policy.Ask, WriteOutsideHome: cfg.Policy.WriteOutsideHome,
+		Hints: cfg.Policy.Hints, WriteOutsideHomeHint: cfg.Policy.WriteOutsideHomeHint}
 }
 
 // errApplyAsks refuses the assistant `aish apply-config`: the config is

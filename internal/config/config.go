@@ -118,6 +118,11 @@ type Policy struct {
 	Ask  []string `toml:"ask"`
 	// WriteOutsideHome is "allow", "ask" or "deny"; empty is allow.
 	WriteOutsideHome string `toml:"write_outside_home"`
+	// Hints, by a pattern of Deny or Ask as written there, and
+	// WriteOutsideHomeHint are texts for the model, in the system prompt
+	// while the rule is: what it forbids and what to do instead.
+	Hints                map[string]string `toml:"hints"`
+	WriteOutsideHomeHint string            `toml:"write_outside_home_hint"`
 }
 
 func Dir() string {
@@ -291,6 +296,9 @@ func (c Config) check() error {
 	case "", "allow", "ask", "deny":
 	default:
 		return fmt.Errorf("policy.write_outside_home = %q: want \"allow\", \"ask\" or \"deny\"", c.Policy.WriteOutsideHome)
+	}
+	if err := c.Policy.checkHints(); err != nil {
+		return err
 	}
 	switch c.HooksFail {
 	case "", "allow", "deny":

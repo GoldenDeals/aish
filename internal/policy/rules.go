@@ -3,7 +3,9 @@ package policy
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -19,6 +21,12 @@ type Rules struct {
 	Ask  []string
 	// WriteOutsideHome is allow, ask or deny; "" is allow.
 	WriteOutsideHome string
+	// Hints, by a pattern of Deny or Ask, and WriteOutsideHomeHint are
+	// texts for the model, said in the system prompt before a call is
+	// refused (Engine.Hints). They are not rules: no verdict hangs on
+	// them.
+	Hints                map[string]string
+	WriteOutsideHomeHint string
 }
 
 // Len is the number of rules, for `aish policy`.
@@ -33,9 +41,42 @@ func (r Rules) Len() int {
 func (r Rules) check() error {
 	switch r.WriteOutsideHome {
 	case "", Allow, Ask, Deny:
-		return nil
+	default:
+		return fmt.Errorf("policy: write_outside_home = %q: want %q, %q or %q", r.WriteOutsideHome, Allow, Ask, Deny)
 	}
-	return fmt.Errorf("policy: write_outside_home = %q: want %q, %q or %q", r.WriteOutsideHome, Allow, Ask, Deny)
+	// A hint of no rule is a typo, which would leave the rule without it.
+	for _, p := range slices.Sorted(maps.Keys(r.Hints)) {
+		if !slices.Contains(r.Deny, p) && !slices.Contains(r.Ask, p) {
+			return fmt.Errorf("policy: hints[%q]: no such pattern in deny or ask", p)
+		}
+		if strings.TrimSpace(r.Hints[p]) == "" {
+			return fmt.Errorf("policy: hints[%q]: empty hint", p)
+		}
+	}
+	if r.WriteOutsideHomeHint != "" {
+		if strings.TrimSpace(r.WriteOutsideHomeHint) == "" {
+			return fmt.Errorf("policy: write_outside_home_hint: empty hint")
+		}
+		if r.WriteOutsideHome == "" || r.WriteOutsideHome == Allow {
+			return fmt.Errorf("policy: write_outside_home_hint: no write_outside_home = %q or %q to explain", Ask, Deny)
+		}
+	}
+	return nil
+}
+
+// hints are the texts of the rules in their order: Deny, Ask, then
+// WriteOutsideHome.
+func (r Rules) hints() []string {
+	var out []string
+	for _, p := range slices.Concat(r.Deny, r.Ask) {
+		if h, ok := r.Hints[p]; ok {
+			out = append(out, h)
+		}
+	}
+	if r.WriteOutsideHomeHint != "" {
+		out = append(out, r.WriteOutsideHomeHint)
+	}
+	return out
 }
 
 type rulesChecker struct{ Rules }

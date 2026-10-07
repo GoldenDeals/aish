@@ -379,6 +379,9 @@ func (a *Agent) turn(ctx context.Context) error {
 
 func (a *Agent) request(entries []session.Entry) llm.Request {
 	extra := a.Cfg.SystemPrompt
+	if note := a.policyPrompt(); note != "" {
+		extra = strings.TrimSpace(note + "\n\n" + extra)
+	}
 	if note := a.toolsPrompt(); note != "" {
 		extra = strings.TrimSpace(note + "\n\n" + extra)
 	}
