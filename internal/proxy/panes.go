@@ -109,12 +109,12 @@ func (w *paneWriter) Finish(exit int) {
 
 // holding reports whether the alternate screen is taken, by the viewer or
 // by the panes: the output waits in p.held meanwhile.
-func (p *Proxy) holding() bool { return p.view != nil || (p.panes != nil && p.panes.shown) }
+func (t *console) holding() bool { return t.view != nil || (t.panes != nil && t.panes.shown) }
 
 // paneKey handles what was typed while the layout is shown. Ctrl+C goes on
 // to the shell, which stops the request and the subagents with it; the
 // rest is the layout's. Called under p.mu.
-func (p *Proxy) paneKey(b []byte) []byte {
+func (t *console) paneKey(b []byte) []byte {
 	var keys, pass []byte
 	for _, c := range b {
 		if c == 0x03 {
@@ -123,43 +123,43 @@ func (p *Proxy) paneKey(b []byte) []byte {
 			keys = append(keys, c)
 		}
 	}
-	if p.panes.key(keys) {
-		p.detachPanes()
+	if t.panes.key(keys) {
+		t.detachPanes()
 	} else if len(keys) > 0 {
-		p.drawPanes()
+		t.drawPanes()
 	}
 	return pass
 }
 
 // panesDue opens the layout of ps once paneDelay is over, unless Ctrl+O
 // opened it sooner or the call closed it. Called under p.mu.
-func (p *Proxy) panesDue(ps *panes) {
-	if p.panes == ps && ps.delay != nil && p.view == nil {
-		p.showPanes()
+func (t *console) panesDue(ps *panes) {
+	if t.panes == ps && ps.delay != nil && t.view == nil {
+		t.showPanes()
 	}
 }
 
 // showPanes puts the layout on the alternate screen. Called under p.mu.
-func (p *Proxy) showPanes() {
-	ps := p.panes
+func (t *console) showPanes() {
+	ps := t.panes
 	if ps.delay != nil {
 		ps.delay.Stop() // shown sooner, by Ctrl+O: q then is not undone
 		ps.delay = nil
 	}
-	if p.size == nil {
+	if t.size == nil {
 		return
 	}
 	ps.shown = true
-	ps.resize(p.size())
-	_, _ = p.out.Write([]byte(panesOpen))
-	p.syncPaste()
-	p.drawPanes()
+	ps.resize(t.size())
+	t.write([]byte(panesOpen))
+	t.syncPaste()
+	t.drawPanes()
 }
 
 // drawPanes draws the layout shown. Called under p.mu.
-func (p *Proxy) drawPanes() {
-	p.panes.last = time.Now()
-	_, _ = p.out.Write(p.panes.render())
+func (t *console) drawPanes() {
+	t.panes.last = time.Now()
+	t.write(t.panes.render())
 }
 
 // paneOutput draws the layout after new output, at most once a paneRedraw:
@@ -187,12 +187,12 @@ func (p *Proxy) paneOutput() {
 
 // detachPanes gives the screen back while the subagents go on, with what
 // it held; Ctrl+O brings the layout back. Called under p.mu.
-func (p *Proxy) detachPanes() {
-	p.panes.shown = false
-	_, _ = p.out.Write([]byte(panesClose))
-	_, _ = p.out.Write(p.held)
-	p.held = nil
-	p.syncPaste() // after what was held: the mode the shell set there is in it
+func (t *console) detachPanes() {
+	t.panes.shown = false
+	t.write([]byte(panesClose))
+	t.write(t.held)
+	t.held = nil
+	t.syncPaste() // after what was held: the mode the shell set there is in it
 }
 
 // closePanes ends the layout: the screen comes back with what it held, a

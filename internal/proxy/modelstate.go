@@ -10,6 +10,27 @@ import (
 	"github.com/GoldenDeals/aish/internal/session"
 )
 
+// modelState is what this shell's requests go to: the profile of
+// config.toml, the model and the effort, which `aish model` switches for
+// the shell and a session keeps, and the size of the model's context.
+// Under p.mu, but for newProvider, which tests set before anything runs.
+type modelState struct {
+	profile     string       // "" for the top level of config.toml
+	model       string       // `aish model` switches it for this shell
+	effort      string       // "" being the model's default
+	window      int          // the model's context size, 0 if unknown
+	fixedWindow bool         // context_window is set in the config
+	prov        llm.Provider // the profile's, for the models list and the levels of effort; nil if unknown
+
+	// defProfile is the one config.toml selects, as the last request (or
+	// the start) read it, which the status does not name.
+	defProfile  string
+	defErr      string // why config.toml selects none, as tellDefErr told it last
+	windowAsked string // what lookupOnce last asked about, the key included
+
+	newProvider func(config.Config) (llm.Provider, error) // nil: llm.New; tests set it
+}
+
 // restoreModel brings back the profile a session used, its model and their
 // effort. A state without a model was saved before aish kept them: the
 // config's stay. So do they when config.toml has the profile no more: the
@@ -70,27 +91,27 @@ func (p *Proxy) switchModel(mp rpc.ModelParams) (rpc.Info, error) {
 // with prov its provider: another endpoint, other models, its own levels of
 // effort and context_window. setModel goes next: the window known is of
 // the old model. Called under p.mu.
-func (p *Proxy) setProfile(cfg config.Config, prov llm.Provider) {
-	p.profile, p.prov = cfg.Profile, prov
-	p.fixedWindow, p.window = cfg.ContextWindow > 0, cfg.ContextWindow
-	p.effort = ""
+func (m *modelState) setProfile(cfg config.Config, prov llm.Provider) {
+	m.profile, m.prov = cfg.Profile, prov
+	m.fixedWindow, m.window = cfg.ContextWindow > 0, cfg.ContextWindow
+	m.effort = ""
 	if llm.CheckEffort(prov, cfg.Effort) == nil {
-		p.effort = cfg.Effort
+		m.effort = cfg.Effort
 	}
 }
 
 // listProvider is the provider of cfg the shell asks for the models list
 // and the levels of effort; made without the effort, which is what may
 // need fixing.
-func (p *Proxy) listProvider(cfg config.Config) (llm.Provider, error) {
+func (m *modelState) listProvider(cfg config.Config) (llm.Provider, error) {
 	cfg.Effort = ""
-	return p.makeProvider(cfg)
+	return m.makeProvider(cfg)
 }
 
 // makeProvider is p.newProvider, which tests set, or else llm.New.
-func (p *Proxy) makeProvider(cfg config.Config) (llm.Provider, error) {
-	if p.newProvider != nil {
-		return p.newProvider(cfg)
+func (m *modelState) makeProvider(cfg config.Config) (llm.Provider, error) {
+	if m.newProvider != nil {
+		return m.newProvider(cfg)
 	}
 	return llm.New(cfg)
 }
@@ -123,10 +144,10 @@ func (p *Proxy) setModel(model string, window int) {
 	}
 }
 
-// modelState is the profile, the model and the effort of the shell, as
+// savedModel is the profile, the model and the effort of the shell, as
 // a session keeps them. Called under p.mu.
-func (p *Proxy) modelState() session.Saved {
-	return session.Saved{Profile: p.profile, TopLevel: p.profile == "", Model: p.model, Effort: p.effort}
+func (m *modelState) savedModel() session.Saved {
+	return session.Saved{Profile: m.profile, TopLevel: m.profile == "", Model: m.model, Effort: m.effort}
 }
 
 // lookupWindow asks prov, the provider of profile, for the context size of

@@ -58,7 +58,7 @@ func (p *Proxy) clear(ctx context.Context, cp rpc.ClearParams) (_ rpc.Info, err 
 		}
 		// The shell as the last prompt found it: right before the user
 		// typed `aish clear save`.
-		st := p.modelState()
+		st := p.savedModel()
 		if p.base != nil && p.cur != nil {
 			st.Shell = bashstate.Diff(*p.base, *p.cur)
 		}

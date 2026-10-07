@@ -32,12 +32,33 @@ type segment struct {
 // Fold is one output hidden behind "ctrl+o to expand".
 type Fold = rpc.Fold
 
+// recorder follows the shell's output by the markers around it
+// (markers.go): a command the user typed goes to the journal with what it
+// printed, an agent's command to the agent, which waits for it in wait;
+// the output of an agent's command or of an external tool is folded on
+// the screen. Under p.mu.
+type recorder struct {
+	asking bool                // inside __aish_ask, between ask-start and the next prompt
+	user   *segment            // command typed by the user, between cmd-start and cmd-end
+	agent  map[string]*segment // commands run on behalf of the agent, by call id
+	tool   *fold               // live output of an external tool, while it runs
+	at     *statusAt           // where the agent left the cursor after printing its next command
+	hide   bool                // the agent's next command is not to be drawn (hide_work), see ui.HideCommand
+	waits  bool                // and its line of calls is left open for that command, until the agent writes
+	spin   *spin               // that line, kept turning while the command runs, see hidework.go
+	watch  *promptWatch        // the fold of another command, watched for a prompt, see foldprompt.go
+	folds  []Fold              // folded outputs of the last request, for Ctrl+O
+
+	done    map[string]rpc.Output    // outputs of the agent's commands, till wait takes them
+	waiters map[string]chan struct{} // waits for those yet to come
+}
+
 // liveFold is the fold of the output being printed right now, if any.
-func (p *Proxy) liveFold() *fold {
-	if p.tool != nil {
-		return p.tool
+func (r *recorder) liveFold() *fold {
+	if r.tool != nil {
+		return r.tool
 	}
-	for _, s := range p.agent {
+	for _, s := range r.agent {
 		if s.fold != nil {
 			return s.fold
 		}
@@ -113,11 +134,11 @@ func (p *Proxy) cleared() {
 
 // finish keeps an agent command's output for wait, waking the agent's
 // Resume that may already be waiting for it.
-func (p *Proxy) finish(id string, out rpc.Output) {
-	p.done[id] = out
-	if ch, ok := p.waiters[id]; ok {
+func (r *recorder) finish(id string, out rpc.Output) {
+	r.done[id] = out
+	if ch, ok := r.waiters[id]; ok {
 		close(ch)
-		delete(p.waiters, id)
+		delete(r.waiters, id)
 	}
 }
 

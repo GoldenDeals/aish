@@ -147,9 +147,7 @@ func (p *Proxy) askKey(b []byte) []byte {
 			pass = append(pass, c)
 		case ctrlO:
 			if folds := p.viewFolds(); len(folds) > 0 {
-				w, h := p.size()
-				p.view = newViewer(folds, w, h)
-				_, _ = p.out.Write(p.view.open())
+				p.openView(folds)
 				return pass // the rest would be the viewer's
 			}
 		}

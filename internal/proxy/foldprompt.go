@@ -34,10 +34,10 @@ func (p *Proxy) watchFold(f *fold) {
 
 // stopWatch stops watching: the fold is not opened after it. Called under
 // p.mu.
-func (p *Proxy) stopWatch() {
-	if p.watch != nil {
-		p.watch.timer.Stop()
-		p.watch = nil
+func (r *recorder) stopWatch() {
+	if r.watch != nil {
+		r.watch.timer.Stop()
+		r.watch = nil
 	}
 }
 
@@ -77,13 +77,13 @@ func isInput(c byte) bool { return c != 0x03 && c != 0x1c && c != 0x1a }
 
 // hidingFold is the fold of the agent's command the shell runs, if it hides
 // what the command prints now. Called under p.mu.
-func (p *Proxy) hidingFold() *fold {
+func (r *recorder) hidingFold() *fold {
 	var f *fold
 	switch {
-	case p.spin != nil:
-		f = p.spin.fold
-	case p.watch != nil:
-		f = p.watch.fold
+	case r.spin != nil:
+		f = r.spin.fold
+	case r.watch != nil:
+		f = r.watch.fold
 	}
 	if f == nil || !f.hides() {
 		return nil

@@ -42,10 +42,10 @@ func (p *Proxy) startSpin(line func(n, cols int) string) {
 
 // stopSpin stops the line turning: no frame is drawn after it. The line
 // stays as the last frame left it, the cursor at its end. Called under p.mu.
-func (p *Proxy) stopSpin() {
-	if p.spin != nil {
-		p.spin.timer.Stop()
-		p.spin = nil
+func (r *recorder) stopSpin() {
+	if r.spin != nil {
+		r.spin.timer.Stop()
+		r.spin = nil
 	}
 }
 

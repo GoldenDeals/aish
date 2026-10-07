@@ -48,7 +48,7 @@ var (
 // readsKeys reports whether the proxy takes the keys itself, rather than
 // passing them on to the shell; syncPaste follows whatever changes it.
 // Called under p.mu.
-func (p *Proxy) readsKeys() bool { return p.holding() || p.ask != nil || p.form != nil }
+func (t *console) readsKeys() bool { return t.holding() || t.ask != nil || t.form != nil }
 
 // wholeKeys returns b with the sequence the last read cut put back in
 // front of it, and, for a reader of keys, without a sequence b cuts and
@@ -132,8 +132,8 @@ func (p *Proxy) loneKeys(gen int) {
 // pasteText is what of a paste a reader of keys gets: the form's Other,
 // which the cursor was on when the paste began, gets it as text on one
 // line; anything else, nothing. Called under p.mu.
-func (p *Proxy) pasteText(b []byte) []byte {
-	if !p.seq.text || p.form == nil || p.holding() || p.ask != nil {
+func (t *console) pasteText(b []byte) []byte {
+	if !t.seq.text || t.form == nil || t.holding() || t.ask != nil {
 		return nil
 	}
 	var s []byte
@@ -207,21 +207,21 @@ var modeSet = []byte("\x1b[?") // a private mode set or reset follows
 // syncPaste turns the mode on when the proxy has begun to read the keys,
 // and gives the shell's back when it has stopped. Called under p.mu after
 // whatever opens or closes the viewer, the panes, a question or the form.
-func (p *Proxy) syncPaste() { p.setPaste(p.readsKeys()) }
+func (t *console) syncPaste() { t.setPaste(t.readsKeys()) }
 
 // setPaste is syncPaste with whether the proxy reads the keys given. The
 // mode goes to the terminal at once, past what the viewer holds: the keys
 // are read now. Called under p.mu.
-func (p *Proxy) setPaste(on bool) {
-	m := &p.seq.mode
+func (t *console) setPaste(on bool) {
+	m := &t.seq.mode
 	if m.on == on {
 		return
 	}
 	m.on, m.again = on, false
 	if on || m.shell {
-		_, _ = p.out.Write(pasteOn)
+		t.write(pasteOn)
 	} else {
-		_, _ = p.out.Write(pasteOff)
+		t.write(pasteOff)
 	}
 }
 
@@ -229,14 +229,14 @@ func (p *Proxy) setPaste(on bool) {
 // went to the terminal or to what it holds. Turned off while the proxy
 // reads the keys, the mode goes on again after it, once show leaves no
 // sequence open that it would break. Called under p.mu.
-func (p *Proxy) pasteOutput(b, show []byte) {
-	m := &p.seq.mode
+func (t *console) pasteOutput(b, show []byte) {
+	m := &t.seq.mode
 	if m.feed(b) && m.on && !m.shell {
 		m.again = true
 	}
 	if m.again && openSeq(show) == len(show) {
 		m.again = false
-		p.emit(pasteOn)
+		t.emit(pasteOn)
 	}
 }
 

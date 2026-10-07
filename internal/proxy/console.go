@@ -5,14 +5,50 @@ import (
 	"io"
 )
 
+// console is the user's terminal. All the proxy writes there goes to out
+// through emit, which holds it while the viewer or the panes have the
+// screen, or through write, which does not: the frames of the viewer and
+// the panes, and the modes the keys are read in. The keys come in through
+// key, under p.mu, and go on to the shell or to whoever reads them
+// meanwhile: early before the first prompt, then the panes, the viewer, a
+// question, the form. out and size are set before Run reads anything (the
+// tests set them), size nil meaning no terminal; the rest is under p.mu.
+type console struct {
+	out  io.Writer
+	size func() (w, h int)
+
+	screen Screen     // whether the main screen was erased, or the alternate one is on
+	line   *inputLine // the line typed at the prompt, kept off its status
+	col    firstCol   // whether the shell's output left the next prompt off the first column
+	view   *viewer    // open while Ctrl+O shows the folds
+	panes  *panes     // open while subagents run, see panes.go
+	held   []byte     // output that arrived while the viewer or the panes had the screen
+	ask    *prompt    // a question the agent waits for the user to answer
+	form   *openForm  // the questions of ask_user while the user answers them
+	early  *early     // keys typed before readline has the terminal, see early.go
+	seq    keySeq     // keys a read cut, and pastes, see pastebrackets.go
+}
+
 // emit writes to the terminal, or holds the output while the viewer or the
 // panes have the screen.
-func (p *Proxy) emit(b []byte) {
-	if p.holding() {
-		p.held = append(p.held, b...)
+func (t *console) emit(b []byte) {
+	if t.holding() {
+		t.held = append(t.held, b...)
 		return
 	}
-	_, _ = p.out.Write(b)
+	t.write(b)
+}
+
+// write writes to the terminal at once, past what the viewer and the panes
+// hold: what they draw on the screen they have, and the modes the keys are
+// read in.
+func (t *console) write(b []byte) { _, _ = t.out.Write(b) }
+
+// openView opens the viewer of folds on the alternate screen.
+func (t *console) openView(folds []Fold) {
+	w, h := t.size()
+	t.view = newViewer(folds, w, h)
+	t.write(t.view.open())
 }
 
 // input copies the keyboard to bash. Ctrl+O while the assistant works or
@@ -61,7 +97,7 @@ func (p *Proxy) takeKeys(b []byte) []byte {
 		if p.view.key(b) {
 			p.closeView()
 		} else {
-			_, _ = p.out.Write(p.view.render())
+			p.write(p.view.render())
 		}
 		return nil
 	}
@@ -96,9 +132,7 @@ func (p *Proxy) takeKeys(b []byte) []byte {
 		}
 		return b // readline's own Ctrl+O
 	}
-	w, h := p.size()
-	p.view = newViewer(folds, w, h)
-	_, _ = p.out.Write(p.view.open())
+	p.openView(folds)
 	return b[:i]
 }
 
@@ -108,7 +142,7 @@ func (p *Proxy) resized() {
 	p.dropLine() // the terminal rewrapped the lines the model knows
 	if p.view != nil {
 		p.view.resize(p.size())
-		_, _ = p.out.Write(append([]byte("\x1b[2J"), p.view.render()...))
+		p.write(append([]byte("\x1b[2J"), p.view.render()...))
 	}
 	if p.panes != nil && p.panes.shown {
 		p.panes.resize(p.size())

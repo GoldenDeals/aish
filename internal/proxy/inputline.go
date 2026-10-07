@@ -201,9 +201,9 @@ func (l *inputLine) toStatus(out []byte) []byte {
 
 // dropLine stops following the input line; what it held back of a
 // sequence cut short goes to the terminal still.
-func (p *Proxy) dropLine() {
-	if p.line != nil {
-		p.emit(p.line.flush())
-		p.line = nil
+func (t *console) dropLine() {
+	if t.line != nil {
+		t.emit(t.line.flush())
+		t.line = nil
 	}
 }

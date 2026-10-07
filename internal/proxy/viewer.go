@@ -165,9 +165,9 @@ func (v *viewer) key(in []byte) (closed bool) {
 
 // viewFolds are the outputs of the current or last request, including the
 // one being printed.
-func (p *Proxy) viewFolds() []Fold {
-	folds := append([]Fold{}, p.folds...)
-	if f := p.liveFold(); f != nil && !f.open {
+func (r *recorder) viewFolds() []Fold {
+	folds := append([]Fold{}, r.folds...)
+	if f := r.liveFold(); f != nil && !f.open {
 		// A command cut short on the screen is there before it prints anything.
 		if raw := f.raw.Bytes(); len(raw) > 0 || f.cut() {
 			folds = append(folds, Fold{Title: f.title + "  (running)", Text: string(raw)})
@@ -179,13 +179,13 @@ func (p *Proxy) viewFolds() []Fold {
 // closeView shows the cursor the viewer hid, unless an open question or
 // form keeps it hidden. What was held goes after it, so that a spinner
 // drawn meanwhile hides it again.
-func (p *Proxy) closeView() {
+func (t *console) closeView() {
 	cursor := "\x1b[?25h"
-	if p.ask != nil || p.form != nil {
+	if t.ask != nil || t.form != nil {
 		cursor = "\x1b[?25l"
 	}
-	_, _ = p.out.Write(append(p.view.close(), cursor...))
-	_, _ = p.out.Write(p.held)
-	p.view, p.held = nil, nil
-	p.syncPaste() // after what was held: the mode the shell set there is in it
+	t.write(append(t.view.close(), cursor...))
+	t.write(t.held)
+	t.view, t.held = nil, nil
+	t.syncPaste() // after what was held: the mode the shell set there is in it
 }

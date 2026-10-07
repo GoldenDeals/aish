@@ -46,14 +46,14 @@ func (p *Proxy) holdEarly(w io.Writer) {
 }
 
 // earlyKey holds b, or returns it after what is held when it has to go.
-func (p *Proxy) earlyKey(b []byte) []byte {
-	e := p.early
+func (t *console) earlyKey(b []byte) []byte {
+	e := t.early
 	e.held = append(e.held, b...)
 	// Ctrl+C, Ctrl+Z or Ctrl+\ inside a paste is the text pasted.
-	if len(e.held) <= maxEarly && p.seq.shell.find(b, 0x03, 0x1a, 0x1c) < 0 {
+	if len(e.held) <= maxEarly && t.seq.shell.find(b, 0x03, 0x1a, 0x1c) < 0 {
 		return nil
 	}
-	p.early = nil
+	t.early = nil
 	return e.held
 }
 
@@ -76,8 +76,8 @@ func (p *Proxy) earlyPrompt() {
 
 // earlyOutput takes the shell's output, looking for readline's taking the
 // terminal, or for ~/.bashrc speaking.
-func (p *Proxy) earlyOutput(b []byte) {
-	e := p.early
+func (t *console) earlyOutput(b []byte) {
+	e := t.early
 	if e == nil {
 		return
 	}
@@ -88,16 +88,16 @@ func (p *Proxy) earlyOutput(b []byte) {
 			return
 		}
 	}
-	p.releaseEarly()
+	t.releaseEarly()
 }
 
-func (p *Proxy) releaseEarly() {
-	e := p.early
-	p.early = nil
+func (t *console) releaseEarly() {
+	e := t.early
+	t.early = nil
 	if len(e.held) > 0 {
 		_, _ = e.w.Write(e.held)
-		if p.line != nil {
-			p.line.typed() // they are the first keys at the prompt, as in key
+		if t.line != nil {
+			t.line.typed() // they are the first keys at the prompt, as in key
 		}
 	}
 }

@@ -29,14 +29,33 @@ import (
 // Project of the directory over it, the shell's model and effort. The
 // commands in the shell show that one too (inforce.go), not the files.
 
+// settings is the config in force: the snapshot of the config files, and
+// what the proxy takes from config.toml for itself (applyFields). Under
+// p.mu.
+type settings struct {
+	conf     *config.Snapshot
+	started  *config.Config  // the config Run got: what only a restart applies is told by it
+	mcpFile  string          // the MCP config the servers of p.mcp are of
+	mcpSum   string          // its sha256 when read
+	confSaid map[string]bool // the edits on disk, not applied yet, that tellChanged told of
+
+	foldLines    int // the request's fold_lines, the project's included; before one, config.toml's
+	maxOutput    int
+	promptStatus bool
+	compactAt    float64  // compact_at: the status says when the next request compacts
+	ignore       []string // journal_ignore: commands recorded without their output
+	stateIgnore  []string // state_ignore: variables kept out of the shell state
+	shellConfig  string   // the shell's other $AISH_CONFIG, as tellConfigPath told of it last
+}
+
 // snapshot is the snapshot of the config files requests go by. A proxy
 // that Run has not given one, a test's, takes it at the first need.
 // Called under p.mu.
-func (p *Proxy) snapshot() *config.Snapshot {
-	if p.conf == nil {
-		p.conf = config.NewSnapshot()
+func (s *settings) snapshot() *config.Snapshot {
+	if s.conf == nil {
+		s.conf = config.NewSnapshot()
 	}
-	return p.conf
+	return s.conf
 }
 
 // applyFields sets what the proxy takes from config.toml for itself, the

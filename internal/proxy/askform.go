@@ -91,33 +91,31 @@ func (p *Proxy) formKey(b []byte) []byte {
 		p.drawForm()
 	}
 	if view {
-		w, h := p.size()
-		p.view = newViewer(p.viewFolds(), w, h)
-		_, _ = p.out.Write(p.view.open())
+		p.openView(p.viewFolds())
 	}
 	return pass
 }
 
 // drawForm draws the open form over its last frame. Called under p.mu.
-func (p *Proxy) drawForm() {
-	of := p.form
-	w, h := p.size()
+func (t *console) drawForm() {
+	of := t.form
+	w, h := t.size()
 	frame := of.f.frame(w, h)
-	p.emit([]byte(of.erase(w) + frame))
+	t.emit([]byte(of.erase(w) + frame))
 	of.shown = strings.Split(frame, "\r\n")
 }
 
 // closeForm takes the form off the screen and leaves the summary of the
 // answers in its place, if there are any. Called under p.mu.
-func (p *Proxy) closeForm() {
-	of := p.form
-	p.form = nil
-	w, _ := p.size()
+func (t *console) closeForm() {
+	of := t.form
+	t.form = nil
+	w, _ := t.size()
 	out := of.erase(w)
 	if s := of.f.summary(); s != "" {
 		out += s + "\r\n"
 	}
-	p.emit([]byte(out + "\x1b[?25h"))
+	t.emit([]byte(out + "\x1b[?25h"))
 	close(of.done)
 }
 

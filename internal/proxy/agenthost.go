@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sync"
 
 	"github.com/GoldenDeals/aish/internal/agent"
 	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/policy"
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/tools"
 )
@@ -21,6 +23,28 @@ import (
 // `aish compact` commands inside the shell only carry the request over RPC
 // and hold the connection while the proxy works: closing it, or
 // agent_cancel, stops the work.
+
+// agentHost keeps the agent for the shell's requests, which run one at a
+// time under reqMu (request); prepare.go readies the agent for each, and
+// agentui.go is the journal, the shell and the terminal it is given. What
+// the agent holds, the policies (which lock themselves) and untrusted are
+// the request's, under reqMu; the rest is under p.mu.
+type agentHost struct {
+	reqMu sync.Mutex
+	ag    *agent.Agent // made by the first request
+
+	handed    string             // call id of the agent's command left for the shell, until its output is taken
+	cancelReq context.CancelFunc // stops the request in progress
+	reqCtx    context.Context    // and is its context
+	cancelGen uint64             // agent_cancel calls so far
+	overhead  int                // the agent's Overhead after the last request
+	project   string             // the .aish.toml of the last request, "" if none
+
+	policies     policy.Cache
+	untrusted    map[string]bool // the project files tellUntrusted told of
+	agentProv    llm.Provider    // the agent's provider, see providerFor
+	agentProvKey string
+}
 
 // request runs fn on the agent for one RPC call, alone: the shell drives
 // requests one at a time, and a request interrupted by Ctrl+C may still be
@@ -114,11 +138,11 @@ var errBusy = errors.New("a request is in progress: the assistant's commands can
 // before it name the request in the way, and between requests it is the
 // only one that a background subagent's command, or a job the agent's
 // command left, meets. Called under p.mu.
-func (p *Proxy) nested(fg error) error {
+func (h *agentHost) nested(fg error) error {
 	switch {
-	case p.handed != "":
+	case h.handed != "":
 		return errNested
-	case p.reqCtx != nil && p.reqCtx.Err() == nil:
+	case h.reqCtx != nil && h.reqCtx.Err() == nil:
 		return errBusy
 	}
 	return fg
