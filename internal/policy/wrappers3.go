@@ -31,12 +31,17 @@ var boxWrappers = map[string]wrapper{
 		none: []string{"h", "?", "help", "version"}, check: dbusCheck,
 	},
 	// distrobox enter with no command runs a login shell in the container,
-	// and so does distrobox ephemeral (see ephemeralArgs).
+	// and so does distrobox ephemeral (see ephemeralArgs); create and
+	// assemble run code of their options and of a file (see createCode).
 	"distrobox": {
 		reads: func(args []string) ([]option, int) {
 			switch {
 			case len(args) > 0 && args[0] == "ephemeral":
 				return ephemeralArgs(args, 1)
+			case len(args) > 0 && args[0] == "create":
+				return createArgs(args, 1)
+			case len(args) > 0 && args[0] == "assemble":
+				return assembleArgs(args, 1)
 			case len(args) == 0 || args[0] != "enter":
 				return nil, len(args)
 			}
@@ -44,7 +49,15 @@ var boxWrappers = map[string]wrapper{
 			return append(opts, option{name: "enter"}), cmd
 		},
 		none: distroboxNone, bare: true, attach: []string{"enter", "ephemeral"},
-		chdir: []string{"nw", "no-workdir"}, check: ephemeralCheck(1),
+		chdir: []string{"nw", "no-workdir"}, check: distroboxSubCheck,
+	},
+	"distrobox-assemble": {
+		reads: func(args []string) ([]option, int) { return assembleArgs(args, 0) },
+		none:  []string{"h", "help", "V", "version", "?"}, check: assembleCheck,
+	},
+	"distrobox-create": {
+		reads: func(args []string) ([]option, int) { return createArgs(args, 0) },
+		none:  distroboxNone, check: createCheck,
 	},
 	"distrobox-enter": {
 		reads: func(args []string) ([]option, int) { return distroboxEnter(args, 0) },

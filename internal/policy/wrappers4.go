@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -122,11 +123,10 @@ func composeEntry(opts []option, static []bool) ([]string, bool) {
 	return words, static != nil && static[es[0].word]
 }
 
-// composeCheck marks what compose runs besides its words: the compose file
-// and its .env, which hold the commands of the services, their hooks and
-// builds, as source, but for help, version and ls; the variables of -e and
-// --env, those of --env-from-file, which may be any, and an option the
-// tables do not hold. opts start with composeMark.
+// composeCheck marks what compose runs besides its words: the files of -f,
+// --file and --env-file (see composeFiles); the variables of -e and --env,
+// those of --env-from-file, which may be any, and an option the tables do
+// not hold. opts start with composeMark.
 func composeCheck(p *parser, opts []option, args []string, static []bool) []string {
 	s := opts[0].word
 	sub := ""
@@ -154,9 +154,47 @@ func composeCheck(p *parser, opts []option, args []string, static []bool) []stri
 		}
 	}
 	if sub != "" && sub != "help" && sub != "version" && sub != "ls" && !has(own, "h", "help", "v", "version") && !has(more, "h", "help") {
-		p.mark(dynSource)
+		composeFiles(p, opts[1:], static)
 	}
 	return nil
+}
+
+// composeFiles marks the files a compose that loads its project reads
+// besides those of its own: the compose files of -f and --file, which hold
+// the commands of the services, their hooks and builds, and the env files
+// of --env-file, whose variables fill them in and may name other compose
+// files, as source; "-" reads a compose file from stdin, and a file made at
+// run time may be either. Its own are those it finds in the directory it
+// runs in or above it, and their .env, which it reads with no option:
+// they are of the project, as the Makefile of make is, and are not
+// marked, nor when -f or --env-file names them in that directory.
+func composeFiles(p *parser, opts []option, static []bool) {
+	for _, o := range opts {
+		env := o.name == "env-file"
+		switch {
+		case o.name != "f" && o.name != "file" && !env:
+		case !static[o.word]:
+			p.mark(dynComputed)
+		case !env && stdinFile(o.value):
+			p.mark(dynStdin)
+		case env && filepath.Clean(o.value) == ".env", !env && composeDefault(o.value):
+		default:
+			p.mark(dynSource)
+		}
+	}
+}
+
+// composeDefault tells whether a compose file is one compose finds with no
+// -f in the directory it runs in: compose.yaml, docker-compose.yml and the
+// .override of them.
+func composeDefault(name string) bool {
+	base := strings.TrimPrefix(filepath.Clean(name), "docker-")
+	for _, ext := range []string{".yaml", ".yml"} {
+		if stem, ok := strings.CutSuffix(base, ext); ok {
+			return stem == "compose" || stem == "compose.override"
+		}
+	}
+	return false
 }
 
 // nerdctlGlobal are the options of nerdctl its subcommands read too,
@@ -214,7 +252,8 @@ type kube struct{ oc bool }
 
 // kubeWrapper is kube{oc} as a wrapper. Whatever it runs, the client loads
 // its kubeconfig and kuberc, whose users run the programs of exec and whose
-// aliases make other commands of it.
+// aliases make other commands of it: those of the user, as ~/.bashrc is,
+// unless the line names others (see check).
 func kubeWrapper(oc bool) wrapper {
 	k := kube{oc}
 	return wrapper{
@@ -313,12 +352,11 @@ func (k kube) parse(args []string) kubeRead {
 	return r
 }
 
-// check marks what kube runs besides its words: the kubeconfig and kuberc
-// it loads, as source, but for help, completion and options, and another
-// one named by --kubeconfig or --kuberc (--config of oc), wherever it is
-// before "--", as rebind; an
-// option the table does not hold, one among the words of the command and
-// the "--" kubectl run takes out of them; the variables of --env and of
+// check marks what kube runs besides its words: a kubeconfig or kuberc
+// other than the user's, named by --kubeconfig or --kuberc (--config of
+// oc) wherever it is before "--", as rebind; an option the table does not
+// hold, one among the words of the command and the "--" kubectl run takes
+// out of them; the variables of --env and of
 // the NAME=VALUE operands of oc debug; --overrides and --custom, which may
 // give the container any command. It returns the --shell of oc rsh, which
 // it runs with no command.
@@ -363,13 +401,6 @@ func (k kube) check(p *parser, opts []option, args []string, static []bool, cmd 
 			if strings.Contains(args[i], "=") {
 				p.setenv(args[i], static[i])
 			}
-		}
-	}
-	switch r.subcommand {
-	case "", "help", "completion", "options":
-	default:
-		if !has(r.opts, "h", "help") {
-			p.mark(dynSource)
 		}
 	}
 	return code
@@ -504,6 +535,182 @@ func ephemeralCommand(p *parser, words []string, static []bool) []string {
 	return []string{escaped(fields)}
 }
 
+// distroboxSubCheck is the check of distrobox, by the program of its first
+// word: distrobox-create, distrobox-assemble, or that of ephemeralCheck.
+func distroboxSubCheck(p *parser, opts []option, args []string, static []bool, cmd int) []string {
+	switch {
+	case len(args) > 0 && args[0] == "create":
+		return createCheck(p, opts, args, static, cmd)
+	case len(args) > 0 && args[0] == "assemble":
+		return assembleCheck(p, opts, args, static, cmd)
+	}
+	return ephemeralCheck(1)(p, opts, args, static, cmd)
+}
+
+// The options of distrobox-create 1.8: createValued take the next word,
+// createFlags none.
+var (
+	createValued = []string{
+		"-i", "--image", "-n", "--name", "--hostname", "-c", "--clone", "-H", "--home", "--volume", "--platform",
+		"-a", "--additional-flags", "-ap", "--additional-packages", "--init-hooks", "--pre-init-hooks",
+	}
+	createFlags = []string{
+		"-h", "--help", "-v", "--verbose", "-V", "--version", "--no-entry", "-d", "--dry-run", "-r", "--root",
+		"--absolutely-disable-root-password-i-am-really-positively-sure", "-I", "--init", "--unshare-ipc",
+		"--unshare-groups", "--unshare-netns", "--unshare-process", "--unshare-devsys", "--unshare-all",
+		"-C", "--compatibility", "-p", "--pull", "--nvidia", "-Y", "--yes",
+	}
+)
+
+// unknownOpt names an option a program of distrobox 1.8 fails on and a
+// newer one may take, with a value too: it is read past and marked.
+const unknownOpt = "-"
+
+// createArgs reads the words of distrobox-create from i on as its loop
+// does: an option is a word of its own, those of createValued take the
+// next one, and without one (or with an empty one) it loops for ever,
+// marked "?"; -h, -V and -C print and exit; a word of none of its options
+// names the container, as -n does; "--" and an empty word end them. It
+// runs no command of the user's.
+func createArgs(args []string, i int) ([]option, int) {
+	var opts []option
+	for ; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--", a == "":
+			return opts, len(args)
+		case slices.Contains(createValued, a):
+			if i+1 == len(args) || args[i+1] == "" {
+				return append(opts, option{name: "?", word: i}), len(args)
+			}
+			opts = append(opts, option{name: strings.TrimLeft(a, "-"), value: args[i+1], word: i + 1})
+			i++
+		case slices.Contains(createFlags, a):
+			name := strings.TrimLeft(a, "-")
+			opts = append(opts, option{name: name, word: i})
+			if slices.Contains([]string{"h", "help", "V", "version", "C", "compatibility"}, name) {
+				return opts, len(args)
+			}
+		case strings.HasPrefix(a, "-"):
+			opts = append(opts, option{name: unknownOpt, value: a, word: i})
+		default:
+			opts = append(opts, option{name: "n", value: a, word: i})
+		}
+	}
+	return opts, len(args)
+}
+
+// createCheck is the check of distrobox-create, and of distrobox create:
+// that of distroboxCheck, an option it does not know, and the code of
+// createCode, unless it prints or loops.
+func createCheck(p *parser, opts []option, args []string, static []bool, cmd int) []string {
+	code := distroboxCheck(p, opts, args, static, cmd)
+	if has(opts, unknownOpt) {
+		p.mark(dynComputed)
+	}
+	if has(opts, distroboxNone...) || has(opts, "C", "compatibility") {
+		return code
+	}
+	return append(code, createCode(p, opts, static)...)
+}
+
+// createCode is the code distrobox-create runs: the line of the container
+// manager it builds of its options and evals here, with the image, the
+// container of --clone, which becomes the image in lower case, the
+// platform, the volumes and the flags of -a bare, the name, the hostname,
+// the home, the pre-init hooks and the packages in double quotes and the
+// init hooks in single quotes; and the hooks, which the container evals as
+// it starts. A value made at run time may be any code in that line.
+func createCode(p *parser, opts []option, static []bool) []string {
+	line := ":"
+	var code []string
+	known := true
+	for _, o := range opts {
+		switch o.name {
+		case "i", "image", "platform", "volume", "a", "additional-flags":
+			line += " " + o.value
+		case "c", "clone":
+			line += " " + strings.ToLower(o.value)
+		case "n", "name", "hostname", "H", "home", "ap", "additional-packages":
+			line += ` "` + o.value + `"`
+		case "pre-init-hooks":
+			line += ` "` + o.value + `"`
+		case "init-hooks":
+			line += ` '` + o.value + `'`
+		default:
+			continue
+		}
+		known = known && static[o.word]
+		if static[o.word] && (o.name == "init-hooks" || o.name == "pre-init-hooks") {
+			code = append(code, o.value)
+		}
+	}
+	if !known {
+		p.mark(dynComputed)
+		return code
+	}
+	return append(code, line)
+}
+
+// assembleArgs reads the words of distrobox-assemble from i on as its loop
+// does: create and rm wherever they are, --file and -n take the next word,
+// and without one (or with an empty one) it loops for ever, marked "?";
+// -h and -V print and exit; a word of none of its options names the file,
+// as --file does; "--" and an empty word end them. It runs no command of
+// the user's.
+func assembleArgs(args []string, i int) ([]option, int) {
+	var opts []option
+	for ; i < len(args); i++ {
+		switch a := args[i]; a {
+		case "--", "":
+			return opts, len(args)
+		case "create", "rm":
+			opts = append(opts, option{name: a, word: i})
+		case "--file", "-n", "--name":
+			if i+1 == len(args) || args[i+1] == "" {
+				return append(opts, option{name: "?", word: i}), len(args)
+			}
+			opts = append(opts, option{name: strings.TrimLeft(a, "-"), value: args[i+1], word: i + 1})
+			i++
+		case "-h", "--help", "-V", "--version":
+			return append(opts, option{name: strings.TrimLeft(a, "-"), word: i}), len(args)
+		case "-d", "--dry-run", "-v", "--verbose", "-R", "--replace":
+			// Not marked: dry run or not, it evals the lines it builds.
+		default:
+			if strings.HasPrefix(a, "-") {
+				opts = append(opts, option{name: unknownOpt, value: a, word: i})
+			} else {
+				opts = append(opts, option{name: "file", value: a, word: i})
+			}
+		}
+	}
+	return opts, len(args)
+}
+
+// assembleCheck marks the manifest distrobox-assemble create or rm reads,
+// whose values make the distrobox-create and distrobox rm lines it evals,
+// dry run or not: one the line names, a file or a URL it downloads, as
+// source; its own, ./distrobox.ini, which it reads with no file, is of the
+// project, as the Makefile of make is, and is not marked. A file made at
+// run time and an option it does not know are marked.
+func assembleCheck(p *parser, opts []option, _ []string, static []bool, _ int) []string {
+	if has(opts, unknownOpt) {
+		p.mark(dynComputed)
+	}
+	if has(opts, "h", "help", "V", "version", "?") || !has(opts, "create", "rm") {
+		return nil
+	}
+	for _, o := range opts {
+		switch {
+		case o.name != "file":
+		case !static[o.word]:
+			p.mark(dynComputed)
+		case filepath.Clean(o.value) != "distrobox.ini":
+			p.mark(dynSource)
+		}
+	}
+	return nil
+}
+
 // ipCheck marks the commands of ip -batch: read from stdin for "-", else
 // from a file, which may change after the check, as source does; one made
 // at run time may be either.
@@ -513,11 +720,16 @@ func ipCheck(p *parser, opts []option, _ []string, static []bool, _ int) []strin
 		case o.name != "batch":
 		case !static[o.word]:
 			p.mark(dynComputed)
-		case o.value == "-", o.value == "/dev/stdin", o.value == "/dev/fd/0", o.value == "/proc/self/fd/0":
+		case stdinFile(o.value):
 			p.mark(dynStdin)
 		default:
 			p.mark(dynSource)
 		}
 	}
 	return nil
+}
+
+// stdinFile tells whether a program that reads the file name reads stdin.
+func stdinFile(name string) bool {
+	return name == "-" || name == "/dev/stdin" || name == "/dev/fd/0" || name == "/proc/self/fd/0"
 }

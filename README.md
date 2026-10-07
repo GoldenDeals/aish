@@ -648,10 +648,16 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 с ней файлы, и её пути и редиректы проверяются как здешние; без команды `docker run -i`, `lxc shell`,
 `machinectl shell` и `distrobox enter` запускают shell на stdin. Так же `nerdctl`, `exec` и `run` у `docker compose`,
 `docker-compose`, `podman compose` и `nerdctl compose`, `kubectl`/`oc` `run` и `debug`, `oc rsh`, `distrobox ephemeral`
-(и строка `distrobox-create`, которую он собирает из своих слов и исполняет `eval`); stdin контейнеру отдают `attach` и
+(и строка `distrobox-create`, которую он собирает из своих слов и исполняет `eval`), хуки `distrobox create`
+(`--init-hooks`, `--pre-init-hooks`) и строка менеджера контейнеров, которую он собирает из своих опций и исполняет
+`eval`; stdin контейнеру отдают `attach` и
 `start -i` у `docker`/`podman`/`nerdctl`, `kubectl attach -i`, `toolbox enter`, `compose run` без команды, `oc rsh` и
-`oc debug` без команды. Compose и `kubectl`/`oc` — `source`: файл compose и kubeconfig (его `exec`) задают, что
-запустится; так же `ip -batch ФАЙЛ`, а `ip -batch -` — `stdin`. Под другим корнем (`bwrap`, `systemd-nspawn`,
+`oc debug` без команды. Свой конфиг клиента — kubeconfig и kuberc пользователя (их `exec` и алиасы),
+`~/.docker/config.json`, файл compose (`compose.yaml`, `docker-compose.yml`…) и `.env` в каталоге запуска,
+`./distrobox.ini` у `distrobox assemble` — не помечается, как `Makefile` у `make`. Чужой конфиг, названный в строке
+(`--kubeconfig`, `--kuberc`, `docker --config`, `KUBECONFIG`, `DOCKER_CONFIG`, `COMPOSE_FILE`), — `rebind`; файл compose
+или `.env` из опций (`-f`, `--file`, `--env-file`) и манифест `distrobox assemble --file ФАЙЛ` (или URL) — `source`,
+`compose -f -` — `stdin`; так же `ip -batch ФАЙЛ`, а `ip -batch -` — `stdin`. Под другим корнем (`bwrap`, `systemd-nspawn`,
 `capsh --chroot`, `podman run --rootfs`, `nerdctl run --rootfs`, `-p RootDirectory=` и `RootImage=` у `systemd-run` и `run0`) пути —
 `computed`, как под `chroot`. Так же разбирается код,
 который строка отдаёт shell: `eval` со статичными аргументами, here-string и here-document для
@@ -710,10 +716,11 @@ here-string), `prompt` — присваивание
 разбирается), `git --exec-path=`, опция `tmux set` с командой, `screen -X shell`/`defshell` и `blankerprg`,
 `depth` — вложенность глубже четырёх уровней. Пример спрашивает о любой
 пометке; отпустить `source` — `unless { context has dynamic && context.dynamic == ["source"] }`.
-Переменная, из которой программы берут команду (`GIT_SSH_COMMAND`, `PAGER`, `EDITOR`, `LESSOPEN`…),
+Переменная, из которой программы берут команду (`GIT_SSH_COMMAND`, `PAGER`, `EDITOR`, `LESSOPEN`, `KUBE_EDITOR`…),
 где бы строка её ни присвоила (`X=… cmd`, `export`, `env`, `sudo`, `for`, `${X:=…}`), разбирается как
 `bash -c`, из подстановок — `computed`; загрузчики (`LD_PRELOAD`, `PYTHONPATH`, `NODE_OPTIONS`,
-`GIT_CONFIG_*`, `KUBECONFIG`, `DOCKER_CONFIG`…) и чужой конфиг клиента (`--kubeconfig`, `--kuberc`, `docker --config`) —
+`GIT_CONFIG_*`, `KUBECONFIG`, `DOCKER_CONFIG`, `COMPOSE_FILE`, `RIPGREP_CONFIG_PATH`, `SCREENRC`…) и чужой конфиг
+клиента (`--kubeconfig`, `--kuberc`, `docker --config`) —
 `rebind`, `bind -f` — `computed`. Функция из окружения — `BASH_FUNC_ИМЯ%%='() { …; }'`
 (и `BASH_FUNC_ИМЯ()`), из которой любой запущенный bash определит функцию `ИМЯ`, где бы строка её ни задала (`env`,
 `export`, `strace -E`, `systemd-run -E`, `firejail --env`…), — `rebind`, а тело разбирается как код `eval`; из

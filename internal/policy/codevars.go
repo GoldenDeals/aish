@@ -8,13 +8,16 @@ import (
 
 // commandVars hold a command that programs run, through sh -c or as it is:
 // git runs GIT_SSH_COMMAND for ssh and PAGER for its output, git commit and
-// crontab -e run EDITOR, sudo -A runs SUDO_ASKPASS. A static value of theirs
-// is parsed as the code of bash -c is; one made at run time is computed.
+// crontab -e run EDITOR, sudo -A runs SUDO_ASKPASS, kubectl edit and diff
+// KUBE_EDITOR and KUBECTL_EXTERNAL_DIFF, podman compose the program of
+// PODMAN_COMPOSE_PROVIDER with its words. A static value of theirs is
+// parsed as the code of bash -c is; one made at run time is computed.
 var commandVars = map[string]bool{
 	"BROWSER": true, "EDITOR": true, "FCEDIT": true, "GIT_ASKPASS": true, "GIT_EDITOR": true,
 	"GIT_EXTERNAL_DIFF": true, "GIT_PAGER": true, "GIT_PROXY_COMMAND": true, "GIT_SEQUENCE_EDITOR": true,
-	"GIT_SSH": true, "GIT_SSH_COMMAND": true, "LESSCLOSE": true, "LESSOPEN": true, "MANPAGER": true,
-	"PAGER": true, "RSYNC_RSH": true, "SSH_ASKPASS": true, "SUDO_ASKPASS": true, "SUDO_EDITOR": true,
+	"GIT_SSH": true, "GIT_SSH_COMMAND": true, "KUBECTL_EXTERNAL_DIFF": true, "KUBE_EDITOR": true,
+	"LESSCLOSE": true, "LESSOPEN": true, "MANPAGER": true, "PAGER": true, "PODMAN_COMPOSE_PROVIDER": true,
+	"RSYNC_RSH": true, "SSH_ASKPASS": true, "SUDO_ASKPASS": true, "SUDO_EDITOR": true,
 	"SYSTEMD_EDITOR": true, "SYSTEMD_PAGER": true, "VISUAL": true,
 }
 
@@ -24,17 +27,22 @@ var commandVars = map[string]bool{
 // (TEXTDOMAINDIR), the config of git, which runs commands of its own
 // (core.sshCommand, an alias with !), that of kubectl and its kin, whose
 // users run the programs of exec (KUBECONFIG, and the aliases of KUBERC),
-// and that of docker, which runs the helpers of credsStore and the plugins
-// of its directories (DOCKER_CONFIG). The code is in files, or in git's
+// that of docker, which runs the helpers of credsStore and the plugins of
+// its directories (DOCKER_CONFIG), the files of compose, which hold the
+// commands of its services (COMPOSE_FILE, and COMPOSE_ENV_FILES, which may
+// name others), the arguments of rg, whose --pre runs a program
+// (RIPGREP_CONFIG_PATH), and the config of screen, whose shell and exec
+// run (SCREENRC). The code is in files, or in git's
 // syntax: whatever the value, they are rebind. So are GIT_CONFIG_KEY_n and
 // GIT_CONFIG_VALUE_n (see loads).
 var loaderVars = map[string]bool{
+	"COMPOSE_ENV_FILES": true, "COMPOSE_FILE": true,
 	"DOCKER_CONFIG": true, "GCONV_PATH": true, "GIT_CONFIG_COUNT": true, "GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_PARAMETERS": true,
 	"GIT_CONFIG_SYSTEM": true, "GIT_EXEC_PATH": true, "GIT_TEMPLATE_DIR": true, "INPUTRC": true, "KUBECONFIG": true, "KUBERC": true,
 	"LD_AUDIT": true, "LD_LIBRARY_PATH": true, "LD_PRELOAD": true, "NODE_OPTIONS": true, "NODE_PATH": true,
 	"PERL5DB": true, "PERL5LIB": true, "PERL5OPT": true, "PERLLIB": true, "PYTHONHOME": true,
-	"PYTHONPATH": true, "PYTHONSTARTUP": true, "RUBYLIB": true, "RUBYOPT": true,
-	"TEXTDOMAIN": true, "TEXTDOMAINDIR": true,
+	"PYTHONPATH": true, "PYTHONSTARTUP": true, "RIPGREP_CONFIG_PATH": true, "RUBYLIB": true, "RUBYOPT": true,
+	"SCREENRC": true, "TEXTDOMAIN": true, "TEXTDOMAINDIR": true,
 }
 
 // loads tells whether the variable name has programs load code: see
