@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -92,13 +93,15 @@ func hosted(t *testing.T, prov *scripted) (*Proxy, *terminal, string) {
 	p.run = t.TempDir()
 	p.model = "m"
 	p.newProvider = func(config.Config) (llm.Provider, error) { return prov, nil }
+	// The test is the shell's foreground job: call makes its calls.
+	p.fg = func() (int, error) { return syscall.Getpgrp(), nil }
 	return p, out, cwd
 }
 
 func call(t *testing.T, p *Proxy, method string, params any) (any, error) {
 	t.Helper()
 	b, _ := json.Marshal(params)
-	return p.handle(context.Background(), method, b)
+	return p.handle(rpc.WithPeer(context.Background(), os.Getpid()), method, b)
 }
 
 func journalKinds(sess *session.Session) string {

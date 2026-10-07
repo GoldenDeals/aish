@@ -118,22 +118,26 @@ var errNested = errors.New("the assistant's command cannot start or compact a re
 var errBusy = errors.New("a request is in progress: the assistant's commands cannot start or compact another")
 
 // nested is why a request that starts or compacts is refused, nil if it is
-// not. Called under p.mu.
-func (p *Proxy) nested() error {
+// not. fg, what fromShell said of the caller, comes last: the reasons
+// before it name the request in the way, and between requests it is the
+// only one that a background subagent's command, or a job the agent's
+// command left, meets. Called under p.mu.
+func (p *Proxy) nested(fg error) error {
 	switch {
 	case p.handed != "":
 		return errNested
 	case p.reqCtx != nil && p.reqCtx.Err() == nil:
 		return errBusy
 	}
-	return nil
+	return fg
 }
 
 // agentStart begins a request; it does what the ask-start marker does too,
 // in case the request arrives first.
 func (p *Proxy) agentStart(ctx context.Context, ap rpc.AgentParams) error {
+	fg := p.fromShell(ctx)
 	p.mu.Lock()
-	if err := p.nested(); err != nil {
+	if err := p.nested(fg); err != nil {
 		p.mu.Unlock()
 		return err
 	}
@@ -162,14 +166,18 @@ func (p *Proxy) agentResume(ctx context.Context, ap rpc.AgentParams) error {
 	if handed == "" || handed != ap.ID {
 		return fmt.Errorf("the shell is not running the assistant's command %s", ap.ID)
 	}
+	if err := p.fromShell(ctx); err != nil {
+		return err
+	}
 	return p.request(ctx, execOf(ap), false, func(ctx context.Context, a *agent.Agent) error {
 		return a.Resume(ctx, ap.ID, ap.RC, execOf(ap))
 	})
 }
 
 func (p *Proxy) compact(ctx context.Context, ap rpc.AgentParams) error {
+	fg := p.fromShell(ctx)
 	p.mu.Lock()
-	err := p.nested()
+	err := p.nested(fg)
 	p.mu.Unlock()
 	if err != nil {
 		return err

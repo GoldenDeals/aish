@@ -158,7 +158,7 @@ func serve(c net.Conn, h Handler) {
 	if err := json.NewDecoder(c).Decode(&req); err != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(peerContext(c))
 	defer cancel()
 	// The client sends nothing after the request, so a read returns only
 	// when it closes the connection.

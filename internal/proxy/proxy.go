@@ -126,6 +126,7 @@ type Proxy struct {
 	// at a time under reqMu.
 	reqMu        sync.Mutex
 	ag           *agent.Agent
+	fg           func() (int, error) // the shell's foreground process group (peer.go), under p.mu; nil before Run, tests set it
 	cancelReq    context.CancelFunc
 	reqCtx       context.Context
 	cancelGen    uint64 // agent_cancel calls so far, under p.mu
@@ -248,6 +249,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 		return 1, err
 	}
 	defer ptmx.Close()
+	p.setTerminal(ptmx)
 
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
