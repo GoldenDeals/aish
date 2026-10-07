@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -12,8 +13,10 @@ import (
 )
 
 // mcpCmd shows how the MCP servers are doing. Inside aish it asks the proxy,
-// which runs them; outside it only reads the config and the cache, starting
-// nothing.
+// which runs them, those of the MCP config in force: the file it names is
+// the one aish read at its start or at the last `aish apply-config`, not
+// the one config.toml on disk may name now. Outside it only reads the
+// config and the cache, starting nothing.
 func mcpCmd(cfg config.Config, args []string) int {
 	if len(args) > 0 {
 		return fail(errors.New("usage: aish mcp"))
@@ -21,6 +24,13 @@ func mcpCmd(cfg config.Config, args []string) int {
 	var res mcp.StatusResult
 	live := false
 	if client, err := rpc.FromEnv(); err == nil {
+		cwd, _ := os.Getwd()
+		a, err := inForce(cfg, cwd, nil, false)
+		if err != nil {
+			return fail(err)
+		}
+		cfg = a.cfg
+		fmt.Fprint(os.Stderr, changedNote(a.changed))
 		if err := client.Call(rpc.MethodMCPStatus, nil, &res); err != nil {
 			return fail(err)
 		}

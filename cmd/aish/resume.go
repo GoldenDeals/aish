@@ -23,6 +23,7 @@ func resumeCmd(conf *config.Snapshot, cfg config.Config, args []string) int {
 	}
 	var client *rpc.Client
 	cur, curSaved := "", false
+	dir := cfg.SessionsDir
 	if c, err := rpc.FromEnv(); err == nil {
 		client = c
 		var info rpc.Info
@@ -35,8 +36,12 @@ func resumeCmd(conf *config.Snapshot, cfg config.Config, args []string) int {
 			return fail(errors.New("sessions are switched by the user, not by the assistant"))
 		}
 		cur, curSaved = info.SessionID, info.Saved
+		// The proxy switches to a session of its own directory, whatever
+		// sessions_dir config.toml on disk has now.
+		if info.Dir != "" {
+			dir = info.Dir
+		}
 	}
-	dir := cfg.SessionsDir
 	list, err := session.List(dir)
 	if err != nil {
 		return fail(err)

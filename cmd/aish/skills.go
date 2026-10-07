@@ -21,8 +21,14 @@ func skillsCmd(cfg config.Config, args []string) int {
 		return fail(errors.New("usage: aish skills"))
 	}
 	cwd, _ := os.Getwd()
+	// The tools a skill gives way to are the agent's here: those of the
+	// config in force, the project's too.
+	a, err := inForce(cfg, cwd, nil, false)
+	if err != nil {
+		return fail(err)
+	}
 	found, problems := skills.Find(cwd)
-	reg := tools.Load(cfg.ToolsDir)
+	reg := tools.Load(a.cfg.ToolsDir)
 	var shown []skills.Skill
 	nameW, srcW := 0, 0
 	for _, s := range found {

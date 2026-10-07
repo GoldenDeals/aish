@@ -24,11 +24,14 @@ import (
 // does not know, would mislead. Outside aish it is the files on disk, as
 // a new aish would take them.
 
-// inForceCmds go by the config in force inside aish; configless need no
-// config of their own, the agent and the session being the proxy's.
+// inForceCmds go by the config in force inside aish, the sessions by the
+// proxy's directory of them (rpc.Info.Dir); configless need no config of
+// their own, the agent and the session being the proxy's, the subagents'
+// files found from cwd.
 var (
-	inForceCmds = map[string]bool{"context": true, "hooks": true, "model": true, "policy": true, "status": true, "tool": true}
-	configless  = map[string]bool{"agent": true, "clear": true, "compact": true, "expand": true, "new": true, "tasks": true}
+	inForceCmds = map[string]bool{"context": true, "hooks": true, "mcp": true, "model": true, "policy": true,
+		"resume": true, "session": true, "skills": true, "status": true, "tool": true}
+	configless = map[string]bool{"agent": true, "agents": true, "clear": true, "compact": true, "expand": true, "new": true, "tasks": true}
 )
 
 // byProxy tells whether, inside aish, the command of args goes by the
