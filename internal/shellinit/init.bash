@@ -414,6 +414,34 @@ for __aish_km in emacs vi-insert; do
 done
 unset __aish_km
 
+# Ctrl+V (or Ctrl+Q) before a paste, a habit where the terminal pastes with
+# Ctrl+Shift+V: quoted-insert would take the paste's ESC for the character
+# and the rest as typed: the line would be ^[[200~text~, and a newline in
+# the text would run it. \C-x\C-q is quoted-insert with \e[200~ under it:
+# the paste goes in whole, as without Ctrl+V, and Tab, Esc or another key
+# after it is the character still. The key gets there by a macro: readline
+# waits for the key after a macro's last one as long as it takes, and the
+# paste may come a second after Ctrl+V. Under the key itself the sequence
+# would end after keyseq-timeout, half a second. A key the user bound to
+# something else or bound sequences under stays his. Once, at load: $(...)
+# forks.
+for __aish_km in emacs vi-insert; do
+	__aish_b=$'\n'$(bind -m "$__aish_km" -p; bind -m "$__aish_km" -s; bind -m "$__aish_km" -X)$'\n'
+	[[ $__aish_b == *$'\n"\\e[200~": bracketed-paste-begin\n'* && $__aish_b != *$'\n"\\C-x\\C-q'* ]] || continue
+	__aish_q=
+	for __aish_k in '\C-q' '\C-v'; do
+		if [[ $__aish_b == *$'\n"'"$__aish_k"$'": quoted-insert\n'* && $__aish_b != *$'\n"'"$__aish_k"[!\"]* ]]; then
+			bind -m "$__aish_km" "\"$__aish_k\": \"\\C-x\\C-q\""
+			__aish_q=1
+		fi
+	done
+	if [[ -n $__aish_q ]]; then
+		bind -m "$__aish_km" '"\C-x\C-q": quoted-insert'
+		bind -m "$__aish_km" '"\C-x\C-q\e[200~": bracketed-paste-begin'
+	fi
+done
+unset __aish_km __aish_k __aish_b __aish_q
+
 HISTIGNORE="${HISTIGNORE:+$HISTIGNORE:}__aish_ask *"
 PS0='${__aish_ps0}'"${PS0-}"
 if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then
