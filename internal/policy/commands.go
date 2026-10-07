@@ -627,11 +627,7 @@ func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*synt
 		case static[i]:
 			p.assignedTo(name, value)
 		default:
-			p.assigned(name)
-			// The value is read as that of x=… is (see assignedTo): what is
-			// written out in it, the \x24( of $'…' decoded, as bash does in
-			// env $'x=a[\x24(id)]' bash -c '((x))'.
-			p.subscript(ansiC(value))
+			p.assignedText(name, value)
 		}
 	}
 	var code []string
@@ -1281,6 +1277,10 @@ func (p *parser) assigned(name string) {
 	switch {
 	case promptVars[name]:
 		p.mark(dynPrompt)
+	case envFunc(name):
+		// The function bash defines of it may run any code (see envFunction).
+		p.mark(dynComputed)
+		p.mark(dynRebind)
 	case rebindVars[name], loads(name):
 		p.mark(dynRebind)
 	case commandVars[name], lineVars[name], optionVars[name]:

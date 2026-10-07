@@ -347,7 +347,7 @@ func (p *parser) setenv(v string, static bool) {
 	case static:
 		p.assignedTo(name, value)
 	default:
-		p.assigned(name)
+		p.assignedText(name, value)
 	}
 }
 

@@ -698,7 +698,10 @@ tmux в строке `if-shell`, Perl в `{= =}` у `parallel`, конфиг `ss
 Переменная, из которой программы берут команду (`GIT_SSH_COMMAND`, `PAGER`, `EDITOR`, `LESSOPEN`…),
 где бы строка её ни присвоила (`X=… cmd`, `export`, `env`, `sudo`, `for`, `${X:=…}`), разбирается как
 `bash -c`, из подстановок — `computed`; загрузчики (`LD_PRELOAD`, `PYTHONPATH`, `NODE_OPTIONS`,
-`GIT_CONFIG_*`…) — `rebind`, `bind -f` — `computed`.
+`GIT_CONFIG_*`…) — `rebind`, `bind -f` — `computed`. Функция из окружения — `BASH_FUNC_ИМЯ%%='() { …; }'`
+(и `BASH_FUNC_ИМЯ()`), из которой любой запущенный bash определит функцию `ИМЯ`, где бы строка её ни задала (`env`,
+`export`, `strace -E`, `systemd-run -E`, `firejail --env`…), — `rebind`, а тело разбирается как код `eval`; из
+подстановок или не разобранная — ещё и `computed`.
 После `set -k` (`set -o keyword`, `shopt -so keyword`) слова `NAME=VALUE` в аргументах команды проверяются как
 присваивания перед ней, а команда — и без них; `set -k`, не выключенный к концу строки, `set "$x"` и `cd ИМЯ` без
 такого каталога после `shopt -s cdable_vars` — `computed`.

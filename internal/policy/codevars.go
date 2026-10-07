@@ -38,17 +38,29 @@ func loads(name string) bool {
 	return loaderVars[name] || strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
 }
 
+// envFunc tells whether the variable name holds a function a bash started
+// with it in its environment defines: BASH_FUNC_NAME%%, as export -f puts
+// it there, or BASH_FUNC_NAME() of the bash of some distributions.
+func envFunc(name string) bool {
+	rest, ok := strings.CutPrefix(name, "BASH_FUNC_")
+	return ok && (strings.HasSuffix(rest, "%%") || strings.HasSuffix(rest, "()"))
+}
+
 // assignedTo marks an assignment of value, static, to the variable name:
 // the code a variable of commandVars holds is parsed after the walk of
 // the line, with the code the line hands to shells, and that code runs in
-// the modes one of optionVars lists (see startsIn). Whatever the name, the
-// code of the subscripts in value runs when it is read as arithmetic (see
-// value), and all of it in ${name@P} (see prompt): of x=…, for x in …,
-// ${x:=…} and env x=… alike.
+// the modes one of optionVars lists (see startsIn); so is the function of
+// one of envFunc. Whatever the name, the code of the subscripts in value
+// runs when it is read as arithmetic (see value), and all of it in
+// ${name@P} (see prompt): of x=…, for x in …, ${x:=…} and env x=… alike.
 func (p *parser) assignedTo(name, value string) {
 	p.subscript(value)
 	p.shown(name, value)
 	if p.startsIn(name, value) {
+		return
+	}
+	if envFunc(name) {
+		p.envFunction(value)
 		return
 	}
 	if !commandVars[name] {
@@ -59,6 +71,41 @@ func (p *parser) assignedTo(name, value string) {
 		if strings.TrimSpace(src) != "" {
 			p.varCode = append(p.varCode, snippet{src, p.remote})
 		}
+	}
+}
+
+// envFunction looks at value, static, of a variable of envFunc. When it
+// starts with "() {", bash defines the function NAME of the code NAME
+// VALUE and runs it in place of the command NAME: that is rebind, and the
+// code is parsed after the walk of the line, as that of eval is, with f
+// for NAME, which bash may take where the parser here does not. Code that
+// does not parse is computed too.
+func (p *parser) envFunction(value string) {
+	p.mark(dynRebind)
+	if !strings.HasPrefix(value, "() {") {
+		// bash imports no function of it.
+		return
+	}
+	src := "f " + value
+	if _, err := upToError(src); err != nil {
+		p.mark(dynComputed)
+	}
+	p.varCode = append(p.varCode, snippet{src, p.remote})
+}
+
+// assignedText marks an assignment to the variable name of a value made at
+// run time, value its source form, that a wrapper puts in the environment
+// of its command: what is written out in it is read as a static value of
+// assignedTo is, its subscripts when read as arithmetic and all of it in
+// ${name@P}. Which parts of the word were $'…' is not known here, so the
+// text is taken both as it is and with the escapes decoded: the \x24( of
+// env $'x=a[\x24(id)]' is $( to bash, but the \x5c of '…' in
+// env 'x=a[\x5c$(id)]'"$y" stays four characters, and the $( after it runs.
+func (p *parser) assignedText(name, value string) {
+	p.assigned(name)
+	for _, v := range []string{value, ansiC(value)} {
+		p.subscript(v)
+		p.shown(name, v)
 	}
 }
 
