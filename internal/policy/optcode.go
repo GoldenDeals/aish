@@ -18,13 +18,27 @@ import (
 // (see optionLike). As a word of a command no wrapper runs, echo tar "$x",
 // it marks nothing.
 var optRunners = map[string]func(w words, program bool) []run{
+	"at":    atRuns,
+	"batch": atRuns,
+	"ex":    vimRuns,
+	"fd":    fdRuns,
 	"find":  findRuns,
+	"gvim":  vimRuns,
 	"man":   manRuns,
+	"nvim":  vimRuns,
+	"rg":    rgRuns,
 	"rsync": rsyncRuns,
 	"scp":   scpRuns,
 	"sftp":  sftpRuns,
 	"ssh":   sshRuns,
 	"tar":   tarRuns,
+	"vi":    vimRuns,
+	"view":  vimRuns,
+	"vim":   vimRuns,
+
+	// fd of Debian, and vim -d.
+	"fdfind":  fdRuns,
+	"vimdiff": vimRuns,
 }
 
 // The options of the commands above, the long ones with a value at least,
@@ -178,10 +192,11 @@ func scpRuns(w words, program bool) []run {
 	return scpCode(w, scpOpts, opts, program)
 }
 
-// sftpRuns finds the code of sftp, as scpCode does.
+// sftpRuns finds the code of sftp, as scpCode does, and that of the
+// commands it reads (see sftpBatch).
 func sftpRuns(w words, program bool) []run {
-	opts, _ := sftpOpts.read(w.args)
-	return scpCode(w, sftpOpts, opts, program)
+	opts, ops := sftpOpts.read(w.args)
+	return append(scpCode(w, sftpOpts, opts, program), sftpBatch(w, opts, ops)...)
 }
 
 // scpCode finds the code of scp and sftp, which read their options among

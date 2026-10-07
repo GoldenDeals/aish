@@ -30,7 +30,7 @@ func TestParseRunners(t *testing.T) {
 		{`tmux respawn-pane -k 'sudo ls'`, [][]string{sudoLs}, nil},
 		{`tmux display-popup -E 'sudo ls'`, [][]string{sudoLs}, nil},
 		{`tmux -L sock -f /dev/null new-session -d 'sudo ls'`, [][]string{sudoLs}, nil},
-		{`tmux new-window vim "$f"`, [][]string{{"vim", "$f"}}, nil},
+		{`tmux new-window vim "$f"`, [][]string{{"vim", "$f"}}, []string{"computed"}},
 		{`tmux new-window "$cmd"`, nil, []string{"computed"}},
 		{`tmux new-window sudo $cmd`, nil, []string{"computed"}},
 		{`tmux split-window -t $t 'sudo ls'`, [][]string{sudoLs}, []string{"computed"}},

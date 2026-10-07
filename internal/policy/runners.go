@@ -41,7 +41,8 @@ type words struct {
 // another machine (ssh -o RemoteCommand=, rsync --rsync-path=). env is a
 // NAME=VALUE the runner puts in the environment of the code it runs, read
 // as an assignment is (tmux set-environment, new-window -e); envDyn tells
-// that its value is made at run time.
+// that its value is made at run time. lines finds the code in what a
+// runner that reads stdin and is no shell reads there (see sftpLines).
 type run struct {
 	text   string
 	words  []int
@@ -51,6 +52,7 @@ type run struct {
 	remote bool
 	env    string
 	envDyn bool
+	lines  func(text string) (code []string, mark string)
 }
 
 // elsewhere marks runs as code that runs in another directory: in a pane of
@@ -99,7 +101,7 @@ func (p *parser) runs(argv []string, static, split []bool, local int, redirs []*
 			}
 			switch {
 			case r.stdin && i == 0:
-				here = append(here, p.stdin(redirs)...)
+				here = append(here, p.fed(r, p.stdin(redirs))...)
 			case r.text == "":
 			case r.remote:
 				there = append(there, r.text)

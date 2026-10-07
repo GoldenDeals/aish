@@ -59,8 +59,8 @@ func TestParseOptionCode(t *testing.T) {
 		{`scp -o ProxyCommand='sudo ls' a b:`, [][]string{sudoLs}, nil, nil},
 		{`scp a b: -S sudo`, [][]string{{"sudo"}}, nil, nil},
 		{`scp -F cfg a b:`, nil, nil, []string{"computed"}},
-		{`sftp -D 'sudo ls' x`, [][]string{sudoLs}, nil, nil},
-		{`sftp -s '/usr/bin/sudo ls' x`, nil, [][]string{{"/usr/bin/sudo", "ls"}}, nil},
+		{`sftp -D 'sudo ls' x`, [][]string{sudoLs}, nil, []string{"stdin"}},
+		{`sftp -s '/usr/bin/sudo ls' x`, nil, [][]string{{"/usr/bin/sudo", "ls"}}, []string{"stdin"}},
 		{`scp "$f" b:`, nil, nil, []string{"computed"}},
 		{`scp -o "ProxyCommand=$c" a b:`, nil, nil, []string{"computed"}},
 

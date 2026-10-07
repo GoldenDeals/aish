@@ -668,7 +668,9 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 фильтры `filter-branch`, `difftool -x`, `grep -O`, `--upload-pack` у `fetch`/`pull`/`ls-remote`, `--receive-pack` у
 `push`, `archive --exec`, `send-email --to-cmd`/`--cc-cmd`/`--sendmail-cmd` (и через алиас `git -c alias.ИМЯ=…`),
 опции `tmux set` с командой (`default-command`, `default-shell`,
-`lock-command`…) и переменные `tmux setenv` и `new-window -e`. И код строк, которые bash вычисляет сам: индексов в именах-строках (`let 'a[$(…)]=1'`, `unset`,
+`lock-command`…) и переменные `tmux setenv` и `new-window -e`, команда `fd -x`/`-X` (`{}`, `{/}`, `{.}`… — слова
+из подстановки), программа `rg --pre` и `--hostname-bin`, задание `at`/`batch` со stdin, строки `!КОМАНДА` и
+`lls` в командах `sftp` (stdin и `-b -`), `screen -X shell`, `blankerprg` и переменные `screen -X setenv`. И код строк, которые bash вычисляет сам: индексов в именах-строках (`let 'a[$(…)]=1'`, `unset`,
 `test -v`, `[[ -v ]]`, `declare -n`, `read`, `printf -v`), в значениях присваиваний (`x='a[$(…)]'` выполнит
 `(( x ))`; так же `for x in …`, `${x:=…}` и `NAME=VALUE` у `env`, `sudo` и других обёрток:
 `env 'x=a[$(…)]' bash -c '((x))'`), в одинарных кавычках арифметики и `"${x:-'…'}"`, в `declare -a a='($(…))'`
@@ -685,24 +687,26 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 `printf -v "$v"`, `declare -n r="$v"`), код, которого в строке нет (макрос `bind`, команды истории
 `fc`, кроме `fc -l`, клавиши `send-keys`, которые правят строку, — `Tab`, `BSpace`, стрелки, — команды
 tmux в строке `if-shell`, Perl в `{= =}` у `parallel`, конфиг `ssh -F`, `git -c include.path=`, `core.hooksPath=`,
-`protocol.allow=`, файл инструмента `difftool`/`mergetool -t` с `/`), `{}` в кавычках у `parallel`, слово из
-подстановки, которое может стать опцией `tar`, `rsync`, `scp`, `man`, подкоманды git с кодом (`git clone "$u"`,
-`git push origin "$b"`) или командой `find` (`find "$d" sudo ls \;`), в том числе слово, которое `xargs`
-дописывает к ним (`ls | xargs git`), файл редиректа,
+`protocol.allow=`, файл инструмента `difftool`/`mergetool -t` с `/`, `:!`, фильтр и `system()` в команде
+`vim -c`/`--cmd`/`+`), `{}` в кавычках у `parallel`, слово из подстановки, которое может стать опцией `tar`,
+`rsync`, `scp`, `man`, `fd`, `rg`, `at`, `vim`, подкоманды git с кодом (`git clone "$u"`, `git push origin "$b"`)
+или командой `find` (`find "$d" sudo ls \;`), в том числе слово, которое `xargs` дописывает к ним
+(`ls | xargs git`), и концом команды `fd -x`, файл редиректа,
 неизвестный до исполнения (`> "$f"`, относительный путь в строке с `cd` или с кодом, который идёт в
 другом каталоге: у `tmux`, `screen -X`, алиаса git, `parallel --workdir`), или путь операнда, неизвестный до исполнения: относительный там,
 куда строка увела shell, а политика за ней не проследила (`cd -`, `cd "$d"`, `popd`, `cd` в цикле или
 функции, `eval 'cd …'`, команда под `sudo -i`), любой в строке, которая присваивает `HOME`, `PWD`,
 `OLDPWD` или `CDPATH` (и `unset`, `for HOME in`, `${CDPATH:=…}`), любой под `chroot` и `sudo -R`,
 глоб, который ничего не находит в существующем каталоге (строка может сама создать то, что он найдёт),
-`**`, extglob; `source` — `source` и `.`, `tmux source-file` и `tmux -f`, `stdin` — shell читает
-команды со stdin (`echo … | bash`, `… | parallel` без команды), `prompt` — присваивание
+`**`, extglob; `source` — `source` и `.`, `tmux source-file` и `tmux -f`, `screen -c`, `at -f`, `sftp -b`,
+`stdin` — shell читает команды со stdin (`echo … | bash`, `… | parallel` без команды, `at` и `sftp ХОСТ` без
+here-string), `prompt` — присваивание
 `PROMPT_COMMAND`, `PS0`, `PS1`, `PS2`,
 `PS4`, `BASH_ENV`, `ENV`, `MAILPATH` — не только `=` и `export`, но и `read`, `printf -v`, `mapfile`,
 `declare -n`, `rebind` — имя команды начнёт запускать другое: присваивание `PATH` (и
 `export PATH=…:$PATH`), `EXECIGNORE`, `BASH_CMDS`, `BASH_ALIASES`, `unset PATH`, `hash -p`, `enable`
 (кроме `-n`, `-d` и списка), `git config` переменной с кодом (`alias.ИМЯ '!…'`, `core.pager`…; код тоже
-разбирается), `git --exec-path=`, опция `tmux set` с командой,
+разбирается), `git --exec-path=`, опция `tmux set` с командой, `screen -X shell`/`defshell` и `blankerprg`,
 `depth` — вложенность глубже четырёх уровней. Пример спрашивает о любой
 пометке; отпустить `source` — `unless { context has dynamic && context.dynamic == ["source"] }`.
 Переменная, из которой программы берут команду (`GIT_SSH_COMMAND`, `PAGER`, `EDITOR`, `LESSOPEN`…),

@@ -7,12 +7,18 @@ import (
 
 // screenRuns finds the code of screen, as screen 4.9 reads its words: the
 // command its new window runs as it is, and with -X or -Q the code of the
-// command of screen it sends to a session.
+// command of screen it sends to a session. The config file of -c holds
+// commands of screen, as source reads them.
 func screenRuns(w words) []run {
-	cmd, ctl, list, vals := screenRead(w.args)
+	cmd, ctl, list, vals, rc := screenRead(w.args)
 	var rs []run
 	if lw := w.loose(cmd, func(i int) bool { return vals[i] }); len(lw) > 0 {
 		rs = append(rs, run{words: lw})
+	}
+	for _, o := range rc {
+		if o.value != "/dev/null" {
+			rs = append(rs, run{words: []int{o.word}, mark: dynSource})
+		}
 	}
 	switch {
 	case list, cmd == len(w.args):
@@ -30,8 +36,9 @@ func screenRuns(w words) []run {
 // word on their terms, and the values of -p, -c and -e in the rest of the
 // word or the next one, of -h, -t, -T, -s and -Logfile in the next. It
 // returns the index of the first operand, whether it is a command of screen
-// (-X, -Q), whether screen only lists sessions, and the words of values.
-func screenRead(args []string) (cmd int, ctl, list bool, vals map[int]bool) {
+// (-X, -Q), whether screen only lists sessions, the words of values and the
+// config files of -c.
+func screenRead(args []string) (cmd int, ctl, list bool, vals map[int]bool, rc []option) {
 	vals = map[int]bool{}
 	sock := false
 	i := 0
@@ -49,7 +56,7 @@ words:
 			i++
 			break words
 		case a == "--version", a == "--help":
-			return len(args), false, true, vals
+			return len(args), false, true, vals, nil
 		case a == "-Logfile":
 			take()
 			continue
@@ -59,8 +66,16 @@ words:
 		for j := 1; j < len(a); j++ {
 			switch a[j] {
 			case 'p', 'c', 'e':
+				at := i
 				if j+1 == len(a) {
 					take()
+				}
+				switch {
+				case a[j] != 'c':
+				case j+1 < len(a):
+					rc = append(rc, option{name: "c", value: a[j+1:], word: i})
+				case i > at:
+					rc = append(rc, option{name: "c", value: args[i], word: i})
 				}
 				continue words
 			case 'h', 't', 'T', 's':
@@ -78,11 +93,11 @@ words:
 				if j+1 < len(a) && strings.IndexByte("n0y1a", a[j+1]) >= 0 {
 					j++
 				} else if j+1 < len(a) && (a[j+1] == 's' || a[j+1] == 'i') {
-					return len(args), false, true, vals
+					return len(args), false, true, vals, nil
 				}
 			case 'w':
 				if a[j+1:] == "ipe" {
-					return len(args), false, true, vals
+					return len(args), false, true, vals, nil
 				}
 			case 'r', 'R', 'x':
 				if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") && !sock {
@@ -97,16 +112,17 @@ words:
 			case 'X', 'Q':
 				ctl = true
 			case 'v':
-				return len(args), false, true, vals
+				return len(args), false, true, vals, nil
 			}
 		}
 	}
-	return i, ctl, false, vals
+	return i, ctl, false, vals, rc
 }
 
 // screenCommand finds the code of a command of screen sent to a session:
 // what stuff types at its window, the program of exec, screen and backtick,
-// and the command bind and at run; eval, paste and their kin are marked.
+// and the command bind and at run; the shell, the blanker and the variables
+// it keeps for new windows; eval, paste and their kin are marked.
 // Screen reads each word anew as in double quotes, expanding $VAR, ^X and
 // backslashes.
 func screenCommand(c sub) []run {
@@ -179,6 +195,21 @@ func screenCommand(c sub) []run {
 			n = len(args.idx)
 		}
 		return screenCommand(args.from(1))
+	case "shell", "defshell":
+		return args.at(screenShell(args))
+	case "blankerprg":
+		// The program and its words, run when the screen blanks; none
+		// takes it away.
+		if n == 0 {
+			return nil
+		}
+		d, ok := screenWords(args)
+		if !ok {
+			return []run{{mark: dynComputed}, {mark: dynRebind}}
+		}
+		return append(screenArgv(d), run{mark: dynRebind})
+	case "setenv":
+		return args.at(screenSetenv(args))
 	case "eval", "paste", "process":
 		return []run{{mark: dynComputed}}
 	case "bindkey":
@@ -189,6 +220,48 @@ func screenCommand(c sub) []run {
 		return []run{{mark: dynSource}}
 	}
 	return nil
+}
+
+// screenShell finds the program of shell and defshell, which new windows
+// run in place of $SHELL: kept for later, rebind. A "-" before it starts
+// it as a login shell.
+func screenShell(args sub) []run {
+	switch {
+	case len(args.idx) == 0:
+		return nil
+	case !args.w.static[0]:
+		return []run{{words: []int{0}}, {mark: dynRebind}}
+	}
+	s, ok := screenWord(args.w.args[0])
+	if !ok {
+		return []run{{mark: dynComputed}, {mark: dynRebind}}
+	}
+	rs := []run{{mark: dynRebind}}
+	if prog := strings.TrimPrefix(s, "-"); prog != "" {
+		rs = append(rs, run{text: quoted(prog)})
+	}
+	return rs
+}
+
+// screenSetenv finds the variable setenv puts in the environment of screen
+// and of its new windows, as env does; with no value screen asks for one.
+func screenSetenv(args sub) []run {
+	switch {
+	case len(args.idx) < 2:
+		return nil
+	case !args.w.static[0]:
+		return []run{{words: []int{0}}}
+	}
+	name, ok := screenWord(args.w.args[0])
+	if !ok || strings.Contains(name, "=") {
+		return []run{{mark: dynComputed}}
+	}
+	value, ok := screenWord(args.w.args[1])
+	if !ok || !args.w.static[1] {
+		// $VAR is expanded by screen, in its own environment.
+		return []run{{env: name + "=" + args.w.args[1], envDyn: true}}
+	}
+	return []run{{env: name + "=" + value}}
 }
 
 // screenWindow skips the options and the number of a window of the command
