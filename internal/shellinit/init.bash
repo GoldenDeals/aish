@@ -234,21 +234,29 @@ __aish_expanding() {
 }
 
 # __aish_to_llm rewrites the line into a request. The text is expanded
-# here, before READLINE_LINE, for the screen, the journal and the model to
+# here, before __aish_req, for the screen, the journal and the model to
 # get the same one; history gets what was typed (__aish_typed). A second
-# argument, from the ? prefix: the text goes as typed.
+# argument, from the ? prefix: the text goes as typed. Whitespace around
+# it goes: a paste ending in a newline would leave an empty line on the
+# screen and send the newline. The line itself is a short one that reads
+# the text from __aish_req: readline draws it anew before accept-line, and
+# a line taller than the screen would push its top, `__aish_ask '...`,
+# into the scrollback, out of __aish_unecho's reach.
 __aish_to_llm() {
 	local __aish_t=$1 __aish_x
 	__aish_t=${__aish_t#"${__aish_t%%[![:space:]]*}"}
+	__aish_t=${__aish_t%"${__aish_t##*[![:space:]]}"}
 	if [[ -z ${2-} && $__aish_route_expand == true && $__aish_t == *'$'* ]]; then
 		__aish_expanding "$__aish_t" && __aish_t=$__aish_x
 	fi
 	if [[ -z $__aish_t ]]; then
 		READLINE_LINE=
 	else
-		READLINE_LINE="__aish_ask ${__aish_t@Q}"
+		__aish_req=$__aish_t
+		READLINE_LINE='__aish_ask "$__aish_req"'
 		__aish_redraw=1
 		__aish_typed=${__aish_buf#"${__aish_buf%%[![:space:]]*}"}
+		__aish_typed=${__aish_typed%"${__aish_typed##*[![:space:]]}"}
 	fi
 	READLINE_POINT=${#READLINE_LINE}
 	__aish_ps0=
@@ -335,9 +343,10 @@ __aish_rows() {
 	[[ -z $__aish_g ]] || shopt -u globasciiranges
 }
 
-# __aish_unecho replaces the `__aish_ask '...'` line readline has echoed with
-# what the user typed, the prompt's `$` (or `#`) turned into `?`:
-# "user@host:~? text".
+# __aish_unecho replaces the `__aish_ask "$__aish_req"` line readline has
+# echoed with the request, the prompt's `$` (or `#`) turned into `?`:
+# "user@host:~? text". The echo is that line, not what was typed: bind -x
+# erases the line typed and readline draws the one __aish_to_llm left.
 __aish_unecho() {
 	local p=${PS1@P} vis
 	p=${p##*$'\n'}
@@ -346,7 +355,7 @@ __aish_unecho() {
 		vis=${vis%%$'\001'*}${vis#*$'\002'}
 	done
 	p=${p//[$'\001\002']/}
-	local line="__aish_ask ${1@Q}" cols=${COLUMNS:-80} __aish_n
+	local line='__aish_ask "$__aish_req"' cols=${COLUMNS:-80} __aish_n
 	# Readline leaves the cursor under the echo's last row, a full one too.
 	__aish_rows "$vis$line" "$cols"
 	local rows=$__aish_n
@@ -365,6 +374,9 @@ __aish_unecho() {
 
 __aish_ask() {
 	local __aish_q=$1 __aish_id __aish_cmd __aish_rc
+	# $1 keeps the text for the agent's commands; the global would keep it
+	# after the request.
+	unset -v __aish_req
 	if [[ ${__aish_redraw-} == 1 ]]; then
 		__aish_redraw=0
 		__aish_unecho "$__aish_q"

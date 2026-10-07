@@ -52,7 +52,7 @@ func TestRouteSkills(t *testing.T) {
 	var script strings.Builder
 	script.WriteString("myfn() { :; }\nsource " + filepath.Join(dir, "init.bash") + " 2>/dev/null\n")
 	for _, c := range cases {
-		script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; printf '%s\\x1f' \"$READLINE_LINE\"\n")
+		script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; " + printLine + "\n")
 	}
 	cmd := exec.Command("bash", "--norc", "--noprofile", "-i")
 	cmd.Dir = proj

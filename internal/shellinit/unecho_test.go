@@ -7,11 +7,12 @@ import (
 	"testing"
 )
 
-// screen is as much of a terminal as __aish_unecho's output needs: rows
-// that wrap at cols with xterm's pending wrap, a wide character that does
-// not fit in what is left of a row put on the next, "\n" as the PTY's onlcr
-// sends it, cursor up and down, erase in line and below. Erase below from
-// the top-left corner is what tmux takes for clearing the screen: with
+// screen is as much of a terminal as __aish_unecho's output and readline's
+// echo need: rows that wrap at cols with xterm's pending wrap, a wide
+// character that does not fit in what is left of a row put on the next,
+// "\n" as the PTY's onlcr sends it, cursor up, down and home, erase in
+// line, below and all. Erase all, and erase below from the top-left
+// corner, is what tmux takes for clearing the screen: with
 // scroll-on-clear, on by default, it first moves the screen to its
 // history.
 type screen struct {
@@ -123,16 +124,21 @@ func (s *screen) csi(t *testing.T, param string, final rune) {
 		s.y, s.wrap = max(s.y-n, 0), false
 	case 'B':
 		s.y, s.wrap = min(s.y+n, len(s.rows)-1), false
+	case 'H':
+		if param != "" {
+			t.Fatalf("CSI %sH", param)
+		}
+		s.x, s.y, s.wrap = 0, 0, false
 	case 'K':
 		if param != "" {
 			t.Fatalf("CSI %sK", param)
 		}
 		copy(s.rows[s.y][s.x:], s.blank())
 	case 'J':
-		if param != "" {
+		if param != "" && param != "2" {
 			t.Fatalf("CSI %sJ", param)
 		}
-		if s.x == 0 && s.y == 0 {
+		if param == "2" || s.x == 0 && s.y == 0 {
 			last := 0
 			for i, row := range s.rows {
 				if strings.TrimSpace(string(row)) != "" {
@@ -142,6 +148,12 @@ func (s *screen) csi(t *testing.T, param string, final rune) {
 			for _, row := range s.rows[:last] {
 				s.history = append(s.history, rowText(row))
 			}
+		}
+		if param == "2" {
+			for _, row := range s.rows {
+				copy(row, s.blank())
+			}
+			break
 		}
 		copy(s.rows[s.y][s.x:], s.blank())
 		for _, row := range s.rows[s.y+1:] {
@@ -181,23 +193,26 @@ func rowsOf(text string, cols int) []string {
 }
 
 // TestUnecho has __aish_unecho put the request in place of readline's echo
-// of `__aish_ask '...'`, at two widths and every length of the request up
-// to two rows and more, of narrow characters and of wide ones, which go to
-// the next row when one column is left, the prompt with an emoji or without,
-// the echo at the top of the screen or below a line of output: the line
-// stays, the echo is gone, from the screen and from tmux's history, and the
-// cursor is under the request. Readline leaves the cursor under the echo's
-// last row, a full one too, as "\n" after a pending wrap does.
+// of `__aish_ask "$__aish_req"`, at two widths, after a prompt of every
+// length up to two rows and more, its directory of narrow characters or of
+// wide ones, which go to the next row when one column is left, with an
+// emoji or without, the echo at the top of the screen or below a line of
+// output: the line stays, the echo is gone, from the screen and from tmux's
+// history, and the cursor is under the request. Readline leaves the cursor
+// under the echo's last row, a full one too, as "\n" after a pending wrap
+// does.
 func TestUnecho(t *testing.T) {
+	const req = "Что здесь происходит?"
+	// {} is the directory, as \w puts it in the prompt.
 	prompts := []struct{ ps1, shown, asked string }{
-		{`\[\e[32m\]user@host\[\e[0m\]:~$ `, "user@host:~$ ", "user@host:~? "},
-		{`> `, "> ", "> ? "},
-		{`🚀 \[\e[32m\]user@host\[\e[0m\]:~$ `, "🚀 user@host:~$ ", "🚀 user@host:~? "},
+		{`\[\e[32m\]user@host\[\e[0m\]:~/{}$ `, "user@host:~/{}$ ", "user@host:~/{}? "},
+		{`{}> `, "{}> ", "{}> ? "},
+		{`🚀 \[\e[32m\]user@host\[\e[0m\]:~/{}$ `, "🚀 user@host:~/{}$ ", "🚀 user@host:~/{}? "},
 	}
 	type unecho struct {
-		cols         int
-		shown, asked string
-		words, req   string
+		cols               int
+		prompt, words, dir string
+		shown, asked       string
 	}
 	var cases []unecho
 	var script strings.Builder
@@ -206,10 +221,10 @@ func TestUnecho(t *testing.T) {
 			rs := []rune(strings.Repeat(words, 40))
 			for _, cols := range []int{40, 80} {
 				// w is the columns of rs[:n].
-				for n, w := 1, runeCols(rs[0]); w <= 2*cols+2; n, w = n+1, w+runeCols(rs[n]) {
-					req := string(rs[:n])
-					cases = append(cases, unecho{cols, p.shown, p.asked, words, req})
-					fmt.Fprintf(&script, "PS1=%s; COLUMNS=%d; __aish_unecho %s; printf '\\x1f'\n", quote(p.ps1), cols, quote(req))
+				for n, w := 0, 0; w <= 2*cols+2; n, w = n+1, w+runeCols(rs[n]) {
+					dir := strings.NewReplacer("{}", string(rs[:n]))
+					cases = append(cases, unecho{cols, p.shown, words, string(rs[:n]), dir.Replace(p.shown), dir.Replace(p.asked)})
+					fmt.Fprintf(&script, "PS1=%s; COLUMNS=%d; __aish_unecho %s; printf '\\x1f'\n", quote(dir.Replace(p.ps1)), cols, quote(req))
 				}
 			}
 		}
@@ -220,9 +235,9 @@ func TestUnecho(t *testing.T) {
 	}
 	failed := map[string]bool{}
 	for i, c := range cases {
-		echo := c.shown + "__aish_ask " + quote(c.req)
+		echo := c.shown + `__aish_ask "$__aish_req"`
 		for _, above := range []string{"", "above"} {
-			key := fmt.Sprintf("%q, %q, %d columns, below %q", c.shown, c.words, c.cols, above)
+			key := fmt.Sprintf("%q, %q, %d columns, below %q", c.prompt, c.words, c.cols, above)
 			if failed[key] {
 				continue // one length is enough to tell
 			}
@@ -234,16 +249,12 @@ func TestUnecho(t *testing.T) {
 			}
 			s.write(t, echo+"\n")
 			s.write(t, out[i])
-			want = append(want, rowsOf(c.asked+c.req, c.cols)...)
-			y := len(want)
-			for want[len(want)-1] == "" { // a space wrapped to a row of its own
-				want = want[:len(want)-1]
-			}
+			want = append(want, rowsOf(c.asked+req, c.cols)...)
 			got := s.lines()
-			if strings.Join(got, "\n") != strings.Join(want, "\n") || len(s.history) > 0 || s.x != 0 || s.y != y {
+			if strings.Join(got, "\n") != strings.Join(want, "\n") || len(s.history) > 0 || s.x != 0 || s.y != len(want) {
 				failed[key] = true
-				t.Errorf("%s, a request of %d characters:\nscreen %q\nwant   %q\nhistory %q\ncursor at %d,%d, want 0,%d\noutput %q",
-					key, len([]rune(c.req)), got, want, s.history, s.x, s.y, y, out[i])
+				t.Errorf("%s, a directory of %d characters:\nscreen %q\nwant   %q\nhistory %q\ncursor at %d,%d, want 0,%d\noutput %q",
+					key, len([]rune(c.dir)), got, want, s.history, s.x, s.y, len(want), out[i])
 			}
 		}
 	}

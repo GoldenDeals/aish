@@ -72,7 +72,7 @@ func TestRouteConfig(t *testing.T) {
 			{"myfn a b", "myfn a b"},
 			{"ls?", "__aish_ask 'ls?'"}, // `ls?` is no command
 			{"ls foo?", "ls foo?"},      // `ls` is, and foo? a glob
-			{"what is it?  ", "__aish_ask 'what is it?  '"},
+			{"what is it?  ", "__aish_ask 'what is it?'"},
 			{"Find big files", "__aish_ask 'Find big files'"},
 			{"?ls", "__aish_ask 'ls'"},
 		}},
@@ -95,7 +95,7 @@ func TestRouteConfig(t *testing.T) {
 	} {
 		var script strings.Builder
 		for _, c := range tc.cases {
-			script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; printf '%s\\x1f' \"$READLINE_LINE\"\n")
+			script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; " + printLine + "\n")
 		}
 		got := routed(t, tc.route, "myfn() { :; }", script.String())
 		for i, c := range tc.cases {

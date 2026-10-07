@@ -57,7 +57,7 @@ func TestExpand(t *testing.T) {
 	} {
 		var script strings.Builder
 		for _, c := range tc.cases {
-			script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; printf '%s\\x1f' \"$READLINE_LINE\"\n")
+			script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; " + printLine + "\n")
 		}
 		// Nothing the expansion did stays: no variable, no cd.
 		script.WriteString(`printf '%s %s %s' "${Z-unset}" "${n-unset}" "$([[ $PWD == / ]] && echo moved || echo stayed)"` + "\n")
@@ -97,8 +97,9 @@ fake() { [[ $2 == start ]] && printf 'sent %s\x1f' "$4"; }`
 }
 
 // TestUnechoExpanded has __aish_unecho replace the echo of a request whose
-// expansion has a newline: readline echoes the line bash quoted, $'...\n...'
-// with no newline in it, so the rows to erase are those of one line.
+// expansion has a newline: readline echoes the line that reads the text
+// from __aish_req, with no newline in it, so the rows to erase are those of
+// one line, and the text goes in their place with its newline.
 func TestUnechoExpanded(t *testing.T) {
 	const cols = 40
 	in := "Log: $(printf 'the first line of the log\\nthe second line')"
@@ -109,8 +110,8 @@ func TestUnechoExpanded(t *testing.T) {
 		t.Fatalf("output %q", out)
 	}
 	echo := "> " + out[0]
-	if strings.Contains(echo, "\n") || len([]rune(echo)) <= cols {
-		t.Fatalf("echo %q: want one line longer than a row", echo)
+	if out[0] != `__aish_ask "$__aish_req"` {
+		t.Fatalf("echo %q: want the line that reads the text from __aish_req", echo)
 	}
 	for _, above := range []string{"", "above"} {
 		s := newScreen(cols, 12)

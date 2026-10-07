@@ -49,7 +49,7 @@ func TestRoute(t *testing.T) {
 	var script strings.Builder
 	script.WriteString("alias ll='ls -l'\nmyfn() { :; }\nsource " + init + " 2>/dev/null\n")
 	for _, c := range cases {
-		script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; printf '%s\\x1f' \"$READLINE_LINE\"\n")
+		script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; " + printLine + "\n")
 	}
 	// A home and a directory of its own: a skill of the machine named like
 	// a case (gti) would send the line to the model.
