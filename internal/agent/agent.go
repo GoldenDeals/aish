@@ -484,6 +484,12 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		fmt.Fprintf(a.UI, "%s  ✗ %s%s\n", red, msg, reset)
 		return false, a.append(toolResult(c, msg, true))
 	}
+	// Ctrl+C may have come after the last hook was done and the policy had
+	// answered: an interrupted request hands nothing to the shell and runs
+	// nothing. The call stays pending, as with the question above.
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 
 	if tools.IsDialog(t) {
 		// The form opens below the call, and its answers are no status:
