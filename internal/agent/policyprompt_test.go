@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 const policySection = "# Policy\nThe user's policy limits what you may do. " +

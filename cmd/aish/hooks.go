@@ -11,8 +11,8 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/hooks"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/hooks"
 )
 
 // hooksCmd lists the hooks a request in cwd would run and what is wrong

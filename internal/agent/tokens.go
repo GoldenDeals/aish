@@ -3,8 +3,8 @@ package agent
 import (
 	"encoding/json"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // contextTokens is session.Tokens with what it cannot see before the first

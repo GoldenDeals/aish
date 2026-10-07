@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // script writes an executable /bin/sh script at dir/event/name.

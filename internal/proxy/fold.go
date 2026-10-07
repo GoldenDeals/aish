@@ -8,7 +8,7 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
-	"github.com/inebotov/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/capture"
 )
 
 const (

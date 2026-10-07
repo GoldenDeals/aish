@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // aish model run by the assistant is refused before the models are asked

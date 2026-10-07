@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // agentLine is the agent's line of calls as hide_work leaves it for the

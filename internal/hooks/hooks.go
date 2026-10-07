@@ -22,7 +22,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // The events, each a directory of hooks.

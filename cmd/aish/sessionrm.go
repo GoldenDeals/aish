@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // sessionRmCmd removes saved sessions, found as `aish resume` finds one.
@@ -17,7 +17,7 @@ import (
 // the job half done.
 func sessionRmCmd(cfg config.Config, args []string) int {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return fail(errors.New("usage: aish session rm ID|NAME..."))
+		return fail(errors.New("usage: aish session rm ID|NAME [ID|NAME]"))
 	}
 	dir, info, err := sessionsDir(cfg)
 	if err != nil {

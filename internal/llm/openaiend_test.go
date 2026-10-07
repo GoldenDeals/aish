@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // streamOf is what Complete of provider makes of a stream that is body,

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // sameJSON compares v, as it goes over the wire, with the JSON want.

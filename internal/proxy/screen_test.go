@@ -4,7 +4,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // tmux and screen clear the screen with `\e[H\e[J`, not `\e[2J`.

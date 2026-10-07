@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 func TestModelEffort(t *testing.T) {

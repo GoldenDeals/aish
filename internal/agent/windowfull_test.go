@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // A reply the context window cut is said to be cut, and the next request

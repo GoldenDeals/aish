@@ -3,7 +3,7 @@ package proxy
 import (
 	"fmt"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // routeFile is $AISH_RUN/route: the [route] table as init.bash reads it

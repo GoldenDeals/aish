@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // aish clear, aish new and aish resume run by the assistant are refused

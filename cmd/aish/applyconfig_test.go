@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 func TestAppliedText(t *testing.T) {

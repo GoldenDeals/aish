@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 func TestModelLine(t *testing.T) {

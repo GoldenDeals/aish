@@ -3,8 +3,8 @@ package proxy
 import (
 	"fmt"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/llm"
 )
 
 // leaveGone moves the shell off a profile config.toml has no more, to the

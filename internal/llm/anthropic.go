@@ -9,7 +9,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 func init() {

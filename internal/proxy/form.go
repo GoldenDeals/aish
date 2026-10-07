@@ -9,7 +9,7 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
-	"github.com/inebotov/aish/internal/agent"
+	"github.com/GoldenDeals/aish/internal/agent"
 )
 
 const (

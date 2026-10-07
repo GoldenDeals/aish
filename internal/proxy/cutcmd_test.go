@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // A command's title in the viewer takes a line for each of its lines,

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // Right after a summary no turn has measured the context: the estimate

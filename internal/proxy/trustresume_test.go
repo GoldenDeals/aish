@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // A git pull the agent runs may change the hooks and tools of a trusted

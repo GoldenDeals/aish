@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // modelLine is the line aish session show puts before a reply that came

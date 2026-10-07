@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // The hooks of a cloned repository do not run until its .aish.toml is

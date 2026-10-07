@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/inebotov/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/policy"
 )
 
 // ignoredCommand reports whether a command line the user typed matches a

@@ -7,8 +7,8 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
-	"github.com/inebotov/aish/internal/capture"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 func TestScreen(t *testing.T) {

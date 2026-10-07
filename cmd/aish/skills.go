@@ -10,9 +10,9 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/skills"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/skills"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // skillsCmd lists the skills that apply in cwd and what is wrong with them.

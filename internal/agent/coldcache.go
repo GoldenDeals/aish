@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // warnCold tells the user, before the first turn of a request, that the

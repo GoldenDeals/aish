@@ -9,10 +9,10 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/proxy"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/proxy"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // resumeCmd brings a session back: inside aish this shell switches to it,

@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/subagent"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/subagent"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // subProvider answers each request by what it is: answer looks at the

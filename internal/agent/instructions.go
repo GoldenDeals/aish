@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 const maxInstructionBytes = 40000

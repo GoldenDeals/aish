@@ -3,7 +3,7 @@ package agent
 import (
 	"slices"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // summaryKeep is about how much of each output is sent for a summary the

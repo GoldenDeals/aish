@@ -1,6 +1,6 @@
 package proxy
 
-import "github.com/inebotov/aish/internal/session"
+import "github.com/GoldenDeals/aish/internal/session"
 
 // contextTokens is session.Tokens as the agent counts it: till a turn
 // after a summary is measured, the system prompt and the tool schemas of

@@ -17,7 +17,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 type timeoutError struct{}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // TestMakeRunDir: bin gets aish, for the processes the shell runs, and only

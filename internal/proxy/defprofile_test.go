@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // The profile config.toml selects for the shell goes by $AISH_PROFILE as

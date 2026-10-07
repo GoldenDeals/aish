@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/subagent"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/subagent"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // hostTurns answers the host's turns with turns, in order.

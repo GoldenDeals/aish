@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/capture"
 )
 
 // script is a command of n lines: "line 1" to "line n".

@@ -10,10 +10,10 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
-	"github.com/inebotov/aish/internal/capture"
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // A call line left open for the status is one line, cut with "…" to

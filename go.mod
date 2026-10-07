@@ -1,4 +1,4 @@
-module github.com/inebotov/aish
+module github.com/GoldenDeals/aish
 
 go 1.26.5
 

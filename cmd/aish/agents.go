@@ -10,8 +10,8 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/subagent"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/subagent"
 )
 
 // agentsCmd lists the subagents that apply in cwd and what is wrong with them.

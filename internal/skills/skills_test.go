@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 func write(t *testing.T, p, s string) {

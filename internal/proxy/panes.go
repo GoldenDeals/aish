@@ -9,8 +9,8 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
-	"github.com/inebotov/aish/internal/agent"
-	"github.com/inebotov/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/agent"
+	"github.com/GoldenDeals/aish/internal/capture"
 )
 
 // The subagents of a task call run at once, and each gets a pane of its

@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/inebotov/aish/internal/capture"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // Subagents in the background: task with background starts them and

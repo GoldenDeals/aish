@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/mcp"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/mcp"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // oldSession is a saved session in dir, not used for two days.

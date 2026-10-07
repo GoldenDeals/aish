@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/agent"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/agent"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // Ctrl+C on a request still waiting for the one before it (that one

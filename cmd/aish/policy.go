@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // policyCmd shows the policies in force, and with a tool call asks them

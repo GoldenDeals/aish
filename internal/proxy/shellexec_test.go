@@ -6,10 +6,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/inebotov/aish/internal/bashstate"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/bashstate"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // The options the shell had on at its last prompt, as __aish_dump printed

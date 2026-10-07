@@ -3,8 +3,8 @@ package proxy
 import (
 	"encoding/json"
 
-	"github.com/inebotov/aish/internal/agent"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/agent"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // tasks answers `aish tasks`: the agent's subagents in the background, or

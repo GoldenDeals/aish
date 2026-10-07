@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // lazyTool is a deferred tool of an MCP server. Its args make it a type ==

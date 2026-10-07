@@ -10,7 +10,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // tasksCmd shows the subagents the assistant runs in the background, whose

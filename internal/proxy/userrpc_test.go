@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // userCallsEnv holds the calls, a JSON list of rpc.Request, that the test

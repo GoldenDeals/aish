@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/bashstate"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/bashstate"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // Erasing the screen cuts the journal for the model; the session stays.

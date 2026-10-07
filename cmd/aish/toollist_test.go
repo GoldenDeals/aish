@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // The list shows what aish tool NAME runs: bash is typed in the shell

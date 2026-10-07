@@ -7,9 +7,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // trustCmd is aish trust [--revoke | --list]: the project file of this

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 func bashCall(id, cmd string) *llm.Response {

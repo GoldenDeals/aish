@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // agentCmd carries a request to the agent, which lives in the proxy, and

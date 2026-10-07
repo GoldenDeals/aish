@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/inebotov/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/llm"
 )
 
 // retryWaits are the pauses before each retry of a turn; a variable for the

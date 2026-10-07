@@ -38,14 +38,14 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/inebotov/aish/internal/agent"
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/mcp"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/shellinit"
-	"github.com/inebotov/aish/internal/skills"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/agent"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/mcp"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/shellinit"
+	"github.com/GoldenDeals/aish/internal/skills"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 var usage = `usage:

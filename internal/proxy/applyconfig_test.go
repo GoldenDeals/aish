@@ -9,11 +9,11 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/inebotov/aish/internal/agent"
-	"github.com/inebotov/aish/internal/bashstate"
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/agent"
+	"github.com/GoldenDeals/aish/internal/bashstate"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // apply is `aish apply-config` typed at the prompt of the shell, in its

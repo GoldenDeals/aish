@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // The options the shell has on come with the request (tools.Exec.Opts):

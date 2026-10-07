@@ -7,7 +7,7 @@ import (
 
 	"golang.org/x/net/http/httpproxy"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // responseHeaderTimeout is the one the SDKs give their own clients: a

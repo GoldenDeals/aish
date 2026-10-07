@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 const anthropicStream = `event: message_start

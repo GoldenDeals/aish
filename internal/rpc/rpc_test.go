@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 func serveTest(t *testing.T, h Handler) *Client {

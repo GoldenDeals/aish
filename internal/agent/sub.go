@@ -18,15 +18,15 @@ import (
 
 	"mvdan.cc/sh/v3/syntax"
 
-	"github.com/inebotov/aish/internal/capture"
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/skills"
-	"github.com/inebotov/aish/internal/subagent"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/skills"
+	"github.com/GoldenDeals/aish/internal/subagent"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // A subagent is a nested Agent the task tool runs within one call: a

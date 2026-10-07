@@ -9,9 +9,9 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // errTooLong is the API's refusal of a request past the window, as the SDK

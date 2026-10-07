@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/inebotov/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/capture"
 )
 
 // viewer shows folded outputs in full on the alternate screen. Ctrl+O opens

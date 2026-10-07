@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/inebotov/aish/internal/bashstate"
+	"github.com/GoldenDeals/aish/internal/bashstate"
 )
 
 // A session is several files side by side: <id>.jsonl the journal,

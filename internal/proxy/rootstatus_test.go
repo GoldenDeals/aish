@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // A shell on the top level of config.toml, which selects a profile, goes

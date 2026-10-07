@@ -1,9 +1,9 @@
 package agent
 
 import (
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // ContextMessages are the messages the next turn of an agent with cfg sends

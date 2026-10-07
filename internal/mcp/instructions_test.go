@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // instructedStub is the config clientStubManager makes, with the

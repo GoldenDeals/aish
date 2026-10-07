@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 func TestOpenAIMessages(t *testing.T) {

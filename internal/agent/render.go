@@ -3,8 +3,8 @@ package agent
 import (
 	"io"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/markdown"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/markdown"
 )
 
 // flusher is the assistant's text output: Flush ends it at the start of a line.

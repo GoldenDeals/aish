@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/shellinit"
+	"github.com/GoldenDeals/aish/internal/shellinit"
 )
 
 // dumpFunc is __aish_dump as init.bash defines it.

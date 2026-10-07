@@ -23,8 +23,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 const maxFiles = 100

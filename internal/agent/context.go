@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/inebotov/aish/internal/capture"
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // systemPrompt is assembled from Claude Code's system prompt (v2.1.286, as

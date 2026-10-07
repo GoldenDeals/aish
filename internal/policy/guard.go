@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // TrustReason is why the agent may not trust a project file itself; aish

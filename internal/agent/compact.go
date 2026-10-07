@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 const compactPrompt = `Your context is about to be replaced with a summary of this session, written by you now. Do not call tools; reply with the summary only.

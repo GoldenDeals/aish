@@ -13,7 +13,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 const (

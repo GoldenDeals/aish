@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/llm"
 )
 
 // A profile of Anthropic under a top level of OpenAI inherits an effort

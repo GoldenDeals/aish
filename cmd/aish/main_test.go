@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/llm"
 )
 
 func TestFirstSentence(t *testing.T) {

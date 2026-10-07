@@ -3,7 +3,7 @@ package proxy
 import (
 	"time"
 
-	"github.com/inebotov/aish/internal/agent"
+	"github.com/GoldenDeals/aish/internal/agent"
 )
 
 // With hide_work the agent hands the shell a command and returns, its line

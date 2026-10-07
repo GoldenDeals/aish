@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/inebotov/aish/internal/session"
+import "github.com/GoldenDeals/aish/internal/session"
 
 // ownRaw is es with the Raw of replies from another profile dropped:
 // their thinking and encrypted reasoning are bound to the account that

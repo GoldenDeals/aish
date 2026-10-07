@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // TestEarlyKeys: keys typed before the shell's first prompt, a bracketed

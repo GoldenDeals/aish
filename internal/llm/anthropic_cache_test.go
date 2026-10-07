@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // cacheMarks sends req through Complete and returns, for each message of the

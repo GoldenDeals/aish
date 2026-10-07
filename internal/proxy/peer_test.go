@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // What the test binary, run as a client by TestForegroundOnly, asks the

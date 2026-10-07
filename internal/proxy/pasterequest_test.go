@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // modeless is what the terminal got without the bracketed paste modes the

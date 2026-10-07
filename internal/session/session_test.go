@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/bashstate"
+	"github.com/GoldenDeals/aish/internal/bashstate"
 )
 
 func TestClearStartsNewFile(t *testing.T) {

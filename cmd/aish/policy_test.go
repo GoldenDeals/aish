@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/inebotov/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/policy"
 )
 
 func TestPolicyLine(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // The proxy keeps the prompt's status off the line typed: hidden by the

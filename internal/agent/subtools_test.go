@@ -10,10 +10,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/skills"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/skills"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // subCommands answers a subagent's requests with a bash call of each of

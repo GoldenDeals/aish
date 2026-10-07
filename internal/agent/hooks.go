@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/inebotov/aish/internal/capture"
-	"github.com/inebotov/aish/internal/hooks"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/hooks"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // What hooks answer is laid over the request here: the policy is the

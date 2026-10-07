@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // policyIn runs aish policy with args in a directory of its own over the

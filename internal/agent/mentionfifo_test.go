@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // mkfifo makes a FIFO nobody writes to or reads from.

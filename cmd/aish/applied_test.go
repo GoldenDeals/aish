@@ -11,11 +11,11 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/hooks"
-	"github.com/inebotov/aish/internal/mcp"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/hooks"
+	"github.com/GoldenDeals/aish/internal/mcp"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // fakeProxy answers the rpc of the commands at $AISH_SOCK by answers, by

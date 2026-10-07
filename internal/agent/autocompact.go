@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/inebotov/aish/internal/capture"
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // autoNote tells the model why it sums the session up unasked: the work

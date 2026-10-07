@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // The test binary doubles as a stub MCP server on stdio.

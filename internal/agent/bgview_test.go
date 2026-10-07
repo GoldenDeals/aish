@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/capture"
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // liveBuf is the live output of a call, read by the test while the call

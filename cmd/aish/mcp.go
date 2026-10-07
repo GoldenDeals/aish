@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/mcp"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/mcp"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // mcpCmd shows how the MCP servers are doing. Inside aish it asks the proxy,

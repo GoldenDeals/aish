@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // tellUntrusted says which keys of the project file the request goes

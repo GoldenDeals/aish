@@ -19,7 +19,19 @@ main.go:12: undefined: foo
 ## Установка
 
 ```sh
+go install github.com/GoldenDeals/aish/cmd/aish@latest
+```
+
+Бинарь ляжет в `$(go env GOPATH)/bin` — этот каталог должен быть в `PATH`. Собрать из клона
+репозитория:
+
+```sh
 go build -o ~/.local/bin/aish ./cmd/aish
+```
+
+Запуск:
+
+```sh
 export AISH_API_KEY=...        # или ANTHROPIC_API_KEY / OPENAI_API_KEY
 aish                           # новая сессия
 aish --resume                  # продолжить последнюю
@@ -1064,3 +1076,7 @@ MCP-серверами, поэтому шаг не зависит от разм�
 соединение, пока прокси работает, — `Ctrl+C` по нему и останавливает агента. Команду `bash` агента
 исполняет та же `__aish_ask` через `eval` в текущем shell — поэтому `cd` и `export` сохраняются.
 Подробнее — в `CLAUDE.md`.
+
+## Лицензия
+
+MIT, см. [LICENSE](LICENSE).

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/inebotov/aish/internal/llm"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // flakyProvider streams text and fails at its first attempts, then answers

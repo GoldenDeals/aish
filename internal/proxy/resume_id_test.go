@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // The id of rpc resume becomes a path and a word of the script the shell

@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/mcp"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/mcp"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // inForce is rpc config of the shell in its work directory.

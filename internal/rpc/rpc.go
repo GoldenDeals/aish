@@ -14,9 +14,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/policy"
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/policy"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 type Request struct {

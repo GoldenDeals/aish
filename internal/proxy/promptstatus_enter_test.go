@@ -3,7 +3,7 @@ package proxy
 import (
 	"testing"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 // Enter on an empty line takes the status off the prompt it was drawn for;

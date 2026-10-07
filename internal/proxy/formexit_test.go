@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/agent"
+	"github.com/GoldenDeals/aish/internal/agent"
 )
 
 // oneQuestion is a form of a single question.

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
-	"github.com/inebotov/aish/internal/hooks"
+	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/hooks"
 )
 
 var ansi = regexp.MustCompile("\x1b\\[[0-9;]*m")

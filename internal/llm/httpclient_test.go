@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/inebotov/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 // The target of the requests: not a loopback name, which is never proxied,

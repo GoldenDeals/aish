@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/inebotov/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/session"
 )
 
 const (

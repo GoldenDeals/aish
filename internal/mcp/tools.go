@@ -12,8 +12,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/inebotov/aish/internal/rpc"
-	"github.com/inebotov/aish/internal/tools"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // Remote returns the MCP tools the proxy knows as tools that call it, and
