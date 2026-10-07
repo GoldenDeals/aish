@@ -22,9 +22,10 @@ type Script struct {
 	// env -S, alias, trap, bind -x, complete -C, compgen -C, mapfile -C,
 	// su -c, runuser -c, sg, flock -c, script -c, watch, sudo -s and -i,
 	// run0 -i, strace -o '|CMD', fakeroot -l, in the value of PAGER and the
-	// other commandVars and, on another machine, ssh HOST CMD or the
-	// here-string of ssh HOST. Words that are not static (expansions,
-	// substitutions) are kept in their source form, e.g. "$HOME".
+	// other commandVars, the runners (tmux, screen, parallel, an alias of
+	// git) and, on another machine, ssh HOST CMD or the here-string of ssh
+	// HOST. Words that are not static (expansions, substitutions) are kept
+	// in their source form, e.g. "$HOME".
 	Commands [][]string
 	// Remote holds the indexes in Commands of the commands that run on
 	// another machine, in the command of ssh: their words name no files
@@ -66,7 +67,8 @@ const (
 	dynPrompt = "prompt"
 	// dynRebind makes a name of a command run another program or code:
 	// hash -p, enable, an assignment to PATH (see rebindVars) or to a
-	// variable that has programs load code, LD_PRELOAD (see loaderVars).
+	// variable that has programs load code, LD_PRELOAD (see loaderVars),
+	// the code of an alias git config keeps.
 	dynRebind = "rebind"
 	// dynDepth is code nested deeper than maxDepth, left unparsed.
 	dynDepth = "depth"
@@ -313,6 +315,7 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 		}
 		here, there, local := p.handed(argv, static, redirs)
 		found := p.shellC(argv[:local], static[:local])
+		found = append(found, p.runs(argv[:local], static[:local], split[:local], redirs)...)
 		found = append(found, p.program(argv, static, redirs)...)
 		for _, s := range append(found, here...) {
 			add(s, p.remote)
