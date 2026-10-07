@@ -1,10 +1,9 @@
-// Package tools defines what the agent can do. Every tool is also a command
-// the user can type: built-ins via `aish tool <name>` wrappers on PATH,
-// user tools are plain executables in the tools directory. A tool is a
-// Tool; what sets a kind of tools apart for the agent (a command handed to
-// the shell, output shown as it comes, a schema kept from the model) it
-// tells by an optional interface, so that a new kind needs no case in the
-// agent, the proxy or the commands.
+// Package tools defines what the agent can do. The user can call a tool,
+// too, as `aish tool NAME`; user tools are plain executables in the tools
+// directory. A tool is a Tool; what sets a kind of tools apart for the
+// agent (a command handed to the shell, output shown as it comes, a schema
+// kept from the model) it tells by an optional interface, so that a new
+// kind needs no case in the agent, the proxy or the commands.
 package tools
 
 import (
@@ -67,18 +66,12 @@ type HandsOff interface {
 // Dialog tools are answered by the user instead of run: the agent shows a
 // call as a form on its terminal, and what the user chose is the result
 // (ask_user). Only the agent has that terminal, so the user cannot call
-// them, and they get no wrapper.
+// them.
 type Dialog interface{ Dialog() bool }
 
-// Hidden tools are not offered to the model as tools; it runs them as
-// commands, which keeps their schemas out of every request.
+// Hidden tools are not offered to the model as tools; it runs them from
+// bash as `aish tool NAME`, which keeps their schemas out of every request.
 type Hidden interface{ Hidden() bool }
-
-// Wrappable tools get a wrapper in $AISH_RUN/bin running `aish tool NAME`,
-// so that the user can type them. A tool without the ability gets none:
-// bash is bash, an external tool is on PATH already, the MCP manager
-// writes its own.
-type Wrappable interface{ Wrapper() bool }
 
 // Origin is where a tool comes from, for the policy: its MCP server.
 type Origin interface{ Server() string }
@@ -100,11 +93,6 @@ func IsDialog(t Tool) bool {
 func IsHidden(t Tool) bool {
 	h, ok := t.(Hidden)
 	return ok && h.Hidden()
-}
-
-func Wraps(t Tool) bool {
-	w, ok := t.(Wrappable)
-	return ok && w.Wrapper()
 }
 
 func Streams(t Tool) bool {

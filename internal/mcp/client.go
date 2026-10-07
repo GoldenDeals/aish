@@ -1,7 +1,7 @@
 // Package mcp makes the tools of MCP servers ordinary aish tools. The proxy
 // owns the server processes for the life of the shell and starts each one
-// when it is first needed; `aish tool` and the agent reach them over the
-// proxy's socket, and every tool gets a command wrapper on PATH.
+// when it is first needed; the agent reaches them there, and `aish tool
+// NAME`, typed by the user or run from bash, over the proxy's socket.
 package mcp
 
 import (

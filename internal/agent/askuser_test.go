@@ -81,11 +81,11 @@ func TestAnswerText(t *testing.T) {
 }
 
 // ask_user is a dialog: offered to the model with its whole schema, but
-// neither a command of the user nor a wrapper.
+// not a command of the user.
 func TestAskUserTool(t *testing.T) {
 	tl, ok := tools.Load("").Get("ask_user")
-	if !ok || !tools.IsDialog(tl) || tools.Wraps(tl) {
-		t.Fatalf("ask_user: %v, dialog %v, wrapped %v", ok, ok && tools.IsDialog(tl), ok && tools.Wraps(tl))
+	if !ok || !tools.IsDialog(tl) {
+		t.Fatalf("ask_user: %v, dialog %v", ok, ok && tools.IsDialog(tl))
 	}
 	items := tl.Schema()["properties"].(map[string]any)["questions"].(map[string]any)["items"].(map[string]any)
 	if req := items["required"]; !reflect.DeepEqual(req, []string{"question", "header", "options"}) {

@@ -25,7 +25,6 @@ func (t builtin) Name() string           { return t.name }
 func (t builtin) Desc() string           { return t.desc }
 func (t builtin) Args() []Arg            { return t.args }
 func (t builtin) Schema() map[string]any { return Schema(t.args) }
-func (t builtin) Wrapper() bool          { return true }
 
 // Execute takes a relative path from ex.Dir: the agent runs in the proxy,
 // whose directory is not the shell's. The path is cleaned as the policy

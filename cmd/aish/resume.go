@@ -13,7 +13,6 @@ import (
 	"github.com/inebotov/aish/internal/proxy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/tools"
 )
 
 // resumeCmd brings a session back: inside aish this shell switches to it,
@@ -106,9 +105,7 @@ func startShell(cfg config.Config, sess *session.Session, resume bool) int {
 			}
 		}
 	}
-	reg := tools.Load(cfg.ToolsDir)
-	p.Commands = UserCommands
-	code, err := p.Run(cfg, reg)
+	code, err := p.Run(cfg)
 	if err != nil {
 		return fail(err)
 	}

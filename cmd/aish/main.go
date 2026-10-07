@@ -82,31 +82,7 @@ var usage = `usage:
 
 In the shell: commands run as usual; text that is not a command goes to the
 assistant. Prefix with ? to force the assistant, with ! to force bash.
-The following subcommands also work without "aish" in front (status,
-model high), unless a command of that name is on PATH:
-` + wordList(UserCommands)
-
-// wordList lays words out as a comma-separated list indented by two
-// spaces, in lines of at most 80 columns.
-func wordList(words []string) string {
-	var b strings.Builder
-	line := ""
-	for i, w := range words {
-		if i < len(words)-1 {
-			w += ","
-		}
-		switch {
-		case line == "":
-			line = "  " + w
-		case len(line)+1+len(w) > 80:
-			b.WriteString(line + "\n")
-			line = "  " + w
-		default:
-			line += " " + w
-		}
-	}
-	return b.String() + line + "\n"
-}
+`
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -290,8 +266,8 @@ func toolCmd(cfg config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	// Not on every run: a tool's wrapper on PATH is aish tool NAME, and the
-	// note would land in the output of each call, the agent's too.
+	// Not on every run: the agent and the subagents call aish tool NAME
+	// too, and the note would land in the output of each of their calls.
 	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, untrustedNote(cfg, project))
 	}

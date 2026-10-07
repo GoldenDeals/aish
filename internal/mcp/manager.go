@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -27,7 +26,7 @@ const (
 
 // ToolInfo is one MCP tool as the proxy reports it.
 type ToolInfo struct {
-	Name        string          `json:"name"` // <server>_<tool>, also the command
+	Name        string          `json:"name"` // <server>_<tool>, the name for `aish tool`
 	Server      string          `json:"server"`
 	Tool        string          `json:"tool"` // the server's own name
 	Description string          `json:"description,omitempty"`
@@ -56,19 +55,14 @@ type CallParams struct {
 }
 
 // Manager owns the MCP servers of one shell. A server is started on its
-// first call; its tool list is cached on disk, so wrappers exist from the
-// start of the next shell without starting anything.
+// first call; its tool list is cached on disk, so the next shell knows the
+// tools from its start without starting anything.
 type Manager struct {
 	servers  []*server
 	cacheDir string
 
-	// Bin is where command wrappers go; each runs `Self tool NAME`. Taken
-	// tells which names other tools already use.
-	Bin, Self string
-	Taken     func(name string) bool
-
 	mu    sync.Mutex
-	notes map[string]bool // wrappers and caches not written, and why
+	notes map[string]bool // caches not written, and why
 }
 
 type server struct {
@@ -127,12 +121,11 @@ func (m *Manager) cachePath(server string) string {
 	return filepath.Join(m.cacheDir, server+".json")
 }
 
-// Warm writes the wrappers known from the cache and, in the background,
-// starts the servers never seen before to learn their tools. Not one with
-// env_command or headers_command: its commands wait for its first use,
-// lest pass ask for a passphrase as the shell starts.
+// Warm starts, in the background, the servers never seen before to learn
+// their tools. Not one with env_command or headers_command: its commands
+// wait for its first use, lest pass ask for a passphrase as the shell
+// starts.
 func (m *Manager) Warm() {
-	m.wrap()
 	for _, s := range m.servers {
 		if !s.known && len(s.cfg.EnvCommand) == 0 && len(s.cfg.HeadersCommand) == 0 {
 			go m.ensure(context.Background(), s, false)
@@ -305,7 +298,6 @@ func (m *Manager) start(s *server, st *startup) {
 	s.mu.Unlock()
 	if err == nil {
 		m.save(s, tools)
-		m.wrap()
 	}
 	st.conn, st.err = c, err
 	close(st.done)
@@ -371,7 +363,8 @@ func (m *Manager) save(s *server, tools []ToolInfo) {
 		err = os.WriteFile(m.cachePath(s.name), b, 0o600)
 	}
 	if err != nil {
-		// Without the cache the next shell has no wrappers until a call.
+		// Without the cache the next shell starts the server again to
+		// learn its tools.
 		m.note("%s: tool list not cached: %v", s.name, err)
 	}
 }
@@ -380,38 +373,6 @@ func (m *Manager) note(format string, args ...any) {
 	m.mu.Lock()
 	m.notes[fmt.Sprintf(format, args...)] = true
 	m.mu.Unlock()
-}
-
-// wrap writes a command wrapper for every known tool, except those whose
-// name is a command already: the wrappers come first in PATH and would
-// silently replace it for the whole shell.
-func (m *Manager) wrap() {
-	if m.Bin == "" {
-		return
-	}
-	for _, s := range m.servers {
-		s.mu.Lock()
-		tools := s.tools
-		s.mu.Unlock()
-		for _, t := range tools {
-			path := filepath.Join(m.Bin, t.Name)
-			if _, err := os.Stat(path); err == nil {
-				continue
-			}
-			if p, err := exec.LookPath(t.Name); err == nil {
-				m.note("%s: not a command, it would shadow %s", t.Name, p)
-				continue
-			}
-			if m.Taken != nil && m.Taken(t.Name) {
-				m.note("%s: skipped, another tool has this name", t.Name)
-				continue
-			}
-			script := fmt.Sprintf("#!/bin/sh\nexec %q tool %s \"$@\"\n", m.Self, t.Name)
-			if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-				m.note("%s: not a command: %v", t.Name, err)
-			}
-		}
-	}
 }
 
 // Close stops the servers and ends the HTTP sessions, all at once: each may
@@ -440,8 +401,7 @@ type Status struct {
 	Failed    time.Time `json:"failed,omitzero"`
 }
 
-// StatusResult also has the notes about wrappers and caches that were not
-// written.
+// StatusResult also has the notes about caches that were not written.
 type StatusResult struct {
 	Servers []Status `json:"servers"`
 	Notes   []string `json:"notes,omitempty"`

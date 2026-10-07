@@ -45,7 +45,7 @@ func TestNestedHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-// A subagent's command keeps $AISH_SOCK: the wrappers of MCP tools call
+// A subagent's command keeps $AISH_SOCK: `aish tool` calls MCP tools in
 // the proxy. `aish compact`, `aish agent start` or `aish agent resume` from
 // there would wait for the turn of the request that waits for the
 // subagent; they are refused at once, and the request goes on.

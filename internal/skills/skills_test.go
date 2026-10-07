@@ -119,7 +119,7 @@ func TestInstructions(t *testing.T) {
 		t.Fatalf("%+v %+v", got, problems)
 	}
 	tool := got[0].Tool()
-	if tool.Name() != "pdf" || !strings.HasPrefix(tool.Desc(), "Extract text from PDF files.") || tools.IsHidden(tool) || tools.Wraps(tool) {
+	if tool.Name() != "pdf" || !strings.HasPrefix(tool.Desc(), "Extract text from PDF files.") || tools.IsHidden(tool) {
 		t.Errorf("tool: %+v", tool)
 	}
 	out, err := tool.Execute(context.Background(), tools.Exec{}, nil, nil)

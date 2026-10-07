@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,7 +34,6 @@ import (
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 	"github.com/inebotov/aish/internal/shellinit"
-	"github.com/inebotov/aish/internal/tools"
 )
 
 const (
@@ -73,10 +71,6 @@ type Proxy struct {
 	prov         llm.Provider // for the models list and the levels of effort; nil if unknown
 	out          io.Writer    // the terminal
 	size         func() (w, h int)
-
-	// Commands are aish subcommands the shell gets as commands of their
-	// own (`status` for `aish status`); set before Run.
-	Commands []string
 
 	mu      sync.Mutex
 	screen  Screen
@@ -148,7 +142,7 @@ func New(sess *session.Session) *Proxy {
 }
 
 // Run starts bash and blocks until it exits, returning its exit code.
-func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
+func (p *Proxy) Run(cfg config.Config) (int, error) {
 	p.foldLines = cfg.FoldLines
 	p.maxOutput = cfg.MaxOutputBytes
 	p.promptStatus = cfg.PromptStatus
@@ -197,7 +191,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 		}
 	}
 	nonce := rand.Text()
-	run, err := makeRunDir(reg, p.Commands, self, nonce, cfg.Route)
+	run, err := makeRunDir(self, nonce, cfg.Route)
 	if err != nil {
 		return 1, err
 	}
@@ -215,11 +209,6 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 		fmt.Fprintf(os.Stderr, "aish: %v\n", err)
 	}
 	p.mcp = mcp.NewManager(servers, filepath.Join(config.CacheDir(), "mcp"))
-	p.mcp.Bin, p.mcp.Self = filepath.Join(run, "bin"), self
-	p.mcp.Taken = func(name string) bool {
-		_, ok := reg.Get(name)
-		return ok || slices.Contains(p.Commands, name)
-	}
 	p.mcp.Warm()
 	defer p.mcp.Close()
 
@@ -241,7 +230,7 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 		"AISH_RUN="+run,
 		"AISH_BIN="+self,
 		"AISH_SESSION="+p.sess.ID,
-		"AISH_TOOLS_PATH="+filepath.Join(run, "bin")+":"+cfg.ToolsDir,
+		"AISH_TOOLS_PATH="+filepath.Join(run, "bin"),
 	)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -303,13 +292,14 @@ func (p *Proxy) Run(cfg config.Config, reg *tools.Registry) (int, error) {
 	return exitCode(waitErr)
 }
 
-// makeRunDir creates the session's directory with the command wrappers in
-// bin: one per name in cmds (`exec self NAME`) and one per Wrappable tool
-// (`exec self tool NAME`). A name that is a command already gets no
-// wrapper: bin comes first in PATH and would hide it for the whole shell.
-// The subcommands go first, so a tool with such a name is left to `aish
-// tool`.
-func makeRunDir(reg *tools.Registry, cmds []string, self, nonce string, route config.Route) (string, error) {
+// makeRunDir creates the session's directory. Its bin, $AISH_TOOLS_PATH,
+// holds aish when PATH has none: the function aish of init.bash is only
+// the shell's, while a subagent's bash, hooks and external tools run as
+// processes of their own, and the model calls MCP tools from bash as `aish
+// tool NAME`. Tools and subcommands are not commands: bin comes first in
+// PATH, and they would take names from the whole shell; who wants them
+// short gives them aliases.
+func makeRunDir(self, nonce string, route config.Route) (string, error) {
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
 		base = os.TempDir()
@@ -322,28 +312,9 @@ func makeRunDir(reg *tools.Registry, cmds []string, self, nonce string, route co
 	if err := os.Mkdir(bin, 0o700); err != nil {
 		return "", err
 	}
-	for _, c := range cmds {
-		if _, err := exec.LookPath(c); err == nil {
-			continue // `expand` is coreutils; `aish expand` and Ctrl+O remain
-		}
-		script := fmt.Sprintf("#!/bin/sh\nexec %q %s \"$@\"\n", self, c)
-		if err := os.WriteFile(filepath.Join(bin, c), []byte(script), 0o755); err != nil {
-			return "", err
-		}
-	}
-	for _, t := range reg.All() {
-		if !tools.Wraps(t) {
-			continue
-		}
-		name := t.Name()
-		if _, err := exec.LookPath(name); err == nil {
-			continue // the wrapper would shadow it for the whole shell
-		}
-		if slices.Contains(cmds, name) {
-			continue
-		}
-		script := fmt.Sprintf("#!/bin/sh\nexec %q tool %s \"$@\"\n", self, name)
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0o755); err != nil {
+	if _, err := exec.LookPath("aish"); err != nil {
+		script := fmt.Sprintf("#!/bin/sh\nexec %q \"$@\"\n", self)
+		if err := os.WriteFile(filepath.Join(bin, "aish"), []byte(script), 0o755); err != nil {
 			return "", err
 		}
 	}

@@ -34,8 +34,7 @@ const maxFiles = 100
 const note = "This is a skill: the call returns instructions for such tasks and the skill's files. " +
 	"Call it before starting the task, then follow what it returns."
 
-// validName is what both APIs accept as a tool name; it is a file name in
-// the wrappers' directory, too.
+// validName is what both APIs accept as a tool name.
 var validName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 type Skill struct {
@@ -138,8 +137,8 @@ func (s Skill) Tool() tools.Tool {
 	return tool{s: s, args: []tools.Arg{{Name: "arguments", Type: "string", Desc: desc, Rest: true}}}
 }
 
-// tool is a skill as the agent and `aish tool` take it. It gets no wrapper
-// in $AISH_RUN/bin: a skill is typed as /name.
+// tool is a skill as the agent and `aish tool` take it; the user types a
+// skill as /name.
 type tool struct {
 	s    Skill
 	args []tools.Arg

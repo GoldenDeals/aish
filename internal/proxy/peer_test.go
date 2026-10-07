@@ -49,8 +49,8 @@ func TestPeerHelper(t *testing.T) {
 
 // A request starts, goes on and is compacted only from the process group
 // in the foreground of the shell's terminal: between requests nothing else
-// refuses a background subagent's command. The MCP calls of its tools'
-// wrappers go through from anywhere.
+// refuses a background subagent's command. The MCP calls of `aish tool`
+// go through from anywhere.
 func TestForegroundOnly(t *testing.T) {
 	exe, err := os.Executable()
 	if err != nil {

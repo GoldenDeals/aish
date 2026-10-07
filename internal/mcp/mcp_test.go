@@ -91,36 +91,26 @@ func stubManager(t *testing.T, cache, starts string) *Manager {
 	return m
 }
 
-// TestManagerWriteNotes: a cache or a wrapper that could not be written is
-// a note in `aish mcp`, not lost silently.
+// TestManagerWriteNotes: a cache that could not be written is a note in
+// `aish mcp`, not lost silently.
 func TestManagerWriteNotes(t *testing.T) {
 	dir := t.TempDir()
 	cache := filepath.Join(dir, "cache")
 	os.WriteFile(cache, nil, 0o600) // a file where the directory should be
 	m := stubManager(t, cache, filepath.Join(dir, "starts"))
-	m.Bin, m.Self = filepath.Join(dir, "missing"), "/x/aish"
 	m.List(context.Background(), true)
-	notes := strings.Join(m.Status().Notes, "\n")
-	for _, want := range []string{"stub: tool list not cached: ", "stub_search: not a command: "} {
-		if !strings.Contains(notes, want) {
-			t.Errorf("no %q in notes:\n%s", want, notes)
-		}
+	notes := m.Status().Notes
+	if len(notes) != 1 || !strings.HasPrefix(notes[0], "stub: tool list not cached: ") {
+		t.Errorf("notes %q, want just the cache's", notes)
 	}
 }
 
 func TestManager(t *testing.T) {
 	dir := t.TempDir()
-	cache, starts, bin := filepath.Join(dir, "cache"), filepath.Join(dir, "starts"), filepath.Join(dir, "bin")
-	os.Mkdir(bin, 0o700)
-	// A command named like one of the tools: its wrapper must not shadow it.
-	path := filepath.Join(dir, "path")
-	os.Mkdir(path, 0o700)
-	os.WriteFile(filepath.Join(path, "stub_echo"), []byte("#!/bin/sh\n"), 0o755)
-	t.Setenv("PATH", path+":"+os.Getenv("PATH"))
+	cache, starts := filepath.Join(dir, "cache"), filepath.Join(dir, "starts")
 
 	ctx := context.Background()
 	m := stubManager(t, cache, starts)
-	m.Bin, m.Self = bin, "/x/aish"
 	if res := m.List(ctx, false); len(res.Tools) != 0 {
 		t.Fatalf("listed without starting: %+v", res)
 	}
@@ -128,7 +118,7 @@ func TestManager(t *testing.T) {
 		t.Errorf("status before start: %+v", st)
 	}
 	res := m.List(ctx, true)
-	if st := m.Status(); st.Servers[0].State != "running" || len(st.Servers[0].Tools) != 3 || len(st.Notes) != 1 {
+	if st := m.Status(); st.Servers[0].State != "running" || len(st.Servers[0].Tools) != 3 || len(st.Notes) != 0 {
 		t.Errorf("status: %+v", st)
 	}
 	var names []string
@@ -138,14 +128,8 @@ func TestManager(t *testing.T) {
 	if want := []string{"stub_search", "stub_echo", "stub_crash"}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("tools %q, want %q", names, want)
 	}
-	if len(res.Errors) != 1 || !strings.Contains(res.Errors[0], "stub_echo: not a command, it would shadow") {
+	if len(res.Errors) != 0 {
 		t.Errorf("errors %q", res.Errors)
-	}
-	if b, err := os.ReadFile(filepath.Join(bin, "stub_search")); err != nil || !strings.Contains(string(b), `exec "/x/aish" tool stub_search "$@"`) {
-		t.Errorf("wrapper: %q %v", b, err)
-	}
-	if _, err := os.Stat(filepath.Join(bin, "stub_echo")); err == nil {
-		t.Error("wrapper shadows a command")
 	}
 
 	raw, err := m.Call(ctx, "stub_search", map[string]any{"query": "x"})
@@ -217,8 +201,8 @@ func TestLocal(t *testing.T) {
 	if search.Name() != "stub_search" || tools.ServerOf(search) != "stub" || !tools.IsHidden(search) || len(search.Args()) != 6 {
 		t.Errorf("tool %+v", search)
 	}
-	if tools.Wraps(search) || tools.Streams(search) {
-		t.Error("the manager writes the wrappers of MCP tools; their output comes at the end")
+	if tools.Streams(search) {
+		t.Error("the output of an MCP tool comes at the end")
 	}
 	out, err := search.Execute(ctx, tools.Exec{}, map[string]any{"query": "x"}, nil)
 	if err != nil {

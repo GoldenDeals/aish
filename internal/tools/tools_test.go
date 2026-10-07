@@ -235,18 +235,18 @@ func TestAbilities(t *testing.T) {
 	read, _ := r.Get("read_file")
 	ext := Tool(external{name: "x"})
 	for _, tc := range []struct {
-		tool                    Tool
-		handsOff, wraps, stream bool
+		tool             Tool
+		handsOff, stream bool
 	}{
-		{bash, true, false, false},
-		{read, false, true, false},
-		{ext, false, false, true},
+		{bash, true, false},
+		{read, false, false},
+		{ext, false, true},
 	} {
 		_, handsOff := tc.tool.(HandsOff)
-		if handsOff != tc.handsOff || Wraps(tc.tool) != tc.wraps || Streams(tc.tool) != tc.stream ||
+		if handsOff != tc.handsOff || Streams(tc.tool) != tc.stream ||
 			IsHidden(tc.tool) || ServerOf(tc.tool) != "" {
-			t.Errorf("%s: hands off %v, wrapper %v, streams %v, hidden %v, server %q", tc.tool.Name(),
-				handsOff, Wraps(tc.tool), Streams(tc.tool), IsHidden(tc.tool), ServerOf(tc.tool))
+			t.Errorf("%s: hands off %v, streams %v, hidden %v, server %q", tc.tool.Name(),
+				handsOff, Streams(tc.tool), IsHidden(tc.tool), ServerOf(tc.tool))
 		}
 	}
 

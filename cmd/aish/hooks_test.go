@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
@@ -124,14 +123,5 @@ func TestPrintHooksTrust(t *testing.T) {
 	}
 	if strings.Contains(out, "not trusted") {
 		t.Errorf("trusted: the project file is still named untrusted:\n%s", out)
-	}
-}
-
-func TestUserCommandsHooks(t *testing.T) {
-	if !slices.Contains(UserCommands, "hooks") {
-		t.Error("hooks is not a command in the shell")
-	}
-	if !slices.IsSorted(UserCommands) {
-		t.Errorf("UserCommands not sorted: %v", UserCommands)
 	}
 }

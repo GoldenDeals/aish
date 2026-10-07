@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/mattn/go-runewidth"
@@ -29,10 +28,6 @@ func skillsCmd(cfg config.Config, args []string) int {
 	for _, s := range found {
 		if _, taken := reg.Get(s.Name); taken {
 			problems = append(problems, skills.Problem{Path: s.File(), Msg: "skipped, a tool has this name"})
-			continue
-		}
-		if slices.Contains(UserCommands, s.Name) {
-			problems = append(problems, skills.Problem{Path: s.File(), Msg: "skipped, an aish command has this name"})
 			continue
 		}
 		if p := shadowed(s.Name); p != "" {
@@ -87,15 +82,11 @@ func source(s skills.Skill, cwd string) string {
 }
 
 // shadowed is the command on PATH that bash runs for name, so a skill typed
-// as a command does not reach the assistant; aish's own wrappers do not count.
+// as a command does not reach the assistant.
 func shadowed(name string) string {
-	own := ""
-	if run := os.Getenv("AISH_RUN"); run != "" {
-		own = filepath.Join(run, "bin")
-	}
 	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
 		p := filepath.Join(d, name)
-		if st, err := os.Stat(p); d != own && err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
+		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
 			return p
 		}
 	}

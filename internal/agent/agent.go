@@ -253,8 +253,8 @@ func (a *Agent) append(es ...session.Entry) error {
 
 // mcpNote tells the model about MCP tools it is not given schemas for.
 const mcpNote = "# Additional tools\n" +
-	"More tools (from MCP servers) are available as shell commands, run with the bash tool: " +
-	"`aish tool` lists them, `aish tool NAME -h` shows how to call one. They are named SERVER_TOOL."
+	"More tools (from MCP servers) are available through the bash tool, as `aish tool SERVER_TOOL ARGS`: " +
+	"`aish tool` lists them, `aish tool NAME -h` shows how to call one."
 
 // maxPauses is how many turns in a row the API may pause before the
 // request ends as if the model were done.

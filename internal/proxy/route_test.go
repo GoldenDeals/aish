@@ -7,13 +7,12 @@ import (
 
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/session"
-	"github.com/inebotov/aish/internal/tools"
 )
 
 func TestRouteFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", dir)
-	run, err := makeRunDir(tools.Load(filepath.Join(dir, "none")), nil, "/opt/aish", "n", config.Default().Route)
+	run, err := makeRunDir("/opt/aish", "n", config.Default().Route)
 	if err != nil {
 		t.Fatal(err)
 	}
