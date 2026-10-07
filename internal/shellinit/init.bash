@@ -195,11 +195,11 @@ fi
 # every ', $(, ${, $[ and $\<newline>: __aish_body walks the pieces, not the
 # characters, as ${s:i:1} costs O(i) in a UTF-8 locale. The cutting is
 # bytes, in the C locale: in UTF-8 each pattern match would convert the rest
-# of the text anew. The cut is a byte the text lacks; with none left it
-# fails, and the text stays as typed. LC_ALL and IFS are its own: the text
-# is expanded after it returns.
+# of the text anew. The cut is a byte the text lacks, left in __aish_d, a
+# local of __aish_body; with none left it fails, and the text stays as
+# typed. LC_ALL and IFS are its own: the text is expanded after it returns.
 __aish_split() {
-	local LC_ALL IFS __aish_c __aish_d __aish_s
+	local LC_ALL IFS __aish_c __aish_s
 	local -
 	LC_ALL=C
 	set -f
@@ -218,29 +218,38 @@ __aish_split() {
 # __aish_body sets __aish_t, a local of __aish_expand, to the body of the
 # here-document for $1. In a single quote of the top level a backslash goes
 # before every \, $ and `; elsewhere a backtick is escaped and the
-# backslashes before it doubled. One pass: escaping the backticks after the
-# quotes would double the backslashes in them once more.
+# backslashes before it doubled, and at the top level the other backslashes
+# are doubled too, but for the last of an odd run before a $: the body gives
+# them as typed, a backslash-newline joins no lines, and \$ is a dollar, as
+# before. A run before a $ keeps its parity, so what is expanded stays the
+# same. In $(...) and ${...} backslashes are shell syntax and stay. One
+# pass: escaping the backticks after the quotes would double the
+# backslashes in them once more.
 #
 # The quote is kept only where bash, reading the text as typed, is at the
 # top level at both its ends: inside $(...) and ${...} quotes are shell
 # syntax, and the text after a kept quote is read as it was, so nothing
-# runs that did not. To know that, the walk follows bash through $(...),
-# ${...} and the quotes in them, a stack of what closes each (^ is the top
-# level). What it cannot follow for sure ends it, and the rest is expanded
-# as before: a comment, case (its a) has no pair) or a here-document in
-# $(...), a line continuation there or after $ (it joins what bash reads),
-# $'...', $[...], $$ before a quote or a substitution, a bare ( ) { in
-# ${...}, and a single quote in ${...} in posix mode, which reads it as
-# text. A text with no quote needs no walk.
+# runs that did not. To know that, and where the top level is, the walk
+# follows bash through $(...), ${...} and the quotes in them, a stack of
+# what closes each (^ is the top level). What it cannot follow for sure
+# ends it, and the rest is expanded as before: a comment, case (its a) has
+# no pair) or a here-document in $(...), a line continuation there or after
+# $ (it joins what bash reads), $'...', $[...], $$ before a quote or a
+# substitution, a bare ( ) { in ${...}, and a single quote in ${...} in
+# posix mode, which reads it as text. A text with no quote and no backslash
+# needs no walk.
 __aish_body() {
-	local __aish_p __aish_g __aish_i __aish_j __aish_c __aish_a __aish_h __aish_s __aish_k __aish_e __aish_y __aish_o __aish_q
+	local __aish_p __aish_g __aish_v __aish_d __aish_i __aish_j __aish_c __aish_a __aish_h __aish_s __aish_k __aish_e __aish_y __aish_o __aish_q
 	__aish_t= __aish_g=() __aish_i=0 __aish_k=^ __aish_y= __aish_q=
-	if [[ $1 == *"'"* ]]; then
+	if [[ $1 == *[\'\\]* ]]; then
 		__aish_split "$1" || return 1
 	else
 		__aish_p=("$1")
 	fi
 	[[ -o posix ]] && __aish_q=1
+	# __aish_v has, for a piece that ends at the top level, its rest from
+	# where the top level starts.
+	__aish_v=("${__aish_p[0]}")
 	for __aish_c in "${__aish_p[@]:1}"; do
 		((++__aish_i))
 		# __aish_y is the piece with the open quote, if any.
@@ -252,7 +261,7 @@ __aish_body() {
 					__aish_p[__aish_j]=${__aish_s//'`'/'\`'}
 				done
 				__aish_g+=("$__aish_y" "$__aish_i")
-				__aish_y=
+				__aish_y= __aish_v[__aish_i]=$__aish_c
 				continue
 			fi
 			__aish_y=
@@ -263,6 +272,7 @@ __aish_body() {
 		"'"?) continue ;;
 		"^'")
 			[[ -z $__aish_y && ${__aish_p[__aish_i - 1]: -1} != [[:alnum:]\\] ]] && __aish_y=$__aish_i
+			__aish_v[__aish_i]=$__aish_c
 			continue
 			;;
 		*)
@@ -288,7 +298,10 @@ __aish_body() {
 			fi
 			;;
 		esac
-		[[ $__aish_k == *[\^\'] ]] && continue
+		if [[ $__aish_k == *[\^\'] ]]; then
+			[[ $__aish_k == ^ ]] && __aish_v[__aish_i]=$__aish_c
+			continue
+		fi
 		__aish_h=${__aish_c:__aish_o}
 		while :; do
 			case ${__aish_k: -1} in
@@ -312,24 +325,36 @@ __aish_body() {
 			esac
 			__aish_h=${__aish_h:1}
 		done
+		[[ $__aish_k == ^ ]] && __aish_v[__aish_i]=$__aish_h
 	done
-	# Backticks out of the kept quotes: __aish_g holds where each starts
-	# and where its closing piece is.
-	if [[ $1 == *'`'* ]]; then
+	# Backticks and backslashes out of the kept quotes: __aish_g holds where
+	# each starts and where its closing piece is. Bytes, in the C locale, as
+	# in __aish_split: in UTF-8 each replacement would convert the rest of the
+	# text anew.
+	if [[ $1 == *[\`\\]* ]]; then
+		local LC_ALL
+		LC_ALL=C
 		__aish_g+=("${#__aish_p[@]}" 0)
 		__aish_i=0
 		for ((__aish_j = 0; __aish_j < ${#__aish_g[@]}; __aish_j += 2)); do
 			for ((; __aish_i < __aish_g[__aish_j]; __aish_i++)); do
-				__aish_h=${__aish_p[__aish_i]} __aish_a=
-				[[ $__aish_h == *'`'* ]] || continue
-				while [[ $__aish_h == *'`'* ]]; do
-					__aish_s=${__aish_h%%'`'*}
-					# Doubled, a backslash before the backtick cannot
-					# take the one that escapes it.
-					__aish_a+=$__aish_s${__aish_s##*[!\\]}'\`'
-					__aish_h=${__aish_h#*'`'}
-				done
-				__aish_p[__aish_i]=$__aish_a$__aish_h
+				__aish_h=${__aish_p[__aish_i]} __aish_a= __aish_c=
+				[[ $__aish_h == *[\`\\]* ]] || continue
+				if [[ -n ${__aish_v[__aish_i]+1} ]]; then
+					__aish_c=${__aish_v[__aish_i]}
+					__aish_h=${__aish_h:0:${#__aish_h}-${#__aish_c}}
+					__aish_body_top
+				fi
+				if [[ $__aish_h == *'`'* ]]; then
+					while [[ $__aish_h == *'`'* ]]; do
+						__aish_s=${__aish_h%%'`'*}
+						# Doubled, a backslash before the backtick cannot
+						# take the one that escapes it.
+						__aish_a+=$__aish_s${__aish_s##*[!\\]}'\`'
+						__aish_h=${__aish_h#*'`'}
+					done
+				fi
+				__aish_p[__aish_i]=$__aish_a$__aish_h$__aish_c
 			done
 			__aish_i=${__aish_g[__aish_j + 1]}
 		done
@@ -337,20 +362,40 @@ __aish_body() {
 	printf -v __aish_t %s "${__aish_p[@]}"
 }
 
+# __aish_body_top escapes __aish_c, a local of __aish_body, the top level of
+# its piece __aish_i: the backslashes doubled, but for the last of an odd
+# run before a $, and the backticks escaped. A piece ends where the next
+# starts with ' or $: the $ is put back for the backslashes before it. The
+# pairs go first, as bash reads them, to __aish_d, a byte the text lacks.
+__aish_body_top() {
+	local __aish_n
+	__aish_n=
+	[[ ${__aish_p[__aish_i + 1]-} == '$'* ]] && __aish_n='$'
+	__aish_c+=$__aish_n
+	if [[ $__aish_c == *'\'* ]]; then
+		__aish_c=${__aish_c//'\\'/"$__aish_d"}
+		__aish_c=${__aish_c//'\'/'\\'}
+		__aish_c=${__aish_c//'\\$'/'\$'}
+		__aish_c=${__aish_c//"$__aish_d"/'\\\\'}
+	fi
+	__aish_c=${__aish_c//'`'/'\`'}
+	__aish_c=${__aish_c%"$__aish_n"}
+}
+
 # __aish_expand prints $1 with $VAR, ${...} and $(...) expanded as in a
 # here-document, except in single quotes: what is in them stays as typed,
 # the quotes too (__aish_body). A quote opens after the start or a character
 # that is neither alphanumeric nor a backslash, so the apostrophe in don't
-# opens none. Double quotes and backticks stay text, the backslashes before
-# backticks too, and "\$" is a dollar. It fails when the text does not
-# parse, and the caller keeps it as typed. Call it in a subshell: ${V:=x}
-# and $((n++)) assign.
+# opens none. Double quotes and backticks stay text, backslashes too, but
+# "\$" is a dollar. It fails when the text does not parse, and the caller
+# keeps it as typed. Call it in a subshell: ${V:=x} and $((n++)) assign.
 __aish_expand() {
 	local __aish_r __aish_t __aish_o
 	__aish_r=$1 __aish_t= __aish_o=
 	# A line of the text that is the delimiter would end the here-document,
-	# and the lines after it would run.
-	[[ $__aish_r == *__aish_eof* ]] && return 1
+	# and the lines after it would run. Bash looks for it with the lines
+	# joined at a backslash-newline, which stays one in $(...) and ${...}.
+	[[ ${__aish_r//'\'$'\n'/} == *__aish_eof* ]] && return 1
 	__aish_body "$__aish_r" || return 1
 	set -- # $1 is the text here, not the user's
 	# $? too: the code __aish_route found, not that of `set`. A function,
