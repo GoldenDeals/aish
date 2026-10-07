@@ -365,6 +365,10 @@ __aish_rows() {
 # erases the line typed and readline draws the one __aish_to_llm left.
 __aish_unecho() {
 	local p vis
+	# $? in the prompt is what it was at the prompt the request was typed
+	# at, the code __aish_route found, not that of local. In a list, a code
+	# other than 0 neither runs the user's ERR trap nor exits under set -e.
+	__aish_status "${__aish_rc:-0}" && :
 	p=${PS1@P}
 	p=${p##*$'\n'}
 	vis=$p
@@ -392,15 +396,17 @@ __aish_unecho() {
 }
 
 __aish_ask() {
+	# Before the locals: the local __aish_rc would hide the global one
+	# __aish_unecho draws the prompt's $? with.
+	if [[ ${__aish_redraw-} == 1 ]]; then
+		__aish_redraw=0
+		__aish_unecho "$1"
+	fi
 	local __aish_q __aish_id __aish_cmd __aish_rc
 	__aish_q=$1
 	# $1 keeps the text for the agent's commands; the global would keep it
 	# after the request.
 	unset -v __aish_req
-	if [[ ${__aish_redraw-} == 1 ]]; then
-		__aish_redraw=0
-		__aish_unecho "$__aish_q"
-	fi
 	# The rewritten line is kept out of history by HISTIGNORE; record what the
 	# user typed instead.
 	[[ -o history ]] && builtin history -s -- "${__aish_typed:-$__aish_q}"

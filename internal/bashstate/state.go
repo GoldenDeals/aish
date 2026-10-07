@@ -214,14 +214,19 @@ func Script(d State) string {
 	b.WriteString("shopt -q expand_aliases && __aish_ea=1 || __aish_ea=\nshopt -u expand_aliases\n")
 	b.WriteString("[[ $- == *k* ]] && __aish_kw=1 || __aish_kw=\nset +k\n")
 	for _, name := range keys(d.Vars) {
-		b.WriteString("unset -v " + name + " 2>/dev/null\n")
+		// In the shell the script runs in the name may be a nameref: unset -v
+		// and declare go through it to the variable it refers to, which the
+		// script may have set already. unset -n does nothing to a plain
+		// variable; a nameref still there after it is a readonly one, left
+		// as it is.
+		b.WriteString("if [[ -R " + name + " ]]; then unset -n " + name + "; else unset -v " + name + "; fi 2>/dev/null\n")
 		if line := d.Vars[name]; line != "" {
 			f := strings.SplitN(line, " ", 3)
 			flags := "-g"
 			if f[1] != "--" {
 				flags += strings.TrimPrefix(f[1], "-")
 			}
-			b.WriteString("declare " + flags + " " + f[2] + "\n")
+			b.WriteString("[[ -R " + name + " ]] || declare " + flags + " " + f[2] + "\n")
 			if name == "PATH" {
 				b.WriteString("[[ -n ${AISH_TOOLS_PATH-} ]] && PATH=$AISH_TOOLS_PATH:$PATH\n")
 			}
