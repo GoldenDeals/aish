@@ -366,7 +366,9 @@ func (sh shell) enters(argv []string, cdable bool) (dirs []string, ok bool) {
 // that runs it in another directory (env -C, sudo -D, sudo -i, chroot)
 // there. chroot and sudo -R take every path of their command from
 // another root, which no policy follows: they are marked. Where the line
-// may run call under set -k, the command bash runs then is added too.
+// may run call under set -k, the command bash runs then is added too, and
+// so is call read again with its words as bash expands them, where quotes
+// stand among their braces or brackets (see quotedExpansion).
 func (p *parser) placed(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippet {
 	code := p.place(call, call, redirs)
 	if kw := p.keywordCall(call); kw != nil {
@@ -375,6 +377,16 @@ func (p *parser) placed(call *syntax.CallExpr, redirs []*syntax.Redirect) []snip
 				code = append(code, s)
 			}
 		}
+	}
+	if slices.ContainsFunc(call.Args, quotedExpansion) {
+		// Its assignments are looked at already.
+		p.whole = true
+		for _, s := range p.place(call, &syntax.CallExpr{Args: call.Args}, redirs) {
+			if !slices.Contains(code, s) {
+				code = append(code, s)
+			}
+		}
+		p.whole = false
 	}
 	return code
 }
@@ -824,7 +836,13 @@ func spreadOf(w *syntax.Word) (spread, bool) {
 			return spread{opaque: true}, true
 		}
 	}
-	if !globbed {
+	// Braces may have quoted text between them, {'/etc',x}, and a } bash
+	// does not end them at (see braceExpansion).
+	braced, odd := braceExpansion(unquoted(w))
+	if odd {
+		return spread{opaque: true}, true
+	}
+	if !globbed && !braced {
 		return spread{}, false
 	}
 	b := &syntax.Word{Parts: slices.Clone(w.Parts)}

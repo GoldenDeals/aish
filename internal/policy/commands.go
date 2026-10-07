@@ -138,6 +138,9 @@ type parser struct {
 	// chdir is a cd, pushd or popd somewhere in the line, or a command
 	// that runs another in another directory (see moves).
 	chdir bool
+	// whole tells call to take the words of a command as bash expands
+	// them, with quotes among braces and brackets (see quotedExpansion).
+	whole bool
 	// remote tells that the code being walked runs on another machine,
 	// remotes are the indexes in out of the commands that run there.
 	remote  bool
@@ -204,6 +207,7 @@ func (p *parser) parse(src string, depth int, remote bool) error {
 			p.decl(n)
 		case *syntax.WordIter:
 			p.iter(n)
+			p.quotedItems(n.Name.Value, n.Items)
 		case *syntax.ParamExp:
 			p.defaulted(n)
 			p.prompt(n)
@@ -309,6 +313,9 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 	split := make([]bool, len(call.Args))
 	for i, w := range call.Args {
 		argv[i], static[i], split[i] = word(w), isStatic(w), splits(w)
+		if p.whole && expandsWord(w) {
+			static[i], split[i] = false, true
+		}
 	}
 	var code []snippet
 	seen := map[snippet]bool{}
@@ -1148,6 +1155,7 @@ func (p *parser) redirect(r *syntax.Redirect) {
 	default:
 		return
 	}
+	p.quotedRedirect(r)
 	if isStatic(r.Word) && device(word(r.Word)) {
 		return
 	}
@@ -1305,6 +1313,7 @@ func (p *parser) named(s string) {
 func (p *parser) assign(a *syntax.Assign) {
 	if a.Name != nil && !a.Naked {
 		p.assignment(a)
+		p.quotedArray(a)
 	}
 }
 
@@ -1330,6 +1339,10 @@ func (p *parser) decl(d *syntax.DeclClause) {
 		case !isStatic(a.Value):
 			p.mark(dynComputed)
 		default:
+			if quotedExpansion(a.Value) {
+				// export {'PATH',x}=/tmp assigns PATH.
+				p.mark(dynComputed)
+			}
 			p.declWord(word(a.Value), export, &nameref)
 		}
 	}
