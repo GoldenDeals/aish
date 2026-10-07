@@ -770,6 +770,8 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		return append([]Fold{}, p.folds...), nil
+	case rpc.MethodTasks:
+		return p.tasks(params)
 	case rpc.MethodClear:
 		var cp rpc.ClearParams
 		if len(params) > 0 { // none at all: plain `aish clear`

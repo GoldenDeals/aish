@@ -22,9 +22,10 @@ import (
 // come only as results of task_wait and task_result, so the journal gets
 // them as any result, and the screen gets nothing: between requests the
 // prompt is there, and what is printed past the proxy's output would break
-// its status. They belong to the session: clear, resume and the end of the
-// proxy stop them (StopBackground), and task_cancel; Ctrl+C and the end of
-// a request do not.
+// its status. Their output is kept for `aish tasks` (bgview.go). They
+// belong to the session: clear, resume and the end of the proxy stop them
+// (StopBackground), and task_cancel; Ctrl+C and the end of a request do
+// not.
 
 const (
 	// maxUnfinished is how many subagents may be in the background at
@@ -70,6 +71,7 @@ type bgSet struct {
 
 type bgJob struct {
 	id, name string
+	prompt   string
 	state    string
 	reply    string
 	err      error
@@ -155,7 +157,7 @@ func (a *Agent) noteBackground() {
 	case n > 1:
 		what = fmt.Sprintf("%d subagents", n)
 	}
-	fmt.Fprintf(a.UI, "%s[aish: %s still running in the background]%s\n", dim, what, reset)
+	fmt.Fprintf(a.UI, "%s[aish: %s still running in the background, see aish tasks]%s\n", dim, what, reset)
 }
 
 // StopBackground stops the subagents in the background and forgets them:
@@ -192,7 +194,7 @@ func (s *bgSet) start(runs []*subRun, live io.Writer) (string, error) {
 	for i, r := range runs {
 		s.n++
 		j := &bgJob{
-			id: "bg" + strconv.Itoa(s.n), name: r.def.Name, state: bgQueued, run: r,
+			id: "bg" + strconv.Itoa(s.n), name: r.def.Name, prompt: r.prompt, state: bgQueued, run: r,
 			done: make(chan struct{}), out: &bgOutput{buf: capture.NewBuffer(subCapture, subCapture)},
 		}
 		j.ctx, j.cancel = context.WithCancel(context.Background())
@@ -326,22 +328,36 @@ func (s *bgSet) check(ids []string) error {
 // wait waits until the subagents ids are finished, or with no ids one of
 // those at work, as long as timeout and ctx let it, and returns answers.
 // Without ids an answer not taken yet is enough, and so is nothing at work.
-func (s *bgSet) wait(ctx context.Context, ids []string, timeout time.Duration) (string, error) {
+// Meanwhile line, if not nil, shows whom it waits for.
+func (s *bgSet) wait(ctx context.Context, ids []string, timeout time.Duration, line *waitLine) (string, error) {
 	if err := s.check(ids); err != nil {
 		return "", err
 	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
+	var tick <-chan time.Time
+	if line != nil {
+		t := time.NewTicker(waitTick)
+		defer t.Stop()
+		tick = t.C
+	}
+	defer line.clear()
 loop:
 	for {
 		s.mu.Lock()
 		ready, changed := s.ready(ids), s.changed
+		var awaited []string
+		if !ready && line != nil {
+			awaited = s.awaited(ids)
+		}
 		s.mu.Unlock()
 		if ready {
 			break
 		}
+		line.draw(awaited)
 		select {
 		case <-changed:
+		case <-tick:
 		case <-timer.C:
 			break loop // not an error: the answers so far
 		case <-ctx.Done():
@@ -349,6 +365,21 @@ loop:
 		}
 	}
 	return s.answers(ids), nil
+}
+
+// awaited are the ids wait waits for: those of ids not finished or, with
+// none, those at work. Called under s.mu.
+func (s *bgSet) awaited(ids []string) []string {
+	if len(ids) == 0 {
+		ids = s.order
+	}
+	var out []string
+	for _, id := range ids {
+		if j := s.jobs[id]; j != nil && !j.over() {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // ready tells whether wait has what it waits for. Called under s.mu.
@@ -473,6 +504,10 @@ type bgTool struct {
 
 func (t *bgTool) Name() string { return t.name }
 
+// Streaming is set for task_wait: the live output of its call shows whom
+// it waits for, and then its answers, kept for Ctrl+O.
+func (t *bgTool) Streaming() bool { return t.name == taskWait }
+
 func (t *bgTool) Desc() string {
 	switch t.name {
 	case taskWait:
@@ -523,7 +558,7 @@ func (t *bgTool) Title(args map[string]any) string {
 	return strings.TrimSpace(t.name + " " + strings.Join(ids, ", "))
 }
 
-func (t *bgTool) Execute(ctx context.Context, _ tools.Exec, args map[string]any, _ io.Writer) (string, error) {
+func (t *bgTool) Execute(ctx context.Context, _ tools.Exec, args map[string]any, live io.Writer) (string, error) {
 	ids, err := bgIDs(args)
 	if err != nil {
 		return "", err
@@ -531,7 +566,11 @@ func (t *bgTool) Execute(ctx context.Context, _ tools.Exec, args map[string]any,
 	s := t.a.background()
 	switch t.name {
 	case taskWait:
-		return s.wait(ctx, ids, waitTimeout(args))
+		res, err := s.wait(ctx, ids, waitTimeout(args), t.a.waitLine(live))
+		if err == nil && live != nil {
+			io.WriteString(live, res+"\n")
+		}
+		return res, err
 	case taskResult:
 		if len(ids) == 0 {
 			return s.list(), nil

@@ -6,6 +6,7 @@
 //	aish skills                  the skills that apply here and their problems
 //	aish hooks                   the hooks that run here, by event, and their problems
 //	aish agents                  the subagents that apply here and their problems
+//	aish tasks [show ID]         the subagents in the background, or one's output so far
 //	aish policy [--agent NAME] [TOOL ARGS...]
 //	                             check the policies, or ask them about one call (of subagent NAME)
 //	aish trust [--revoke|--list] let the .aish.toml here run the repository's hooks and tools
@@ -53,6 +54,8 @@ var usage = `usage:
   aish skills                show the skills of this directory and their problems
   aish hooks                 show the hooks of this directory in the order they run
   aish agents                show the subagents of this directory and their problems
+  aish tasks [show ID]       show the subagents the assistant runs in the background,
+                             or the output of one (bg1) so far
   aish policy [--agent NAME] [TOOL ARGS...]
                              check the policies, or ask them about one call (as
                              one of subagent NAME)
@@ -161,6 +164,8 @@ func run(args []string) int {
 		return skillsCmd(cfg, args[1:])
 	case "agents":
 		return agentsCmd(cfg, args[1:])
+	case "tasks":
+		return tasksCmd(args[1:])
 	case "policy":
 		return policyCmd(cfg, args[1:])
 	case "trust":

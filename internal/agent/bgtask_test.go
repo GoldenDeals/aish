@@ -124,7 +124,7 @@ func inTime[T any](t *testing.T, ch <-chan T, what string) T {
 	return zero
 }
 
-const stillRunning = "[aish: 1 subagent still running in the background]"
+const stillRunning = "[aish: 1 subagent still running in the background, see aish tasks]"
 
 // task with background returns while its subagent works; the answer comes
 // in a later request, with task_wait, which waits for it. The request that

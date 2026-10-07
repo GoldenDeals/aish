@@ -35,6 +35,7 @@ const (
 	MethodClear   = "clear"
 	MethodModel   = "model"  // switch the model and its effort for this shell
 	MethodFolds   = "folds"  // outputs kept since the request started
+	MethodTasks   = "tasks"  // the subagents in the background, or one's output
 	MethodResume  = "resume" // switch this shell to another session
 	// The agent: begin a request, go on after the shell ran a command,
 	// stop the one in progress, sum the session up.
@@ -51,6 +52,24 @@ const (
 type Fold struct {
 	Title string `json:"title"`
 	Text  string `json:"text"`
+}
+
+// TasksParams ask for the output of the subagent in the background ID;
+// without it, for the list of them.
+type TasksParams struct {
+	ID string `json:"id,omitempty"`
+}
+
+// Task is a subagent in the background: its id (bg1), the subagent, its
+// state (queued, running, ok, error, cancelled) and the task it was
+// given. Output, what it has shown so far as plain text, comes only for
+// the one asked for.
+type Task struct {
+	ID     string `json:"id"`
+	Agent  string `json:"agent"`
+	State  string `json:"state"`
+	Prompt string `json:"prompt,omitempty"`
+	Output string `json:"output,omitempty"`
 }
 
 type Info struct {
