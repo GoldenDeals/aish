@@ -46,11 +46,18 @@ __aish_fresh=1   # 1 while readline is at the primary prompt (not PS2)
 __aish_buf=      # full text of the command being entered (multi-line aware)
 __aish_ps0=      # marker emitted by PS0, set only for user commands
 
+# Every local in this file is declared bare and assigned apart: under the
+# user's set -k, `local x=v` puts x=v in the environment of local, which
+# then declares nothing. An assignment on its own is one under -k too.
+
 # The locals here, in __aish_to_llm and __aish_expanding are __aish_ names:
 # the request __aish_expand expands sees them, and $line means the user's.
-# __aish_rc is the code of the user's last command, for $? in the request.
+# __aish_rc is the code of the user's last command, for $? in the request:
+# a global, set first thing, as local would reset $?.
 __aish_route() {
-	local __aish_rc=$? __aish_line=$READLINE_LINE
+	__aish_rc=$?
+	local __aish_line
+	__aish_line=$READLINE_LINE
 	if [[ $__aish_fresh != 1 ]]; then
 		# Continuation line (PS2): part of a command already routed to bash.
 		__aish_buf+=$'\n'$__aish_line
@@ -62,7 +69,8 @@ __aish_route() {
 	__aish_ps0=
 	__aish_hint=
 
-	local __aish_trim=${__aish_line#"${__aish_line%%[![:space:]]*}"}
+	local __aish_trim
+	__aish_trim=${__aish_line#"${__aish_line%%[![:space:]]*}"}
 	[[ -z $__aish_trim ]] && return
 
 	case $__aish_trim in
@@ -93,7 +101,8 @@ __aish_route() {
 	# A line that is no command is a request by [route]: it starts with a
 	# capital letter, ends with the suffix, or is words, not shell, that
 	# bash would only answer with "command not found".
-	local __aish_w=${__aish_trim%%[[:space:]]*} __aish_end=${__aish_trim%"${__aish_trim##*[![:space:]]}"}
+	local __aish_w __aish_end
+	__aish_w=${__aish_trim%%[[:space:]]*} __aish_end=${__aish_trim%"${__aish_trim##*[![:space:]]}"}
 	if [[ $__aish_w == /* ]] && __aish_is_skill "${__aish_w#/}"; then
 		__aish_to_llm "$__aish_trim"
 	elif __aish_is_command "$__aish_trim"; then
@@ -115,7 +124,8 @@ __aish_route() {
 
 # __aish_is_command decides by the first word, the way bash itself would.
 __aish_is_command() {
-	local w=${1%%[[:space:]]*}
+	local w
+	w=${1%%[[:space:]]*}
 	w=${w%%[;|&<>()]*}
 	[[ -z $w ]] && return 0 # starts with an operator: let bash complain
 	case $w in
@@ -130,7 +140,8 @@ __aish_is_command() {
 # skills.Find (internal/skills), by directory name; builtins only, since it
 # runs on every Enter with an unknown first word.
 __aish_is_skill() {
-	local n=$1 d
+	local n d
+	n=$1
 	[[ $n =~ ^[A-Za-z0-9_-]{1,64}$ ]] || return 1
 	for d in "$HOME/.claude" "${XDG_CONFIG_HOME:-$HOME/.config}/aish"; do
 		[[ -f $d/skills/$n/SKILL.md ]] && return 0
@@ -147,9 +158,10 @@ __aish_is_skill() {
 # more, and none of | & ; < > ( ) $ ` \ =? Quotes are prose: "doesn't".
 __aish_is_prose() {
 	[[ $1 == *[\|\&\;\<\>\(\)\$\`\\=]* ]] && return 1
-	local n=$((__aish_route_min_words - 1))
+	local n re
+	n=$((__aish_route_min_words - 1))
 	((n > 0)) || return 0
-	local re="^[^[:space:]]+([[:space:]]+[^[:space:]]+){$n}"
+	re="^[^[:space:]]+([[:space:]]+[^[:space:]]+){$n}"
 	[[ $1 =~ $re ]]
 }
 
@@ -164,7 +176,8 @@ if [[ $__aish_route_not_found != true ]]; then
 		unset __aish_f
 	fi
 	command_not_found_handle() {
-		local __aish_rc=127 __aish_sh=${0##*/}
+		local __aish_rc __aish_sh
+		__aish_rc=127 __aish_sh=${0##*/}
 		if declare -F __aish_cnf_prev >/dev/null; then
 			__aish_cnf_prev "$@"
 			__aish_rc=$?
@@ -182,7 +195,8 @@ fi
 # fails when the text does not parse, and the caller keeps it as typed. Call
 # it in a subshell: ${V:=x} and $((n++)) assign.
 __aish_expand() {
-	local __aish_r=$1 __aish_t= __aish_s __aish_o=
+	local __aish_r __aish_t __aish_s __aish_o
+	__aish_r=$1 __aish_t= __aish_o=
 	# A line of the text that is the delimiter would end the here-document,
 	# and the lines after it would run.
 	[[ $__aish_r == *__aish_eof* ]] && return 1
@@ -243,7 +257,8 @@ __aish_expanding() {
 # a line taller than the screen would push its top, `__aish_ask '...`,
 # into the scrollback, out of __aish_unecho's reach.
 __aish_to_llm() {
-	local __aish_t=$1 __aish_x
+	local __aish_t __aish_x
+	__aish_t=$1
 	__aish_t=${__aish_t#"${__aish_t%%[![:space:]]*}"}
 	__aish_t=${__aish_t%"${__aish_t##*[![:space:]]}"}
 	if [[ -z ${2-} && $__aish_route_expand == true && $__aish_t == *'$'* ]]; then
@@ -284,7 +299,7 @@ __aish_dump() {
 }
 
 __aish_precmd() {
-	local __aish_rc=$?
+	__aish_rc=$? # a global, as in __aish_route
 	if [[ -n ${AISH_RUN-} ]]; then
 		# The state the shell starts with, which a session's changes are
 		# measured against; then the session `aish resume` switched to.
@@ -313,8 +328,9 @@ __aish_precmd() {
 __aish_rows() {
 	# U+1100-115F, U+2E80-A4CF, U+AC00-D7A3, U+F900-FAFF, U+FE30-FE4F,
 	# U+FF00-FF60, U+FFE0-FFE6, U+1F300-1FAFF, U+20000-3FFFD.
-	local __aish_w=$'\xe1\x84\x80-\xe1\x85\x9f\xe2\xba\x80-\xea\x93\x8f\xea\xb0\x80-\xed\x9e\xa3\xef\xa4\x80-\xef\xab\xbf\xef\xb8\xb0-\xef\xb9\x8f\xef\xbc\x80-\xef\xbd\xa0\xef\xbf\xa0-\xef\xbf\xa6\xf0\x9f\x8c\x80-\xf0\x9f\xab\xbf\xf0\xa0\x80\x80-\xf0\xbf\xbf\xbd'
-	local __aish_s=$1 __aish_r __aish_x=0 __aish_f __aish_p=$(($2 > 1 ? $2 / 2 : 1)) __aish_g=
+	local __aish_w __aish_s __aish_r __aish_x __aish_f __aish_p __aish_g
+	__aish_w=$'\xe1\x84\x80-\xe1\x85\x9f\xe2\xba\x80-\xea\x93\x8f\xea\xb0\x80-\xed\x9e\xa3\xef\xa4\x80-\xef\xab\xbf\xef\xb8\xb0-\xef\xb9\x8f\xef\xbc\x80-\xef\xbd\xa0\xef\xbf\xa0-\xef\xbf\xa6\xf0\x9f\x8c\x80-\xf0\x9f\xab\xbf\xf0\xa0\x80\x80-\xf0\xbf\xbf\xbd'
+	__aish_s=$1 __aish_x=0 __aish_p=$(($2 > 1 ? $2 / 2 : 1)) __aish_g=
 	__aish_n=1
 	# Without globasciiranges a range is one of the locale's collation.
 	shopt -q globasciiranges || __aish_g=1
@@ -348,17 +364,20 @@ __aish_rows() {
 # "user@host:~? text". The echo is that line, not what was typed: bind -x
 # erases the line typed and readline draws the one __aish_to_llm left.
 __aish_unecho() {
-	local p=${PS1@P} vis
+	local p vis
+	p=${PS1@P}
 	p=${p##*$'\n'}
 	vis=$p
 	while [[ $vis == *$'\001'*$'\002'* ]]; do
 		vis=${vis%%$'\001'*}${vis#*$'\002'}
 	done
 	p=${p//[$'\001\002']/}
-	local line='__aish_ask "$__aish_req"' cols=${COLUMNS:-80} __aish_n
+	local line cols __aish_n
+	line='__aish_ask "$__aish_req"' cols=${COLUMNS:-80}
 	# Readline leaves the cursor under the echo's last row, a full one too.
 	__aish_rows "$vis$line" "$cols"
-	local rows=$__aish_n
+	local rows
+	rows=$__aish_n
 	local c
 	# The echo's first row is erased by itself: erase below from the
 	# top-left corner is a clear screen to tmux, which keeps the screen, the
@@ -373,7 +392,8 @@ __aish_unecho() {
 }
 
 __aish_ask() {
-	local __aish_q=$1 __aish_id __aish_cmd __aish_rc
+	local __aish_q __aish_id __aish_cmd __aish_rc
+	__aish_q=$1
 	# $1 keeps the text for the agent's commands; the global would keep it
 	# after the request.
 	unset -v __aish_req

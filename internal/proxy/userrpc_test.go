@@ -207,7 +207,7 @@ func TestUserOnly(t *testing.T) {
 	if sid, _, _ := now(); sid != other {
 		t.Errorf("aish resume left session %s", sid)
 	}
-	if b, _ := os.ReadFile(restore); !strings.HasSuffix(string(b), "export AISH_SESSION='"+other+"'\n") {
+	if b, _ := os.ReadFile(restore); !strings.HasSuffix(string(b), "export 'AISH_SESSION="+other+"'\n") {
 		t.Errorf("restore.bash %q", b)
 	}
 	expect(calls(group, clr), rpc.MethodClear+": <nil>")

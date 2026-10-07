@@ -88,7 +88,9 @@ func (p *Proxy) clear(ctx context.Context, cp rpc.ClearParams) (_ rpc.Info, err 
 		if err != nil {
 			return rpc.Info{}, err
 		}
-		_, err = fmt.Fprintf(f, "export AISH_SESSION='%s'\n", p.sess.ID)
+		// The word quoted whole: under set -k an unquoted NAME=VALUE goes
+		// to the environment of export, which then lists the exports.
+		_, err = fmt.Fprintf(f, "export 'AISH_SESSION=%s'\n", p.sess.ID)
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}

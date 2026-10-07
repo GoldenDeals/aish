@@ -75,7 +75,7 @@ func TestResumeID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "export AISH_SESSION='" + other.ID + "'\n"; !strings.HasSuffix(string(b), want) {
+	if want := "export 'AISH_SESSION=" + other.ID + "'\n"; !strings.HasSuffix(string(b), want) {
 		t.Errorf("restore.bash %q, want it to end with %q", b, want)
 	}
 }

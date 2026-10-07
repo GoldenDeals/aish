@@ -239,8 +239,9 @@ func (p *Proxy) resume(ctx context.Context, id string) (_ rpc.Info, err error) {
 	if p.base != nil && p.cur != nil {
 		change = bashstate.Diff(*p.cur, bashstate.Apply(*p.base, saved.Shell))
 	}
-	// CheckID already keeps quotes out; the quoting is a second line.
-	script := bashstate.Script(change) + "export AISH_SESSION='" + next.ID + "'\n"
+	// CheckID already keeps quotes out; the quoting is a second line. The
+	// word is quoted whole for set -k, as in clear.
+	script := bashstate.Script(change) + "export 'AISH_SESSION=" + next.ID + "'\n"
 	if err := os.WriteFile(filepath.Join(p.run, "restore.bash"), []byte(script), 0o600); err != nil {
 		next.Unlock()
 		return rpc.Info{}, err

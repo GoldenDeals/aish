@@ -74,7 +74,7 @@ func TestClearCommand(t *testing.T) {
 			t.Errorf("the dropped session left %s", ext)
 		}
 	}
-	if b, _ := os.ReadFile(restore); string(b) != "cd /srv\nexport AISH_SESSION='"+info.SessionID+"'\n" {
+	if b, _ := os.ReadFile(restore); string(b) != "cd /srv\nexport 'AISH_SESSION="+info.SessionID+"'\n" {
 		t.Errorf("restore.bash %q", b)
 	}
 

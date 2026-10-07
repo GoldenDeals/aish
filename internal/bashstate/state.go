@@ -206,8 +206,13 @@ func apply(base, d map[string]string) map[string]string {
 func Script(d State) string {
 	var b strings.Builder
 	// Aliases expand while a script is read: a function body that uses one
-	// would get it expanded a second time.
+	// would get it expanded a second time. Under set -k the NAME=VALUE of
+	// `declare -g NAME=VALUE` goes to the environment of declare, which sets
+	// nothing and lists the variables instead: the option is off while the
+	// lines of `declare -p` run as they are, and comes back before the
+	// session's options, which may change it.
 	b.WriteString("shopt -q expand_aliases && __aish_ea=1 || __aish_ea=\nshopt -u expand_aliases\n")
+	b.WriteString("[[ $- == *k* ]] && __aish_kw=1 || __aish_kw=\nset +k\n")
 	for _, name := range keys(d.Vars) {
 		b.WriteString("unset -v " + name + " 2>/dev/null\n")
 		if line := d.Vars[name]; line != "" {
@@ -236,7 +241,7 @@ func Script(d State) string {
 			b.WriteString("unalias " + quote(name) + " 2>/dev/null\n")
 		}
 	}
-	b.WriteString("[[ $__aish_ea ]] && shopt -s expand_aliases\nunset -v __aish_ea\n")
+	b.WriteString("[[ $__aish_ea ]] && shopt -s expand_aliases\n[[ $__aish_kw ]] && set -k\nunset -v __aish_ea __aish_kw\n")
 	for _, name := range keys(d.Opts) {
 		b.WriteString(d.Opts[name] + " 2>/dev/null\n")
 	}
