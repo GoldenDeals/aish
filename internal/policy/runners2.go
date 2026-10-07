@@ -37,11 +37,12 @@ func fdRuns(w words, program bool) []run {
 	for k := 0; k < len(w.args); k++ {
 		a := w.args[k]
 		if !w.static[k] {
+			fixed := wrapper{opts: fdOpts}.fixed(a)
 			switch {
-			case wrapper{opts: fdOpts}.fixed(a) && strings.HasPrefix(a, "-") && fdExec(a):
+			case fixed && strings.HasPrefix(a, "-") && fdExec(a):
 				// --exec="$c": a command of one word made at run time.
 				rs = append(rs, run{words: []int{k}})
-			case program && w.optionLike(k) && !wrapper{opts: fdOpts}.fixed(a):
+			case program && w.optionLike(k) && (w.split[k] || !fixed):
 				loose = append(loose, k)
 			}
 			continue
@@ -73,8 +74,12 @@ func fdRuns(w words, program bool) []run {
 			k += len(cmd) + 1
 			continue
 		}
-		if next {
+		if next && k+1 < len(w.args) {
+			// A value that may split puts its other words after it.
 			k++
+			if program && !w.static[k] && w.split[k] && w.optionLike(k) {
+				loose = append(loose, k)
+			}
 		}
 	}
 	if loose != nil {
@@ -314,7 +319,7 @@ func vimRuns(w words, program bool) []run {
 			continue
 		}
 		switch {
-		case a == "--":
+		case a == "--" && !(k > 0 && w.static[k-1] && vimTakes(w.args[k-1])):
 			return rs
 		case a == "--cmd", a == "--remote-send", a == "--remote-expr":
 			if k+1 < len(w.args) {
@@ -338,4 +343,21 @@ func vimRuns(w words, program bool) []run {
 		}
 	}
 	return rs
+}
+
+// vimTakes tells whether a word of options of Vim or Neovim may take the
+// next word for its value, which may be "--": -T, -u and their kin last
+// in the word, -s unless -e made it silent, --startuptime, --servername
+// and the like. One it does not take only makes the words after "--" read
+// for options too.
+func vimTakes(a string) bool {
+	switch a {
+	case "--startuptime", "--servername", "--socketid", "--windowid", "--log", "--listen", "--server":
+		return true
+	}
+	if len(a) < 2 || a[0] != '-' || a[1] == '-' {
+		return false
+	}
+	last := a[len(a)-1]
+	return strings.IndexByte("SiTuUWwtq", last) >= 0 || last == 's' && !strings.Contains(a, "e")
 }

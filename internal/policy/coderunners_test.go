@@ -96,6 +96,20 @@ func TestParseCodeRunners(t *testing.T) {
 		{`view --remote-send ':!ls<CR>'`, nil, nil, []string{"computed"}},
 		{`vim -c "$c" f`, nil, nil, []string{"computed"}},
 		{`vim "$f"`, nil, nil, []string{"computed"}},
+		{`vim -T -- +'!sudo ls'`, nil, nil, []string{"computed"}},
+
+		// A value that may split puts its other words after it, where they
+		// may be options; a "--" that is a value ends none.
+		{`rsync --exclude $p a b:`, nil, nil, []string{"computed"}},
+		{`rsync --exclude=$p a b:`, nil, nil, []string{"computed"}},
+		{`tar -czf $out x`, nil, nil, []string{"computed"}},
+		{`scp -P $port a b:`, nil, nil, []string{"computed"}},
+		{`man -L $lang ls`, nil, nil, []string{"computed"}},
+		{`rg -g $glob foo`, nil, nil, []string{"computed"}},
+		{`fd -e $ext`, nil, nil, []string{"computed"}},
+		{`fd --exclude=$p`, nil, nil, []string{"computed"}},
+		{`rsync --exclude -- "$x" a b:`, nil, nil, []string{"computed"}},
+		{`rg -e -- "$x"`, nil, nil, []string{"computed"}},
 	} {
 		s, err := Parse(c.src, "", "")
 		if err != nil {
@@ -132,6 +146,10 @@ func TestParseCodeRunnersNone(t *testing.T) {
 		`screen -X setenv FOO bar`, `screen -X setenv FOO "$v"`, `screen -X blankerprg`,
 		`screen -c /dev/null -dm sleep 1`,
 		`vim -c wq f`, `vim -c '%s/a/b/g' -c x f`, `vim ./"$f"`, `vim *.go`, `vim -- +'!x'`, `view f`, `nvim +10 f`,
+		`vim -es -- "$f"`,
+		// A value in quotes is one word; so is a glob, names of files.
+		`rsync --exclude "$p" a b:`, `rsync --exclude="$p" a b:`, `tar -czf "$out" x`, `rg -g "$glob" foo`,
+		`fd -e "$ext" -E "$p"`, `rsync --exclude *.o a b:`, `rsync -- "$x" b:`, `rg -- "$x"`,
 	} {
 		s, err := Parse(src, "", "")
 		if err != nil {

@@ -138,7 +138,8 @@ func isNameChar(c byte) bool {
 // each word made at run time that may be an option, but the value of one
 // read as g reads them or one whose name is fixed (see held): a command
 // that reads its options among its operands takes it for one wherever it
-// is before a "--".
+// is before a "--" that is no value. A word that may split does so even
+// as a value: its other words come after the value (--exclude $p).
 func optLoose(w words, g getopt, opts []option, program bool) []run {
 	if !program {
 		return nil
@@ -146,10 +147,13 @@ func optLoose(w words, g getopt, opts []option, program bool) []run {
 	var lw []int
 	isHeld := held(g, opts, w.args)
 	for k := range w.args {
-		if w.static[k] && w.args[k] == "--" {
-			break
+		if w.static[k] {
+			if w.args[k] == "--" && !valued(opts, w.args, k) {
+				break
+			}
+			continue
 		}
-		if (!w.static[k] || w.split[k]) && !isHeld(k) && w.optionLike(k) {
+		if w.optionLike(k) && (w.split[k] || !isHeld(k)) {
 			lw = append(lw, k)
 		}
 	}
