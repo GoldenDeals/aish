@@ -9,26 +9,24 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/GoldenDeals/aish/internal/config"
-	"github.com/GoldenDeals/aish/internal/shellinit"
 )
 
-// startShell starts the user's bash in a PTY of its own, with the rc file
-// of run (~/.bashrc, then init.bash) and the variables by which the shell
-// and the commands in it find the proxy. shell is the one config.toml
-// names, if any; self is aish's own path, sock the proxy's socket.
-func (p *Proxy) startShell(sh *shellRun, shell, self, run, sock string) error {
-	bash, err := bashPath(shell)
-	if err != nil {
-		return err
-	}
-	cmd := exec.Command(bash, "--rcfile", filepath.Join(run, "rc"), "-i")
-	cmd.Env = append(os.Environ(),
+// startShell starts the user's shell, p.shell, in a PTY of its own, with
+// the files it reads as it starts in run (~/.bashrc, then init.bash) and
+// the variables by which the shell and the commands in it find the proxy.
+// self is aish's own path, sock the proxy's socket.
+func (p *Proxy) startShell(sh *shellRun, self, run, sock string) error {
+	env := append(os.Environ(),
 		"AISH_SOCK="+sock,
 		"AISH_RUN="+run,
 		"AISH_BIN="+self,
 		"AISH_SESSION="+p.sess.ID,
 		"AISH_TOOLS_PATH="+filepath.Join(run, "bin"),
 	)
+	cmd, err := p.shell.Command(run, env)
+	if err != nil {
+		return err
+	}
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		return err
@@ -45,8 +43,9 @@ func (p *Proxy) startShell(sh *shellRun, shell, self, run, sock string) error {
 // processes of their own, and the model calls MCP tools from bash as `aish
 // tool NAME`. Tools and subcommands are not commands: bin comes first in
 // PATH, and they would take names from the whole shell; who wants them
-// short gives them aliases.
-func makeRunDir(self, nonce string, route config.Route) (string, error) {
+// short gives them aliases. files are those the shell reads as it starts
+// (shells.Shell.Files), by their path in the directory.
+func makeRunDir(self, nonce string, route config.Route, files map[string]string) (string, error) {
 	base := os.Getenv("XDG_RUNTIME_DIR")
 	if base == "" {
 		base = os.TempDir()
@@ -78,24 +77,14 @@ func makeRunDir(self, nonce string, route config.Route) (string, error) {
 	if err := os.WriteFile(filepath.Join(run, "route"), routeFile(route), 0o600); err != nil {
 		return "", err
 	}
-	return run, os.WriteFile(filepath.Join(run, "rc"), []byte(shellinit.RCFile()), 0o600)
-}
-
-// bashPath is the bash to run: the configured one, else the user's login
-// shell if it is a bash, as it need not be the first one in PATH (a newer
-// bash in /opt, an old /bin/bash on macOS).
-func bashPath(configured string) (string, error) {
-	if configured != "" {
-		p, err := exec.LookPath(configured)
-		if err != nil {
-			return "", fmt.Errorf("shell in config: %w", err)
+	for name, text := range files {
+		p := filepath.Join(run, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			return "", err
 		}
-		return p, nil
-	}
-	if sh := os.Getenv("SHELL"); filepath.Base(sh) == "bash" {
-		if p, err := exec.LookPath(sh); err == nil {
-			return p, nil
+		if err := os.WriteFile(p, []byte(text), 0o600); err != nil {
+			return "", err
 		}
 	}
-	return exec.LookPath("bash")
+	return run, nil
 }

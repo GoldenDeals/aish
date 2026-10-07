@@ -1,4 +1,4 @@
-package bashstate
+package shellstate
 
 import "testing"
 

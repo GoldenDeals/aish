@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/GoldenDeals/aish/internal/bashstate"
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
 // clear starts this shell's session over for `aish clear` and `aish new`,
@@ -60,7 +60,7 @@ func (p *Proxy) clear(ctx context.Context, cp rpc.ClearParams) (_ rpc.Info, err 
 		// typed `aish clear save`.
 		st := p.savedModel()
 		if p.base != nil && p.cur != nil {
-			st.Shell = bashstate.Diff(*p.base, *p.cur)
+			st.Shell = shellstate.Diff(*p.base, *p.cur)
 		}
 		if err := session.SaveState(dir, p.sess.ID, st); err != nil {
 			return rpc.Info{}, err

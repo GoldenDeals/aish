@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GoldenDeals/aish/internal/bashstate"
+	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
 func TestClearStartsNewFile(t *testing.T) {
@@ -122,7 +122,7 @@ func TestLockListFind(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.Append(Entry{Kind: KindUser, Text: "first"}, Entry{Kind: KindUser, Text: "deploy it"})
-	if err := SaveState(dir, a.ID, Saved{Model: "m", Shell: bashstate.State{Cwd: "/srv"}}); err != nil {
+	if err := SaveState(dir, a.ID, Saved{Model: "m", Shell: shellstate.State{Cwd: "/srv"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := lock(dir, a.ID); err == nil {

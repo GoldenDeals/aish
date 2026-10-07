@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/GoldenDeals/aish/internal/bashstate"
+	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
 // A session is several files side by side: <id>.jsonl the journal,
@@ -23,7 +23,7 @@ import (
 // Saved is what a session keeps besides its journal.
 type Saved struct {
 	// Shell is how the shell differs from the one aish started with.
-	Shell bashstate.State `json:"shell"`
+	Shell shellstate.State `json:"shell"`
 	// Profile is the one of config.toml the model is of, "" for the top
 	// level when TopLevel says so.
 	Profile string `json:"profile,omitempty"`

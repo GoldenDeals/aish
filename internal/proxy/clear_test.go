@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GoldenDeals/aish/internal/bashstate"
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
 // Erasing the screen cuts the journal for the model; the session stays.
@@ -84,8 +84,8 @@ func TestClearCommand(t *testing.T) {
 
 	// `aish clear save NAME` keeps the journal, the shell and the name.
 	p.model, p.effort = "m", "high"
-	p.base = &bashstate.State{Vars: map[string]string{}}
-	p.cur = &bashstate.State{Vars: map[string]string{"X": `declare -- X="1"`}, Cwd: "/srv"}
+	p.base = &shellstate.State{Vars: map[string]string{}}
+	p.cur = &shellstate.State{Vars: map[string]string{"X": `declare -- X="1"`}, Cwd: "/srv"}
 	sess.Append(ls, session.Entry{Kind: session.KindUser, Text: "hi"})
 	old = sess.ID
 	info, err = run(`{"save":true,"name":"probe"}`)

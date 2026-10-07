@@ -7,18 +7,17 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/GoldenDeals/aish/internal/bashstate"
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
 // Resume makes the shell about to start come back as the session left it:
-// set before Run.
+// set before Run, which writes the script that brings it back.
 func (p *Proxy) Resume(st session.Saved) {
 	if st.Shell.Cwd == "" {
 		st.Shell.Cwd = p.sess.LastCwd()
 	}
-	p.restore = bashstate.Script(st.Shell)
 	p.resumed = &st
 }
 
@@ -64,13 +63,14 @@ func (p *Proxy) resume(ctx context.Context, id string) (_ rpc.Info, err error) {
 	}
 	// The change from this shell as it is now to how it started plus what
 	// the other session changed: this session's own changes are undone.
+	// A session of another shell brings back its directory alone.
 	change := saved.Shell
 	if p.base != nil && p.cur != nil {
-		change = bashstate.Diff(*p.cur, bashstate.Apply(*p.base, saved.Shell))
+		change = shellstate.Diff(*p.cur, shellstate.Apply(*p.base, saved.Shell.Of(p.base.Kind)))
 	}
 	// CheckID already keeps quotes out; the quoting is a second line. The
 	// word is quoted whole for set -k, as in clear.
-	script := bashstate.Script(change) + "export 'AISH_SESSION=" + next.ID + "'\n"
+	script := p.shell.RestoreScript(change) + "export 'AISH_SESSION=" + next.ID + "'\n"
 	if err := os.WriteFile(filepath.Join(p.run, "restore.bash"), []byte(script), 0o600); err != nil {
 		next.Unlock()
 		return rpc.Info{}, err

@@ -6,26 +6,28 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/GoldenDeals/aish/internal/bashstate"
 	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/shells"
+	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
-// shellState is the shell's side: the directory aish runs it with, its
-// process, and its state — variables, functions, aliases, options and
-// cwd — as __aish_precmd dumps it at every prompt, before cmd-end. Run
-// sets run before the shell starts; the rest is under p.mu.
+// shellState is the shell's side: which shell it is, the directory aish
+// runs it with, its process, and its state — variables, functions,
+// aliases, options and cwd — as __aish_precmd dumps it at every prompt,
+// before cmd-end. Run sets shell and run before the shell starts; the rest
+// is under p.mu.
 type shellState struct {
-	run string              // $AISH_RUN
-	fg  func() (int, error) // the shell's foreground process group (peer.go); nil before Run, tests set it
+	shell shells.Shell        // New sets bash, Run the configured one
+	run   string              // $AISH_RUN
+	fg    func() (int, error) // the shell's foreground process group (peer.go); nil before Run, tests set it
 
 	// How the shell started, how it was at the last prompt, and what of it
 	// was saved last (session id and all).
-	base, cur *bashstate.State
+	base, cur *shellstate.State
 	lastSaved []byte
 	switched  bool // `aish resume` switched the session during this command
 
-	restore string // the script that brings back a resumed session
-	resumed *session.Saved
+	resumed *session.Saved // the session the shell comes back as, set before Run
 }
 
 // shellOpts are the names of the options the shell had on at its last
@@ -34,13 +36,7 @@ func (s *shellState) shellOpts() []string {
 	if s.cur == nil {
 		return nil
 	}
-	var on []string
-	for name, line := range s.cur.Opts {
-		if line == "set -o "+name || line == "shopt -s "+name {
-			on = append(on, name)
-		}
-	}
-	return on
+	return s.cur.On()
 }
 
 // saveState records how the shell differs from the one that started, from
@@ -54,7 +50,7 @@ func (p *Proxy) saveState(cwd string) {
 		if err != nil {
 			return
 		}
-		base, err := bashstate.Parse(b, "", p.stateIgnore)
+		base, err := p.shell.ParseState(b, "", p.stateIgnore)
 		if err != nil {
 			return
 		}
@@ -64,7 +60,7 @@ func (p *Proxy) saveState(cwd string) {
 	if err != nil {
 		return
 	}
-	cur, err := bashstate.Parse(b, cwd, p.stateIgnore)
+	cur, err := p.shell.ParseState(b, cwd, p.stateIgnore)
 	if err != nil {
 		return
 	}
@@ -73,7 +69,7 @@ func (p *Proxy) saveState(cwd string) {
 		return // an unsaved session leaves nothing on disk, its state neither
 	}
 	saved := p.savedModel()
-	saved.Shell = bashstate.Diff(*p.base, cur)
+	saved.Shell = shellstate.Diff(*p.base, cur)
 	data, _ := json.Marshal(saved)
 	key := append([]byte(p.sess.ID), data...)
 	if bytes.Equal(key, p.lastSaved) {

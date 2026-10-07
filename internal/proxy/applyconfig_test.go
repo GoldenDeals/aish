@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/GoldenDeals/aish/internal/agent"
-	"github.com/GoldenDeals/aish/internal/bashstate"
 	"github.com/GoldenDeals/aish/internal/config"
 	"github.com/GoldenDeals/aish/internal/policy"
 	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
 // apply is `aish apply-config` typed at the prompt of the shell, in its
@@ -86,7 +86,7 @@ func TestApplyConfig(t *testing.T) {
 	}
 
 	p.mu.Lock()
-	p.base = &bashstate.State{} // state_ignore changed: parsed again at the next prompt
+	p.base = &shellstate.State{} // state_ignore changed: parsed again at the next prompt
 	p.mu.Unlock()
 	res := apply(t, p, nil)
 	if want := []string{"fold_lines", "policy.deny", "state_ignore", "system_prompt"}; !slices.Equal(res.Keys, want) {

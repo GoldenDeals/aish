@@ -12,7 +12,7 @@ import (
 func TestRouteFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", dir)
-	run, err := makeRunDir("/opt/aish", "n", config.Default().Route)
+	run, err := makeRunDir("/opt/aish", "n", config.Default().Route, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

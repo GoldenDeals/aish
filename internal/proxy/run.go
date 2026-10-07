@@ -19,9 +19,10 @@ import (
 	"github.com/GoldenDeals/aish/internal/mcp"
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/shells"
 )
 
-// Run starts bash and blocks until it exits, returning its exit code.
+// Run starts the shell and blocks until it exits, returning its exit code.
 // conf is the config files as aish read them as it started, cfg what they
 // select for its environment: requests go by conf until `aish
 // apply-config` reads them anew.
@@ -81,9 +82,14 @@ func (p *Proxy) configure(conf *config.Snapshot, cfg config.Config) {
 
 // setup starts the shell for loop: it takes the terminal, locks the
 // session, makes $AISH_RUN, starts the MCP servers and the socket, then
-// bash in its PTY (startShell). What it did, sh.cleanup undoes in reverse,
-// also when it fails halfway.
+// the shell in its PTY (startShell). What it did, sh.cleanup undoes in
+// reverse, also when it fails halfway.
 func (p *Proxy) setup(sh *shellRun, cfg config.Config) error {
+	kind, err := shells.For(cfg.Shell)
+	if err != nil {
+		return err
+	}
+	p.shell = kind
 	p.out = os.Stdout
 	p.size = func() (int, int) {
 		w, h, err := term.GetSize(int(os.Stdin.Fd()))
@@ -114,14 +120,15 @@ func (p *Proxy) setup(sh *shellRun, cfg config.Config) error {
 		}
 	}
 	sh.nonce = rand.Text()
-	run, err := makeRunDir(self, sh.nonce, cfg.Route)
+	run, err := makeRunDir(self, sh.nonce, cfg.Route, p.shell.Files())
 	if err != nil {
 		return err
 	}
 	sh.onExit(func() { _ = os.RemoveAll(run) })
 	p.run = run
-	if p.restore != "" {
-		if err := os.WriteFile(filepath.Join(run, "restore.bash"), []byte(p.restore), 0o600); err != nil {
+	if p.resumed != nil {
+		script := p.shell.RestoreScript(p.resumed.Shell)
+		if err := os.WriteFile(filepath.Join(run, "restore.bash"), []byte(script), 0o600); err != nil {
 			return err
 		}
 	}
@@ -143,7 +150,7 @@ func (p *Proxy) setup(sh *shellRun, cfg config.Config) error {
 	sh.onExit(func() { _ = l.Close() })
 	go rpc.Serve(l, p.handle)
 
-	if err := p.startShell(sh, cfg.Shell, self, run, sock); err != nil {
+	if err := p.startShell(sh, self, run, sock); err != nil {
 		return err
 	}
 	return p.takeTerminal(sh)

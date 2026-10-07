@@ -1,9 +1,10 @@
-// Package bashstate is what a session keeps of the shell itself: variables,
-// functions, aliases, options and the working directory. init.bash dumps
-// them at every prompt; a session saves only what changed since the shell
-// started, and resuming it replays that change in another shell as a script
-// the shell sources at its next prompt.
-package bashstate
+// Package shellstate is what a session keeps of the shell itself: variables,
+// functions, aliases, options and the working directory. The integration
+// script of the shell (init.bash) dumps them at every prompt; a session
+// saves only what changed since the shell started, and resuming it replays
+// that change in another shell of the same kind as a script the shell
+// sources at its next prompt.
+package shellstate
 
 import (
 	"bytes"
@@ -15,13 +16,38 @@ import (
 )
 
 // State is a shell's state or, from Diff, a change of it: there an empty
-// value means the name is gone.
+// value means the name is gone. The values are code of the shell's kind.
 type State struct {
+	// Kind is the shell the state is of: "" for bash, as every state saved
+	// before there was another.
+	Kind    string            `json:"kind,omitempty"`
 	Vars    map[string]string `json:"vars,omitempty"`    // name → its `declare -p` line
 	Funcs   map[string]string `json:"funcs,omitempty"`   // name → its `declare -f` text
 	Aliases map[string]string `json:"aliases,omitempty"` // name → value
-	Opts    map[string]string `json:"opts,omitempty"`    // name → `set -o x`, `shopt -s x`...
+	Opts    map[string]string `json:"opts,omitempty"`    // name → `set -o x`, `shopt -s x`, `setopt x`...
 	Cwd     string            `json:"cwd,omitempty"`
+}
+
+// On names the options d has on: the shell's at a prompt, as the policy
+// reads its commands in them (tools.Exec.Opts).
+func (s State) On() []string {
+	var on []string
+	for name, line := range s.Opts {
+		if line == "set -o "+name || line == "shopt -s "+name || line == "setopt "+name {
+			on = append(on, name)
+		}
+	}
+	return on
+}
+
+// Of is s for a shell of kind: s itself when it is of that kind, else its
+// directory alone, as the code of another shell's state means nothing to
+// this one.
+func (s State) Of(kind string) State {
+	if s.Kind == kind {
+		return s
+	}
+	return State{Kind: kind, Cwd: s.Cwd}
 }
 
 // Empty reports whether a change changes nothing.
@@ -151,7 +177,7 @@ func Parse(dump []byte, cwd string, ignore []string) (State, error) {
 // Diff is the change that turns from into to. The working directory is
 // always part of it: a resumed session goes back to where it was.
 func Diff(from, to State) State {
-	d := State{Vars: diff(from.Vars, to.Vars), Funcs: diff(from.Funcs, to.Funcs),
+	d := State{Kind: to.Kind, Vars: diff(from.Vars, to.Vars), Funcs: diff(from.Funcs, to.Funcs),
 		Aliases: diff(from.Aliases, to.Aliases), Opts: diff(from.Opts, to.Opts), Cwd: to.Cwd}
 	for k, v := range d.Opts {
 		if v == "" {
@@ -178,7 +204,7 @@ func diff(from, to map[string]string) map[string]string {
 
 // Apply is base changed by d.
 func Apply(base, d State) State {
-	st := State{Vars: apply(base.Vars, d.Vars), Funcs: apply(base.Funcs, d.Funcs),
+	st := State{Kind: base.Kind, Vars: apply(base.Vars, d.Vars), Funcs: apply(base.Funcs, d.Funcs),
 		Aliases: apply(base.Aliases, d.Aliases), Opts: apply(base.Opts, d.Opts), Cwd: base.Cwd}
 	if d.Cwd != "" {
 		st.Cwd = d.Cwd

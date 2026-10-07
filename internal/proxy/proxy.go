@@ -1,4 +1,4 @@
-// Package proxy runs the user's bash inside a pseudo-terminal, passes all
+// Package proxy runs the user's shell inside a pseudo-terminal, passes all
 // bytes through untouched except aish markers, and records command output
 // into the session.
 package proxy
@@ -9,6 +9,7 @@ import (
 	"github.com/GoldenDeals/aish/internal/mcp"
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/shells"
 )
 
 // Proxy owns the session, the shell's terminal and the agent. Its state is
@@ -38,6 +39,7 @@ func New(sess *session.Session) *Proxy {
 			done:    map[string]rpc.Output{},
 			waiters: map[string]chan struct{}{},
 		},
+		shellState: shellState{shell: shells.Bash{}},
 	}
 }
 

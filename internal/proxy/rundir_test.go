@@ -18,7 +18,7 @@ func TestMakeRunDir(t *testing.T) {
 	os.MkdirAll(path, 0o755)
 	t.Setenv("PATH", path)
 
-	got, err := makeRunDir("/opt/aish", "n", config.Route{})
+	got, err := makeRunDir("/opt/aish", "n", config.Route{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestMakeRunDir(t *testing.T) {
 
 	// With aish on PATH, bin stays empty.
 	os.WriteFile(filepath.Join(path, "aish"), []byte("#!/bin/sh\n"), 0o755)
-	got2, err := makeRunDir("/opt/aish", "n", config.Route{})
+	got2, err := makeRunDir("/opt/aish", "n", config.Route{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

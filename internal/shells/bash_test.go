@@ -1,4 +1,4 @@
-package proxy
+package shells
 
 import (
 	"os"

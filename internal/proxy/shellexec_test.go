@@ -6,10 +6,10 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/GoldenDeals/aish/internal/bashstate"
 	"github.com/GoldenDeals/aish/internal/policy"
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
 // The options the shell had on at its last prompt, as __aish_dump printed
@@ -52,7 +52,7 @@ func TestPolicyShellOptions(t *testing.T) {
 		t.Fatalf("without set -k: %s", got)
 	}
 	p.mu.Lock()
-	p.cur = &bashstate.State{Opts: map[string]string{"keyword": "set -o keyword", "errexit": "set +o errexit"}}
+	p.cur = &shellstate.State{Opts: map[string]string{"keyword": "set -o keyword", "errexit": "set +o errexit"}}
 	p.mu.Unlock()
 	if got := asked(t, p, fetch); got != policy.Deny {
 		t.Errorf("under set -k: %s", got)
