@@ -29,11 +29,23 @@ type spinner struct {
 	frame int
 	stop  chan struct{}
 	done  chan struct{}
+	// label says what the spinner shows instead of thinking, "" for
+	// thinking; before runs ahead of the text written through it. Both
+	// under mu. See startSpinnerOver.
+	label  func() string
+	before func()
 }
 
 // startSpinner spins on w while on; off, it only passes text through.
-func startSpinner(w io.Writer, on bool) *spinner {
-	s := &spinner{w: w, bol: true, start: time.Now(), stop: make(chan struct{}), done: make(chan struct{})}
+func startSpinner(w io.Writer, on bool) *spinner { return startSpinnerOver(w, on, nil, nil) }
+
+// startSpinnerOver is startSpinner over a line someone else left open, the
+// line of hide_work's calls: label, when it says anything, is shown there
+// in place of thinking, and before ends that line ahead of the text. Either
+// may be nil.
+func startSpinnerOver(w io.Writer, on bool, label func() string, before func()) *spinner {
+	s := &spinner{w: w, bol: true, start: time.Now(), stop: make(chan struct{}), done: make(chan struct{}),
+		label: label, before: before}
 	if !on {
 		close(s.done)
 		return s
@@ -71,6 +83,11 @@ func (s *spinner) draw() {
 	if d := time.Since(s.start); d >= 3*time.Second {
 		label = fmt.Sprintf("thinking %ds", int(d.Seconds()))
 	}
+	if s.label != nil {
+		if l := s.label(); l != "" {
+			label = l
+		}
+	}
 	// Hide the cursor while the spinner is on the line.
 	fmt.Fprintf(s.w, "\r\x1b[?25l%s%s %s…%s\x1b[K", cyan, spinnerFrames[s.frame], dim+label, reset)
 	s.shown = true
@@ -88,6 +105,9 @@ func (s *spinner) Write(p []byte) (int, error) {
 	defer s.mu.Unlock()
 	s.erase()
 	if len(p) > 0 {
+		if s.before != nil {
+			s.before()
+		}
 		s.bol = p[len(p)-1] == '\n'
 		s.last = time.Now()
 	}

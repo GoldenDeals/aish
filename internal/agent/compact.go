@@ -33,6 +33,7 @@ func summaryBlock(e session.Entry) string {
 // summary should keep in particular; ex is the shell the user asked from.
 func (a *Agent) Compact(ctx context.Context, focus string, ex tools.Exec) error {
 	a.exec = ex
+	a.dropWork() // as Start does: the shell is at its prompt
 	a.load(true)
 	if len(a.entries) == 0 || len(a.entries) == 1 && a.entries[0].Kind == session.KindSummary {
 		return errors.New("nothing to compact")

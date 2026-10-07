@@ -42,6 +42,10 @@ type fold struct {
 	// agent printed without a newline.
 	at    *statusAt
 	drawn bool // the status is on the screen, after at.col
+
+	// quiet is set for a command hide_work sums up in the agent's line of
+	// calls: nothing of it is drawn, all of it is kept for Ctrl+O.
+	quiet bool
 }
 
 // statusAt is where the call printed by the agent ends on the screen; col
@@ -57,6 +61,17 @@ func newFold(title string, limit int) *fold {
 		raw:  capture.NewBuffer(foldRawCap, foldRawCap),
 		rest: capture.NewBuffer(foldRawCap, foldRawCap),
 	}
+}
+
+// newQuiet is the fold of a command the agent did not show (hide_work):
+// its output and status are not drawn, whatever fold_lines says, and it is
+// kept for Ctrl+O even without output. The line the agent left open, its
+// line of calls, waits for the agent to go on with it. Only a full-screen
+// program is shown, below that line: the user's screen comes first.
+func newQuiet(title string) *fold {
+	f := newFold(title, 0)
+	f.quiet = true
+	return f
 }
 
 // newResult is the fold of a built-in tool's result, given whole: only its
@@ -99,7 +114,7 @@ func (f *fold) write(b []byte) []byte {
 	f.rest.Write(b)
 	f.hiddenLines += bytes.Count(b, []byte{'\n'})
 	f.partial = b[len(b)-1] != '\n'
-	if time.Since(f.status) < foldStatusGap {
+	if f.quiet || time.Since(f.status) < foldStatusGap {
 		return show
 	}
 	f.status = time.Now()
@@ -114,7 +129,7 @@ func (f *fold) folded() bool { return f.hiddenLines > 0 || f.partial }
 func (f *fold) cut() bool { return f.at != nil && f.at.hidden > 0 }
 
 // keep reports whether the fold is worth keeping for Ctrl+O.
-func (f *fold) keep() bool { return f.folded() || f.cut() }
+func (f *fold) keep() bool { return f.quiet || f.folded() || f.cut() }
 
 // statusExit draws the status; exit < 0 while the command runs. On the
 // line of the call it goes at the right edge, where the prompt's status
@@ -197,6 +212,8 @@ func (f *fold) expand() []byte {
 	f.open = true
 	var b []byte
 	switch {
+	case f.quiet:
+		b = []byte("\r\n") // below the agent's line of calls, which stays
 	case f.at == nil:
 		b = []byte("\r\x1b[K")
 	case f.drawn:
@@ -205,7 +222,7 @@ func (f *fold) expand() []byte {
 		b = []byte("\r\n") // the output starts below the command
 	}
 	if !f.folded() {
-		if f.at == nil {
+		if f.at == nil && !f.quiet {
 			return nil
 		}
 		return b
@@ -218,6 +235,9 @@ func (f *fold) expand() []byte {
 // whole gets no status, but its last line is ended: what the agent prints
 // next starts at the start of a line.
 func (f *fold) finish(exit int) []byte {
+	if f.quiet && !f.open {
+		return nil // the agent goes on with its line
+	}
 	if f.open || !f.folded() && f.limit > 0 {
 		if f.last.text {
 			return []byte("\r\n")

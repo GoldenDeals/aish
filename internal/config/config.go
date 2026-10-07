@@ -62,6 +62,9 @@ type Config struct {
 	// before the rest is folded (Ctrl+O expands). 0 shows only the command
 	// and a status line; negative disables folding.
 	FoldLines int `toml:"fold_lines"`
+	// HideWork sums the agent's tool calls up in one line redrawn in place
+	// ("Read 3 files, ran 2 commands"); each is kept for Ctrl+O.
+	HideWork bool `toml:"hide_work"`
 	// Markdown renders the assistant's replies as markdown.
 	Markdown bool `toml:"markdown"`
 	// CodeStyle is the chroma style for code blocks in replies.

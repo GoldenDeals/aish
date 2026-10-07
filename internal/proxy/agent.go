@@ -422,6 +422,7 @@ type ui struct {
 func (u *ui) Write(b []byte) (int, error) {
 	u.p.mu.Lock()
 	defer u.p.mu.Unlock()
+	u.p.waits = false // the agent has its line back
 	u.p.emit(u.cr.fix(b))
 	return len(b), nil
 }
@@ -467,6 +468,24 @@ func (u *ui) Live(title string) agent.Live {
 		u.p.emit([]byte("\r\n")) // the output shows below the call
 	}
 	return l
+}
+
+// Hidden keeps a call the agent summed up in its line (hide_work) for
+// Ctrl+O, as a folded result is kept; nothing is drawn.
+func (u *ui) Hidden(title, text string) {
+	u.p.mu.Lock()
+	defer u.p.mu.Unlock()
+	u.p.folds = append(u.p.folds, Fold{Title: title, Text: text})
+}
+
+// HideCommand has the command the shell runs next folded quietly: the
+// agent's line of calls stays as it is, the last on the screen, until the
+// agent goes on with it. If it does not, the command cut short, cmd-end
+// ends that line.
+func (u *ui) HideCommand() {
+	u.p.mu.Lock()
+	defer u.p.mu.Unlock()
+	u.p.hide, u.p.waits = true, true
 }
 
 // CommandAt needs no long: the status goes at the right edge of the last

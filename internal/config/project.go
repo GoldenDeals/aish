@@ -25,6 +25,7 @@ type project struct {
 	MaxSteps       *int    `toml:"max_steps"`
 	MaxOutputBytes *int    `toml:"max_output_bytes"`
 	FoldLines      *int    `toml:"fold_lines"`
+	HideWork       *bool   `toml:"hide_work"`
 	Markdown       *bool   `toml:"markdown"`
 	CodeStyle      *string `toml:"code_style"`
 	PolicyDir      *string `toml:"policy_dir"`
@@ -93,6 +94,9 @@ func layProject(cfg Config, path string, data []byte, readErr error, trust func(
 	}
 	if pr.FoldLines != nil {
 		cfg.FoldLines = *pr.FoldLines
+	}
+	if pr.HideWork != nil {
+		cfg.HideWork = *pr.HideWork
 	}
 	if pr.Markdown != nil {
 		cfg.Markdown = *pr.Markdown

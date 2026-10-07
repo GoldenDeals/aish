@@ -81,6 +81,8 @@ type Proxy struct {
 	agent   map[string]*segment // commands run on behalf of the agent, by call id
 	tool    *fold               // live output of an external tool, while it runs
 	at      *statusAt           // where the agent left the cursor after printing its next command
+	hide    bool                // the agent's next command is not to be drawn (hide_work), see ui.HideCommand
+	waits   bool                // and its line of calls is left open for that command, until the agent writes
 	line    *inputLine          // the line typed at the prompt, kept off its status
 	col     firstCol            // whether the shell's output left the next prompt off the first column
 	folds   []Fold              // folded outputs of the last request, for Ctrl+O
@@ -642,6 +644,12 @@ func (p *Proxy) marker(m Marker) {
 			}
 		}
 		clear(p.agent)
+		if p.waits {
+			// The agent's line of calls waited for a command cut short, or
+			// never run: no agent goes on with it now, the prompt would.
+			p.emit([]byte("  " + dim + "(interrupted)" + reset + "\r\n"))
+		}
+		p.hide, p.waits = false, false
 		rc, cwd, _ := strings.Cut(m.Payload, ";")
 		defer p.saveState(cwd) // with the command that changed it in the journal
 		seg := p.user
@@ -665,13 +673,15 @@ func (p *Proxy) marker(m Marker) {
 	case "agent-start":
 		id, cmd, _ := strings.Cut(m.Payload, ";")
 		seg := &segment{cmd: cmd, buf: capture.NewBuffer(headCap, tailCap)}
-		if p.foldLines >= 0 {
+		if p.hide {
+			seg.fold = newQuiet("❯ " + cmd)
+		} else if p.foldLines >= 0 {
 			seg.fold = newFold("❯ "+cmd, p.foldLines)
 			if p.foldLines == 0 {
 				seg.fold.at = p.at
 			}
 		}
-		p.at = nil
+		p.at, p.hide = nil, false
 		p.agent[id] = seg
 	case "agent-end":
 		f := strings.SplitN(m.Payload, ";", 3)

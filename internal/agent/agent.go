@@ -86,6 +86,18 @@ type UI interface {
 	CommandAt(col int, long bool, hidden int)
 }
 
+// Hider is a UI that keeps what it does not draw: with hide_work the agent
+// sums its calls up in one line (work.go) and leaves each to Ctrl+O.
+// Without one, as without a terminal, hide_work is off.
+type Hider interface {
+	// Hidden keeps the call titled title, text its result, for Ctrl+O;
+	// nothing is drawn.
+	Hidden(title, text string)
+	// HideCommand says the command the shell runs next is such a call:
+	// its output and status are kept for Ctrl+O, nothing of them drawn.
+	HideCommand()
+}
+
 // Live is a tool's output being shown; Finish ends it with the tool's exit
 // status, -1 when unknown.
 type Live interface {
@@ -138,11 +150,16 @@ type Agent struct {
 	// coldNoted is the journal (Journal.ID) whose uncached prefix warnCold
 	// has told of: once a session is enough.
 	coldNoted string
+	// work is the group of calls hide_work sums up in one line, while UI
+	// is the workUI over it; nil when the calls are shown. See work.go.
+	work *workGroup
 }
 
 // Start records a new request made in ex and works on it.
 func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	a.exec, a.env, a.compactFailed = ex, "", false
+	a.hideWork(true)
+	defer a.endWork()
 	a.load(true)
 	if err := a.closePending(ctx); err != nil {
 		return err
@@ -188,6 +205,8 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 // continues; ex is the shell after the command.
 func (a *Agent) Resume(ctx context.Context, id string, rc int, ex tools.Exec) error {
 	a.exec = ex
+	a.hideWork(false)
+	defer a.endWork()
 	a.load(false)
 	var call *session.ToolCall
 	for _, c := range pending(a.entries) {
@@ -328,9 +347,13 @@ func (a *Agent) turn(ctx context.Context) error {
 	req := a.request(a.entries)
 	var streamed strings.Builder
 	cols, _ := a.UI.Size()
-	sp := startSpinner(a.UI, cols > 0)
+	sp := a.spinner(cols > 0)
 	md := newMarkdown(sp, a.UI.Size, a.Cfg)
+	lead := leadBlanks{on: a.work != nil}
 	resp, err := a.complete(ctx, req, func(s string) {
+		if s = lead.text(s); s == "" {
+			return
+		}
 		io.WriteString(md, s)
 		streamed.WriteString(s)
 	}, func(note string) {
@@ -338,7 +361,8 @@ func (a *Agent) turn(ctx context.Context) error {
 		sp.Stop()
 		fmt.Fprintf(a.UI, "%s%s%s\n", dim, note, reset)
 		streamed.Reset()
-		sp = startSpinner(a.UI, cols > 0)
+		lead = leadBlanks{on: a.work != nil}
+		sp = a.spinner(cols > 0)
 		md = newMarkdown(sp, a.UI.Size, a.Cfg)
 	})
 	md.Flush()
@@ -491,14 +515,24 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		}
 		return false, a.dialog(ctx, c, args)
 	}
+	// With hide_work the call is summed up in the line of the group, unless
+	// the user was asked about it or it opens the subagents' panes.
+	_, isTask := t.(*taskTool)
+	hide := a.work != nil && !asked && !isTask
 	if toShell {
 		if !hasCmd {
 			return false, a.append(toolResult(c, "empty command", true))
+		}
+		if hide {
+			return true, a.handHidden(c.ID, cmd)
 		}
 		if !asked {
 			a.showBash(cmd, false)
 		}
 		return true, a.Shell.HandOff(c.ID, cmd)
+	}
+	if hide {
+		return false, a.callHidden(ctx, t, c, args, title)
 	}
 
 	col := -1 // where the line of the call was left open, if it was
