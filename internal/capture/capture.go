@@ -68,13 +68,22 @@ func (b *Buffer) Bytes() []byte {
 	return out
 }
 
-// Clean strips terminal control sequences and applies carriage returns and
-// backspaces the way a terminal would render them line by line.
+// farCol is how far past a line's end Clean lets the cursor go. A terminal
+// stops it at its right edge, whose width Clean doesn't know; without a stop
+// `\e[99999G` would pad a line with that many spaces.
+const farCol = 512
+
+// Clean strips terminal control sequences and applies carriage returns,
+// backspaces, erasing in line and moving along it the way a terminal would
+// render them line by line. Sequences that span lines are ignored.
 func Clean(raw []byte) string {
 	var lines []string
 	var line []rune
 	col := 0
 	put := func(r rune) {
+		for len(line) < col {
+			line = append(line, ' ')
+		}
 		if col < len(line) {
 			line[col] = r
 		} else {
@@ -90,7 +99,26 @@ func Clean(raw []byte) string {
 		c := raw[i]
 		switch {
 		case c == 0x1b:
-			i += escapeLen(raw[i:])
+			n := escapeLen(raw[i:])
+			final, arg, ok := csi(raw[i : i+n])
+			switch {
+			case !ok: // colors, titles, moves to other lines
+			case final == 'K' && arg == 0: // to the end of the line
+				line = line[:min(col, len(line))]
+			case final == 'K' && arg == 1: // from its start through the cursor
+				for j := 0; j <= col && j < len(line); j++ {
+					line[j] = ' '
+				}
+			case final == 'K' && arg == 2: // all of it; the cursor stays
+				line = line[:0]
+			case final == 'G':
+				col = min(max(arg, 1)-1, len(line)+farCol)
+			case final == 'C':
+				col = min(col+max(arg, 1), max(col, len(line)+farCol))
+			case final == 'D':
+				col = max(col-max(arg, 1), 0)
+			}
+			i += n
 			continue
 		case c == '\n':
 			flush()
@@ -146,6 +174,33 @@ func escapeLen(s []byte) int {
 	default:
 		return 2
 	}
+}
+
+// csi returns the final byte of a CSI sequence s and its first parameter, 0
+// when omitted. Sequences with private or intermediate bytes are not ok:
+// Clean has no use for them.
+func csi(s []byte) (final byte, arg int, ok bool) {
+	if len(s) < 3 || s[1] != '[' {
+		return 0, 0, false
+	}
+	final = s[len(s)-1]
+	if final < 0x40 || final > 0x7e {
+		return 0, 0, false // cut off
+	}
+	first := true
+	for _, c := range s[2 : len(s)-1] {
+		switch {
+		case c == ';':
+			first = false
+		case c >= '0' && c <= '9':
+			if first {
+				arg = min(arg*10+int(c-'0'), 1<<20)
+			}
+		default:
+			return 0, 0, false
+		}
+	}
+	return final, arg, true
 }
 
 // Truncate keeps the beginning and the end of s within max bytes.
