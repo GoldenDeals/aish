@@ -418,7 +418,8 @@ func (a *Agent) handHidden(id, cmd string) error {
 // drawn but the line of the group, which turns while it runs, its result
 // kept for Ctrl+O. A streaming tool gets no live output: its result has
 // what it printed. A call that fails is shown after all, as it would be
-// without hide_work, and not counted: it ends the group.
+// without hide_work, and not counted: it ends the group. A call Ctrl+C
+// cuts short is not counted either, nor shown: it stays pending.
 func (a *Agent) callHidden(ctx context.Context, t tools.Tool, c session.ToolCall, args map[string]any, title string) error {
 	g := a.work
 	k := kindOf(t)
@@ -429,10 +430,10 @@ func (a *Agent) callHidden(ctx context.Context, t tools.Tool, c session.ToolCall
 	res, err := t.Execute(ctx, a.exec, args, nil)
 	stop() // before the result, kept or shown
 	if err != nil {
+		g.drop(k)
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return ctx.Err()
 		}
-		g.drop(k)
 		if tools.Streams(t) && strings.TrimSpace(res) != "" {
 			// What it printed, behind a status, as its live output would be.
 			if col := a.show(title, false); col >= 0 {

@@ -336,7 +336,7 @@ func editFile(_ context.Context, args map[string]any) (string, error) {
 // positional arguments first, so they are always $1, $2…, then the flags as
 // --name VALUE (a true boolean as --name); a Stdin argument on standard
 // input. Every argument given is also in AISH_ARG_<NAME>. Output is shown
-// live and returned.
+// live and returned. Ctrl+C ends what the tool started too (runGroup).
 func runExternal(ctx context.Context, t external, ex Exec, args map[string]any, live io.Writer) (string, error) {
 	var pos, flags []string
 	cmd := exec.CommandContext(ctx, t.path)
@@ -376,7 +376,7 @@ func runExternal(ctx context.Context, t external, ex Exec, args map[string]any, 
 		w = io.MultiWriter(&buf, live)
 	}
 	cmd.Stdout, cmd.Stderr = w, w
-	err := cmd.Run()
+	err := runGroup(ctx, cmd)
 	if err != nil {
 		return buf.String(), fmt.Errorf("%s: %w", t.name, err)
 	}

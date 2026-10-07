@@ -422,6 +422,49 @@ func TestHideWorkInterrupted(t *testing.T) {
 	}
 }
 
+// interruptedTool is cut short by Ctrl+C as it runs.
+type interruptedTool struct {
+	namedTool
+	cancel func()
+}
+
+func (t interruptedTool) Execute(ctx context.Context, _ tools.Exec, _ map[string]any, _ io.Writer) (string, error) {
+	t.cancel()
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// A call Ctrl+C cuts short is not counted: the line sums up the calls
+// done, and with none done it goes.
+func TestHideWorkInterruptedCall(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		calls []llm.ToolCall
+		want  []string
+	}{
+		{"after a read", []llm.ToolCall{toolCall("c1", "read_file", `{"path":"a.txt"}`), toolCall("c2", "wait", `{}`)},
+			[]string{"● Read 1 file" + workHint, ""}},
+		{"alone", []llm.ToolCall{toolCall("c1", "wait", `{}`)}, []string{""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			prov := &fakeProvider{replies: []*llm.Response{{ToolCalls: tc.calls}}}
+			a, _, _, ui, cwd := hidingAgent(t, prov)
+			a.Tools.Add(interruptedTool{namedTool{name: "wait"}, cancel})
+			if err := a.Start(ctx, "wait", tools.Exec{Dir: cwd}); err == nil {
+				t.Fatal("no error from an interrupted request")
+			}
+			if out := ui.String(); !slices.Equal(screenOf(out), tc.want) || strings.Contains(out, "Called") {
+				t.Errorf("screen %q, want %q; output %q", screenOf(out), tc.want, out)
+			}
+			if len(ui.hidden) != len(tc.calls)-1 {
+				t.Errorf("kept %q", ui.hidden)
+			}
+		})
+	}
+}
+
 // Blank text between calls, which models send, does not end the group.
 func TestHideWorkBlankText(t *testing.T) {
 	prov := &fakeProvider{replies: []*llm.Response{
