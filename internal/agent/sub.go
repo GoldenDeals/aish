@@ -623,6 +623,7 @@ func (b subBash) Title(args map[string]any) string { return tools.Title(b.Tool, 
 // is named before the commands the policy finds in its value too,
 // GIT_SSH_COMMAND='sudo ls', and, when the line assigns it by its syntax,
 // before a value made at run time, PAGER="$p"; env "$v"=x stays computed.
+// set -k is named before the run time it leaves the lines after it in.
 func refused(s *bashScope, cmd, cwd string, env []string) string {
 	if s == nil {
 		return ""
@@ -634,11 +635,12 @@ func refused(s *bashScope, cmd, cwd string, env []string) string {
 	in := policy.NewInput(tools.Bash, nil, cwd, env)
 	in.HandOff(cmd)
 	made := fmt.Sprintf("the command runs code made at run time (%s), which cannot be checked", strings.Join(in.Dynamic, ", "))
+	keyword := slices.ContainsFunc(in.Commands, func(argv []string) bool { return argv[0] == "set" && argvSets(argv) != "" })
 	switch {
 	case in.ParseError != "":
 		return "cannot parse the command: " + in.ParseError
 	case slices.ContainsFunc(in.Dynamic, func(k string) bool { return k != "prompt" && k != "rebind" }) &&
-		setsVariable(cmd, nil) == "":
+		setsVariable(cmd, nil) == "" && !keyword:
 		return made
 	}
 	// A line without commands may still write: > file.

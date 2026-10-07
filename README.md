@@ -635,6 +635,9 @@ tmux в строке `if-shell`, Perl в `{= =}` у `parallel`), `{}` в кав�
 где бы строка её ни присвоила (`X=… cmd`, `export`, `env`, `sudo`, `for`, `${X:=…}`), разбирается как
 `bash -c`, из подстановок — `computed`; загрузчики (`LD_PRELOAD`, `PYTHONPATH`, `NODE_OPTIONS`,
 `GIT_CONFIG_*`…) — `rebind`, `bind -f` — `computed`.
+После `set -k` (`set -o keyword`, `shopt -so keyword`) слова `NAME=VALUE` в аргументах команды проверяются как
+присваивания перед ней, а команда — и без них; `set -k`, не выключенный к концу строки, `set "$x"` и `cd ИМЯ` без
+такого каталога после `shopt -s cdable_vars` — `computed`.
 `paths` — операнды,
 похожие на пути, уже абсолютные и с раскрытыми симлинками: `rm -rf ~/`, `rm -rf "$HOME"` и
 `rm -rf /home/me/../me/` дают один и тот же `context.home`, и правило одно; `$PWD` раскрывается в

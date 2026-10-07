@@ -84,6 +84,9 @@ type lines struct {
 	// bind -x, mapfile -C; nestedMove that code handed to a shell changes
 	// its directory.
 	sameShell, nestedMove bool
+	// cdable holds the commands of the line that may run under shopt -s
+	// cdable_vars (see modesOf).
+	cdable map[*syntax.CallExpr]bool
 }
 
 // shellCode are the commands whose code runs in the shell that runs them,
@@ -301,7 +304,7 @@ func (l *lines) cd(call *syntax.CallExpr, w where) (where, bool) {
 	for _, d := range from {
 		sh := l.sh
 		sh.pwd = d
-		dirs, ok := sh.enters(argv)
+		dirs, ok := sh.enters(argv, l.cdable[call])
 		if !ok || slices.ContainsFunc(dirs, func(d string) bool { return !filepath.IsAbs(d) }) {
 			return nowhere, true
 		}
@@ -315,8 +318,9 @@ func (l *lines) cd(call *syntax.CallExpr, w where) (where, bool) {
 // .. taken off, the shell's name for it, unless told -P, and the one the
 // kernel walks to, where cd goes when the first fails; sh.pwd for what
 // moves nothing: pushd -n, popd -n, cd with no HOME, which fails. ok is
-// false where it goes no policy can know.
-func (sh shell) enters(argv []string) (dirs []string, ok bool) {
+// false where it goes no policy can know: under shopt -s cdable_vars
+// (cdable), where the variable of a name with no directory to enter says.
+func (sh shell) enters(argv []string, cdable bool) (dirs []string, ok bool) {
 	c := sh.analyze(argv)
 	if c.lost {
 		return nil, false
@@ -341,6 +345,9 @@ func (sh shell) enters(argv []string) (dirs []string, ok bool) {
 	for _, op := range ops {
 		words, _ := sh.expand(op)
 		for _, w := range words {
+			if cdable && sh.byName(w) {
+				return nil, false
+			}
 			places = append(places, sh.lookup(w)...)
 		}
 	}
@@ -358,8 +365,22 @@ func (sh shell) enters(argv []string) (dirs []string, ok bool) {
 // runs: where the tracker found call, and for the command of a wrapper
 // that runs it in another directory (env -C, sudo -D, sudo -i, chroot)
 // there. chroot and sudo -R take every path of their command from
-// another root, which no policy follows: they are marked.
+// another root, which no policy follows: they are marked. Where the line
+// may run call under set -k, the command bash runs then is added too.
 func (p *parser) placed(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippet {
+	code := p.place(call, call, redirs)
+	if kw := p.keywordCall(call); kw != nil {
+		for _, s := range p.place(call, kw, redirs) {
+			if !slices.Contains(code, s) {
+				code = append(code, s)
+			}
+		}
+	}
+	return code
+}
+
+// place is placed of call, which bash runs for the call of the line orig.
+func (p *parser) place(orig, call *syntax.CallExpr, redirs []*syntax.Redirect) []snippet {
 	from := len(p.out)
 	code := p.call(call, redirs)
 	if p.line == nil {
@@ -368,7 +389,7 @@ func (p *parser) placed(call *syntax.CallExpr, redirs []*syntax.Redirect) []snip
 	for len(p.sites) < from {
 		p.sites = append(p.sites, site{nested: true})
 	}
-	w, tracked := p.line.at[call]
+	w, tracked := p.line.at[orig]
 	chain := p.out[from:]
 	spreads := spreadsOf(call, chain)
 	for k, argv := range chain {
