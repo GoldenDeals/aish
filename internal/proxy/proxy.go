@@ -84,6 +84,7 @@ type Proxy struct {
 	hide    bool                // the agent's next command is not to be drawn (hide_work), see ui.HideCommand
 	waits   bool                // and its line of calls is left open for that command, until the agent writes
 	spin    *spin               // that line, kept turning while the command runs, see hidework.go
+	watch   *promptWatch        // the fold of another command, watched for a prompt, see foldprompt.go
 	line    *inputLine          // the line typed at the prompt, kept off its status
 	col     firstCol            // whether the shell's output left the next prompt off the first column
 	folds   []Fold              // folded outputs of the last request, for Ctrl+O
@@ -521,6 +522,7 @@ func (p *Proxy) restoreScreen() {
 	}
 	// The shell may have gone with the agent's command still running.
 	p.stopSpin()
+	p.stopWatch()
 	p.setPaste(false) // even under a question, which waits for its request
 }
 
@@ -656,6 +658,7 @@ func (p *Proxy) marker(m Marker) {
 		}
 		p.hide, p.waits = false, false
 		p.stopSpin()
+		p.stopWatch()
 		rc, cwd, _ := strings.Cut(m.Payload, ";")
 		defer p.saveState(cwd) // with the command that changed it in the journal
 		seg := p.user
@@ -689,11 +692,13 @@ func (p *Proxy) marker(m Marker) {
 			if p.foldLines == 0 {
 				seg.fold.at = p.at
 			}
+			p.watchFold(seg.fold) // it may wait for input, see foldprompt.go
 		}
 		p.at, p.hide = nil, false
 		p.agent[id] = seg
 	case "agent-end":
 		p.stopSpin() // the agent goes on with its line
+		p.stopWatch()
 		f := strings.SplitN(m.Payload, ";", 3)
 		if len(f) < 3 {
 			return

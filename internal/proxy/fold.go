@@ -23,7 +23,7 @@ const (
 
 // fold shows the first lines of an agent command's output (none by default)
 // and hides the rest behind a status line; the whole output is kept for
-// Ctrl+O.
+// Ctrl+O. A command that waits for input opens it (foldprompt.go).
 type fold struct {
 	title  string
 	limit  int // lines shown before folding
@@ -46,9 +46,9 @@ type fold struct {
 	// quiet is set for a command hide_work sums up in the agent's line of
 	// calls: nothing of it is drawn, all of it is kept for Ctrl+O.
 	quiet bool
-	// For a quiet fold, whether its command waits for input (prompts):
-	// when its output came last, and whether the line it leaves open was
-	// gone over from its start, as a progress bar's is and a prompt's not.
+	// Whether the command waits for input (prompts): when its output came
+	// last, and whether the line it leaves open was gone over from its
+	// start, as a progress bar's is and a prompt's not.
 	lastOut time.Time
 	redrawn bool
 }
@@ -96,14 +96,12 @@ func (f *fold) write(b []byte) []byte {
 	if f.open {
 		return b
 	}
-	if f.quiet {
-		f.lastOut = time.Now()
-		line := b
-		if i := bytes.LastIndexByte(b, '\n'); i >= 0 {
-			line, f.redrawn = b[i+1:], false
-		}
-		f.redrawn = f.redrawn || bytes.IndexByte(line, '\r') >= 0
+	f.lastOut = time.Now()
+	line := b
+	if i := bytes.LastIndexByte(b, '\n'); i >= 0 {
+		line, f.redrawn = b[i+1:], false
 	}
+	f.redrawn = f.redrawn || bytes.IndexByte(line, '\r') >= 0
 	if hasAltScreen(b) {
 		// A full-screen program owns the terminal; folding would break it.
 		return append(f.expand(), b...)
@@ -135,16 +133,30 @@ func (f *fold) write(b []byte) []byte {
 	return append(append([]byte{}, show...), f.statusExit(-1)...)
 }
 
-// promptWait is how long the output of a quiet fold stands still on a line
-// with text before the proxy takes that line for a prompt.
+// promptWait is how long the output of a fold stands still on a hidden
+// line with text before the proxy takes that line for a prompt.
 const promptWait = time.Second
 
-// prompts reports whether the command of a quiet fold seems to wait for
-// input at now (see hidework.go): its output stopped promptWait ago on a
-// line with text. A line gone over from its start is a progress bar,
-// stalled, not a prompt.
+// prompts reports whether the command seems to wait for input at now, its
+// prompt hidden (see foldprompt.go): its output stopped promptWait ago on
+// a line with text, past the lines shown. A line gone over from its start
+// is a progress bar, stalled, not a prompt.
 func (f *fold) prompts(now time.Time) bool {
-	return f.quiet && !f.open && f.last.text && !f.redrawn && now.Sub(f.lastOut) >= promptWait
+	return f.hides() && f.last.text && !f.redrawn && now.Sub(f.lastOut) >= promptWait
+}
+
+// hides reports whether what the command prints now is hidden: all of a
+// quiet fold, what comes past fold_lines of another.
+func (f *fold) hides() bool { return f.hidden && !f.open }
+
+// promptDue is how long after now the output, unless more comes, will
+// have stood still for promptWait; promptWait again if it has already,
+// not on a prompt.
+func (f *fold) promptDue(now time.Time) time.Duration {
+	if d := promptWait - now.Sub(f.lastOut); d > 0 {
+		return d
+	}
+	return promptWait
 }
 
 // folded reports whether anything was hidden.
@@ -230,7 +242,8 @@ func (f *fold) parts(exit int, hint bool) []string {
 	return parts
 }
 
-// expand stops folding and returns what is needed to show the hidden part.
+// expand stops folding and returns what is needed to show the hidden part,
+// its last revealLines lines, where the status was or below the call.
 func (f *fold) expand() []byte {
 	if f.open {
 		return nil
@@ -255,10 +268,10 @@ func (f *fold) expand() []byte {
 		}
 		return b
 	}
-	return append(b, f.rest.Bytes()...)
+	return append(b, f.tail(revealLines)...)
 }
 
-// revealLines is how much of a quiet fold's output opening it shows: the
+// revealLines is how much of a fold's hidden output opening it shows: the
 // end, enough for a prompt and what it asks about (ssh's key fingerprint,
 // sudo's lecture), not all a long command printed before it.
 const revealLines = 10
