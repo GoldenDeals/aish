@@ -117,11 +117,11 @@ func (p *Proxy) models(ctx context.Context, mp rpc.ModelsParams) ([]llm.ModelInf
 
 // checkPolicy is rpc policy, `aish policy TOOL ARGS`: what the policies a
 // request of the shell from pp.Cwd would go by say of the call, made by
-// the shell's model.
+// the shell's model in the modes of its options (see shellExec).
 func (p *Proxy) checkPolicy(ctx context.Context, pp rpc.PolicyParams) (policy.Decision, error) {
 	p.mu.Lock()
 	conf := p.snapshot()
-	profile, model := p.profile, p.model
+	profile, model, opts := p.profile, p.model, p.shellOpts()
 	p.mu.Unlock()
 	cfg, err := conf.LoadProfile(profile)
 	if err != nil {
@@ -134,7 +134,7 @@ func (p *Proxy) checkPolicy(ctx context.Context, pp rpc.PolicyParams) (policy.De
 	if err != nil {
 		return policy.Decision{}, err
 	}
-	in := policy.NewInput(pp.Tool, pp.Args, pp.Cwd, pp.Env)
+	in := policy.NewInput(pp.Tool, pp.Args, pp.Cwd, pp.Env, opts...)
 	if pp.HandOff {
 		in.HandOff(pp.Line)
 	}

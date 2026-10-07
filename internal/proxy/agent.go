@@ -196,15 +196,24 @@ func execOf(ap rpc.AgentParams) tools.Exec { return tools.Exec{Dir: ap.Cwd, Env:
 func (p *Proxy) shellExec(ap rpc.AgentParams) tools.Exec {
 	ex := execOf(ap)
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.cur != nil {
-		for name, line := range p.cur.Opts {
-			if line == "set -o "+name || line == "shopt -s "+name {
-				ex.Opts = append(ex.Opts, name)
-			}
+	ex.Opts = p.shellOpts()
+	p.mu.Unlock()
+	return ex
+}
+
+// shellOpts are the names of the options the shell had on at its last
+// prompt; nil before the first. Called under p.mu.
+func (p *Proxy) shellOpts() []string {
+	if p.cur == nil {
+		return nil
+	}
+	var on []string
+	for name, line := range p.cur.Opts {
+		if line == "set -o "+name || line == "shopt -s "+name {
+			on = append(on, name)
 		}
 	}
-	return ex
+	return on
 }
 
 // cancelRequest stops the request in progress, if any, and those waiting

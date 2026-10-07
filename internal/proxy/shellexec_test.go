@@ -6,6 +6,8 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/inebotov/aish/internal/bashstate"
+	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 )
@@ -37,5 +39,28 @@ func TestShellExecOptions(t *testing.T) {
 	slices.Sort(ex.Opts)
 	if want := []string{"braceexpand", "cdable_vars", "keyword"}; !slices.Equal(ex.Opts, want) || ex.Dir != "/srv" {
 		t.Errorf("options %q, want %q (%+v)", ex.Opts, want, ex)
+	}
+}
+
+// aish policy answers in the modes of the shell it is run from, as the
+// agent's request would be judged: under set -k, git fetch
+// GIT_SSH_COMMAND='sudo ls' has git run sudo.
+func TestPolicyShellOptions(t *testing.T) {
+	p := configured(t, "[policy]\ndeny = [\"sudo *\"]\n")
+	const fetch = "git fetch GIT_SSH_COMMAND='sudo ls'"
+	if got := asked(t, p, fetch); got != policy.Allow {
+		t.Fatalf("without set -k: %s", got)
+	}
+	p.mu.Lock()
+	p.cur = &bashstate.State{Opts: map[string]string{"keyword": "set -o keyword", "errexit": "set +o errexit"}}
+	p.mu.Unlock()
+	if got := asked(t, p, fetch); got != policy.Deny {
+		t.Errorf("under set -k: %s", got)
+	}
+	p.mu.Lock()
+	p.cur.Opts["keyword"] = "set +o keyword"
+	p.mu.Unlock()
+	if got := asked(t, p, fetch); got != policy.Allow {
+		t.Errorf("after set +k: %s", got)
 	}
 }

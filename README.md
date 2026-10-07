@@ -692,9 +692,10 @@ tmux в строке `if-shell`, Perl в `{= =}` у `parallel`), `{}` в кав�
 присваивания перед ней, а команда — и без них; `set -k`, не выключенный к концу строки, `set "$x"` и `cd ИМЯ` без
 такого каталога после `shopt -s cdable_vars` — `computed`.
 Так же проверяется вся строка, если режим уже включён в shell (`~/.bashrc`, прежней строкой: прокси берёт опции из
-состояния shell на последнем приглашении, а `set -k`, оставленный включённым, тогда не `computed`), и код, который
-строка отдаёт shell'у с `keyword` в `SHELLOPTS` (`env SHELLOPTS=keyword bash -c …`; `cdable_vars` — в `BASHOPTS`) или с
-`bash -k`, `-o keyword`, `-O cdable_vars`; `SHELLOPTS` и `BASHOPTS` из подстановок — `computed`.
+состояния shell на последнем приглашении, так отвечает и `aish policy`, а `set -k`, оставленный включённым, тогда не
+`computed`), и код, который строка отдаёт shell'у с `keyword` в `SHELLOPTS` (`env SHELLOPTS=keyword bash -c …`;
+`cdable_vars` — в `BASHOPTS`) или с `bash -k`, `-o keyword`, `-O cdable_vars`; `SHELLOPTS` и `BASHOPTS` из подстановок —
+`computed`.
 `paths` — операнды,
 похожие на пути, уже абсолютные и с раскрытыми симлинками: `rm -rf ~/`, `rm -rf "$HOME"` и
 `rm -rf /home/me/../me/` дают один и тот же `context.home`, и правило одно; `$PWD` раскрывается в
