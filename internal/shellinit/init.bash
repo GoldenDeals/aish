@@ -334,6 +334,11 @@ __aish_body() {
 	if [[ $1 == *[\`\\]* ]]; then
 		local LC_ALL
 		LC_ALL=C
+		# Bash looks for the delimiter of the here-document with the lines
+		# joined at a backslash-newline, which stays one in $(...), in
+		# ${...} and after the walk ended: a line that becomes it would end
+		# the body early, and the lines after it would run.
+		[[ ${1//'\'$'\n'/} == *__aish_eof* ]] && return 1
 		__aish_g+=("${#__aish_p[@]}" 0)
 		__aish_i=0
 		for ((__aish_j = 0; __aish_j < ${#__aish_g[@]}; __aish_j += 2)); do
@@ -393,9 +398,9 @@ __aish_expand() {
 	local __aish_r __aish_t __aish_o
 	__aish_r=$1 __aish_t= __aish_o=
 	# A line of the text that is the delimiter would end the here-document,
-	# and the lines after it would run. Bash looks for it with the lines
-	# joined at a backslash-newline, which stays one in $(...) and ${...}.
-	[[ ${__aish_r//'\'$'\n'/} == *__aish_eof* ]] && return 1
+	# and the lines after it would run; __aish_body fails for one joined at
+	# a backslash-newline.
+	[[ $__aish_r == *__aish_eof* ]] && return 1
 	__aish_body "$__aish_r" || return 1
 	set -- # $1 is the text here, not the user's
 	# $? too: the code __aish_route found, not that of `set`. A function,
