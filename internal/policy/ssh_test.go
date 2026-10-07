@@ -24,7 +24,8 @@ func TestParseShellString(t *testing.T) {
 		{`ssh -p 22 -i k box 'rm -rf /'`, [][]string{{"rm", "-rf", "/"}}, nil},
 		{`ssh -o X=y box ls`, [][]string{{"ls"}}, nil},
 		{`ssh -tp22 -lroot box sudo ls`, [][]string{sudoLs}, nil},
-		{`ssh -J a,b -L 1:x:2 -E log -F cfg -P tag box sudo ls`, [][]string{sudoLs}, nil},
+		// A config file of -F may hold a ProxyCommand: see optcode_test.go.
+		{`ssh -J a,b -L 1:x:2 -E log -F cfg -P tag box sudo ls`, [][]string{sudoLs}, []string{"computed"}},
 		// ssh reads options again after the host, unless -- ended them.
 		{`ssh box -t sudo ls`, [][]string{sudoLs}, nil},
 		{`ssh box -p 22 -- sudo ls`, [][]string{sudoLs}, nil},

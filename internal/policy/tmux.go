@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,6 +30,12 @@ func tmuxRuns(w words) []run {
 	if has(opts, "C") {
 		// In control mode the client reads commands of tmux from stdin.
 		rs = append(rs, run{mark: dynStdin})
+	}
+	for _, f := range values(opts, "f") {
+		// A config file holds commands of tmux, as source-file reads them.
+		if f.text != "/dev/null" {
+			rs = append(rs, run{words: f.words, mark: dynSource})
+		}
 	}
 	for _, c := range tmuxSplit(w, start) {
 		rs = append(rs, tmuxCommand(c)...)
@@ -105,6 +112,11 @@ var tmuxCmds = map[string]tmuxCmd{
 	"set-hook":       {"", getopt{short: "+agpRuwt:"}, tmuxKept(1)},
 	"source-file":    {"source", getopt{short: "+Fnqvt:"}, tmuxSource},
 	"split-window":   {"splitw", getopt{short: "+bdefhIkPvZc:e:F:l:m:p:R:s:S:t:"}, tmuxWindow},
+
+	// They set what new windows run, as set-hook does.
+	"set-environment":   {"setenv", getopt{short: "+Fhgrt:u"}, tmuxSetenv},
+	"set-option":        {"set", getopt{short: "+aFgopqst:uUw"}, tmuxSet},
+	"set-window-option": {"setw", getopt{short: "+aFgoqt:u"}, tmuxSet},
 }
 
 // tmuxNames are the names and aliases of all the commands of tmux 3.7: one
@@ -188,15 +200,95 @@ func tmuxCommand(c sub) []run {
 }
 
 // tmuxWindow finds the shell command of a new window, pane or popup: one
-// operand is a line for the shell, more run as they are.
+// operand is a line for the shell, more run as they are; and the variables
+// of -e, which it puts in their environment.
 func tmuxWindow(w words, opts []option, ops []int) []run {
+	rs := tmuxEnv(w, values(opts, "e"))
 	switch len(ops) {
 	case 0:
-		return nil
+		return rs
 	case 1:
-		return []run{{text: w.args[ops[0]], words: ops}}
+		return append(rs, run{text: w.args[ops[0]], words: ops})
 	}
-	return []run{w.argv(ops)}
+	return append(rs, w.argv(ops))
+}
+
+// tmuxEnv finds the NAME=VALUE of -e: of a word made at run time the name
+// is read in its source form, and may be any when made at run time too.
+func tmuxEnv(w words, vs []piece) []run {
+	var rs []run
+	for _, v := range vs {
+		if w.static[v.words[0]] {
+			rs = append(rs, run{env: v.text})
+			continue
+		}
+		name, ok := sourceKey(v.text)
+		if !ok || !strings.Contains(v.text, "=") {
+			rs = append(rs, run{words: v.words})
+			continue
+		}
+		rs = append(rs, run{env: name + "=", envDyn: true})
+	}
+	return rs
+}
+
+// tmuxCodeOpts are the options of tmux whose value is code new windows,
+// clients or copy mode run later: a line for the shell, the program of
+// default-shell, or commands of tmux this parser does not read.
+var tmuxCodeOpts = map[string]func(value string) run{
+	"command-alias":          tmuxMarked,
+	"copy-command":           tmuxLine,
+	"default-client-command": tmuxMarked,
+	"default-command":        tmuxLine,
+	"default-shell":          func(v string) run { return run{text: quoted(v)} },
+	"editor":                 tmuxLine,
+	"lock-command":           tmuxLine,
+}
+
+func tmuxLine(v string) run { return run{text: v} }
+func tmuxMarked(string) run { return run{mark: dynComputed} }
+
+// tmuxSet finds the code of set-option: an option of tmuxCodeOpts named by
+// its name or, as tmux finds one, a prefix of it, an index [N] left out.
+// Its value runs later, in another window: rebind. -F expands it as a
+// format first, -a appends it to a value the line does not show.
+func tmuxSet(w words, opts []option, ops []int) []run {
+	if len(ops) < 2 || has(opts, "u", "U") {
+		return nil
+	}
+	name, val := ops[0], ops[1]
+	if !w.static[name] {
+		return []run{{words: []int{name}}}
+	}
+	opt, _, _ := strings.Cut(w.args[name], "[")
+	var rs []run
+	for _, full := range slices.Sorted(maps.Keys(tmuxCodeOpts)) {
+		if opt == "" || !strings.HasPrefix(full, opt) {
+			continue
+		}
+		r := tmuxCodeOpts[full](w.args[val])
+		r.words = []int{val}
+		if has(opts, "F") && formatted(w.args[val]) || has(opts, "a") {
+			r.mark = dynComputed
+		}
+		rs = append(rs, r, run{mark: dynRebind})
+	}
+	return rs
+}
+
+// tmuxSetenv finds the variable set-environment puts in the environment of
+// new windows; one of -h is hidden from them, -F expands a format first.
+func tmuxSetenv(w words, opts []option, ops []int) []run {
+	if len(ops) < 2 || has(opts, "u", "r", "h") {
+		return nil
+	}
+	if has(opts, "F") && formatted(w.args[ops[1]]) {
+		return []run{{mark: dynComputed}}
+	}
+	if !w.static[ops[0]] {
+		return []run{{words: ops[:1]}}
+	}
+	return []run{{env: w.args[ops[0]] + "=" + w.args[ops[1]], envDyn: !w.static[ops[1]]}}
 }
 
 // tmuxShell finds the shell command of pipe-pane.

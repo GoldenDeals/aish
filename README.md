@@ -653,14 +653,20 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 команда окна и `-c` у `tmux` (`new-window`, `split-window`, `run-shell`, `if-shell`…), `#(…)` его форматов,
 строка, которую набирает `tmux send-keys` или `screen -X stuff`, команда окна `screen` и `screen -X exec`,
 команда `parallel` (`{}` — слово из подстановки), а без команды — значения `:::` и stdin, алиас `!…` из
-`git -c alias.ИМЯ=…`. И код строк, которые bash вычисляет сам: индексов в именах-строках (`let 'a[$(…)]=1'`, `unset`,
+`git -c alias.ИМЯ=…`. Код в значениях опций: команда `find -exec`/`-execdir`/`-ok` (`{}` — слово из подстановки),
+`ssh`/`scp`/`sftp -o ProxyCommand=`, `LocalCommand=`, `KnownHostsCommand=`, `scp -S`, `rsync -e`, `tar --to-command`,
+`-I`, `-F` и `--checkpoint-action=exec=`, `man -P`, переменные git с кодом (`core.sshCommand`, `core.pager`,
+`core.editor`, `credential.helper`, `diff.*.textconv`, `filter.*.smudge`, `pager.КОМАНДА`…) в `git -c`, `git clone -c`
+и `git config`, `git clone --upload-pack`, опции `tmux set` с командой (`default-command`, `default-shell`,
+`lock-command`…) и переменные `tmux setenv` и `new-window -e`. И код строк, которые bash вычисляет сам: индексов в именах-строках (`let 'a[$(…)]=1'`, `unset`,
 `test -v`, `[[ -v ]]`, `declare -n`, `read`, `printf -v`), в значениях присваиваний (`x='a[$(…)]'` выполнит
 `(( x ))`; так же `for x in …`, `${x:=…}` и `NAME=VALUE` у `env`, `sudo` и других обёрток:
 `env 'x=a[$(…)]' bash -c '((x))'`), в одинарных кавычках арифметики и `"${x:-'…'}"`, в `declare -a a='($(…))'`
 и в значении, которое `${x@P}` раскрывает как строку приглашения (`y='$(…)'; echo "${y@P}"`; само `${x@P}` —
 `computed`, как `eval "$x"`); индекс с подстановкой в строке `let` и `test -v` (`let "a[$i]=1"`) — `computed`,
 а значение не из строки (окружение, файл, `read`,
-вывод команды) не видно. Удалённая команда `ssh ХОСТ КОМАНДА…` и stdin голого `ssh ХОСТ` разбираются, как
+вывод команды) не видно. Удалённая команда `ssh ХОСТ КОМАНДА…`, `ssh -o RemoteCommand=`, `rsync --rsync-path=`
+и stdin голого `ssh ХОСТ` разбираются, как
 `bash -c`, но их пути и редиректы —
 файлы другой машины: ни в `paths`, ни в `Action::"write"` они не попадают. Чего нельзя знать до
 исполнения, помечено
@@ -668,20 +674,23 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 `"$(which rm)"`, `eval "$x"`, `bash -c "$x"`, `complete -W '$(…)'`), имя переменной из них (`read "$v"`,
 `printf -v "$v"`, `declare -n r="$v"`), код, которого в строке нет (макрос `bind`, команды истории
 `fc`, кроме `fc -l`, клавиши `send-keys`, которые правят строку, — `Tab`, `BSpace`, стрелки, — команды
-tmux в строке `if-shell`, Perl в `{= =}` у `parallel`), `{}` в кавычках у `parallel`, файл редиректа,
+tmux в строке `if-shell`, Perl в `{= =}` у `parallel`, конфиг `ssh -F`, `git -c include.path=`, `core.hooksPath=`,
+`protocol.allow=`), `{}` в кавычках у `parallel`, слово из подстановки, которое может стать опцией `tar`, `rsync`,
+`scp`, `man` или командой `find` (`find "$d" sudo ls \;`), файл редиректа,
 неизвестный до исполнения (`> "$f"`, относительный путь в строке с `cd` или с кодом, который идёт в
 другом каталоге: у `tmux`, `screen -X`, алиаса git, `parallel --workdir`), или путь операнда, неизвестный до исполнения: относительный там,
 куда строка увела shell, а политика за ней не проследила (`cd -`, `cd "$d"`, `popd`, `cd` в цикле или
 функции, `eval 'cd …'`, команда под `sudo -i`), любой в строке, которая присваивает `HOME`, `PWD`,
 `OLDPWD` или `CDPATH` (и `unset`, `for HOME in`, `${CDPATH:=…}`), любой под `chroot` и `sudo -R`,
 глоб, который ничего не находит в существующем каталоге (строка может сама создать то, что он найдёт),
-`**`, extglob; `source` — `source` и `.`, `tmux source-file`, `stdin` — shell читает
+`**`, extglob; `source` — `source` и `.`, `tmux source-file` и `tmux -f`, `stdin` — shell читает
 команды со stdin (`echo … | bash`, `… | parallel` без команды), `prompt` — присваивание
 `PROMPT_COMMAND`, `PS0`, `PS1`, `PS2`,
 `PS4`, `BASH_ENV`, `ENV`, `MAILPATH` — не только `=` и `export`, но и `read`, `printf -v`, `mapfile`,
 `declare -n`, `rebind` — имя команды начнёт запускать другое: присваивание `PATH` (и
 `export PATH=…:$PATH`), `EXECIGNORE`, `BASH_CMDS`, `BASH_ALIASES`, `unset PATH`, `hash -p`, `enable`
-(кроме `-n`, `-d` и списка), `git config alias.ИМЯ '!…'` (код алиаса тоже разбирается),
+(кроме `-n`, `-d` и списка), `git config` переменной с кодом (`alias.ИМЯ '!…'`, `core.pager`…; код тоже
+разбирается), `git --exec-path=`, опция `tmux set` с командой,
 `depth` — вложенность глубже четырёх уровней. Пример спрашивает о любой
 пометке; отпустить `source` — `unless { context has dynamic && context.dynamic == ["source"] }`.
 Переменная, из которой программы берут команду (`GIT_SSH_COMMAND`, `PAGER`, `EDITOR`, `LESSOPEN`…),

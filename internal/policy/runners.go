@@ -37,13 +37,20 @@ type words struct {
 // kind of Script.Dynamic it adds (rebind for code kept to run later, source,
 // stdin, computed for code the line does not hold). stdin is a shell reading
 // its commands from the stdin of the runner; moved tells that the code runs
-// in another directory, as moves tells of a command.
+// in another directory, as moves tells of a command; remote that it runs on
+// another machine (ssh -o RemoteCommand=, rsync --rsync-path=). env is a
+// NAME=VALUE the runner puts in the environment of the code it runs, read
+// as an assignment is (tmux set-environment, new-window -e); envDyn tells
+// that its value is made at run time.
 type run struct {
-	text  string
-	words []int
-	mark  string
-	stdin bool
-	moved bool
+	text   string
+	words  []int
+	mark   string
+	stdin  bool
+	moved  bool
+	remote bool
+	env    string
+	envDyn bool
 }
 
 // elsewhere marks runs as code that runs in another directory: in a pane of
@@ -55,19 +62,28 @@ func elsewhere(rs []run) []run {
 	return rs
 }
 
-// runs returns the code the runners in argv hand to a shell, wherever they
-// are in it, as shellC finds shells; code that hangs on a word made at run
-// time is marked instead. A runner that is the program and reads commands
-// from stdin gets them from the redirections of its statement.
-func (p *parser) runs(argv []string, static, split []bool, redirs []*syntax.Redirect) []string {
-	var code []string
-	for i, a := range argv {
-		find, ok := runners[filepath.Base(a)]
-		if !ok {
+// runs returns the code the runners among the first local words of argv
+// hand to a shell, wherever they are among them, as shellC finds shells:
+// here that which runs on this machine, there on another. A runner gets all
+// the words after it: ssh, the program, reads its options among those of
+// its command, which run there. Code that hangs on a word made at run time
+// is marked instead. A runner that is the program and reads commands from
+// stdin gets them from the redirections of its statement; one of
+// optRunners is told whether it is the program.
+func (p *parser) runs(argv []string, static, split []bool, local int, redirs []*syntax.Redirect) (here, there []string) {
+	for i, a := range argv[:local] {
+		name := filepath.Base(a)
+		w := words{argv[i+1:], static[i+1:], split[i+1:]}
+		var rs []run
+		switch {
+		case runners[name] != nil:
+			rs = runners[name](w)
+		case optRunners[name] != nil:
+			rs = optRunners[name](w, i == 0)
+		default:
 			continue
 		}
-		w := words{argv[i+1:], static[i+1:], split[i+1:]}
-		for _, r := range find(w) {
+		for _, r := range rs {
 			if slices.ContainsFunc(r.words, func(k int) bool { return !w.static[k] }) {
 				p.mark(dynComputed)
 				continue
@@ -75,18 +91,24 @@ func (p *parser) runs(argv []string, static, split []bool, redirs []*syntax.Redi
 			if r.mark != "" {
 				p.mark(r.mark)
 			}
+			if r.env != "" {
+				p.setenv(r.env, !r.envDyn)
+			}
 			if r.moved && !p.remote && (r.stdin || r.text != "") {
 				p.chdir = true
 			}
 			switch {
 			case r.stdin && i == 0:
-				code = append(code, p.stdin(redirs)...)
-			case r.text != "":
-				code = append(code, r.text)
+				here = append(here, p.stdin(redirs)...)
+			case r.text == "":
+			case r.remote:
+				there = append(there, r.text)
+			default:
+				here = append(here, r.text)
 			}
 		}
 	}
-	return code
+	return here, there
 }
 
 // loose returns the indexes of the words before end that the shell may make

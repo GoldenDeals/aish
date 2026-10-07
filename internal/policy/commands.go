@@ -23,13 +23,16 @@ type Script struct {
 	// su -c, runuser -c, sg, flock -c, script -c, watch, sudo -s and -i,
 	// run0 -i, strace -o '|CMD', fakeroot -l, in the value of PAGER and the
 	// other commandVars, the runners (tmux, screen, parallel, an alias of
-	// git) and, on another machine, ssh HOST CMD or the here-string of ssh
-	// HOST. Words that are not static (expansions, substitutions) are kept
-	// in their source form, e.g. "$HOME".
+	// git), the values of options (find -exec, ssh -o ProxyCommand=, rsync
+	// -e, tar --to-command, the variables of git config: see optRunners)
+	// and, on another machine, ssh HOST CMD, the here-string of ssh HOST,
+	// ssh -o RemoteCommand= and rsync --rsync-path=. Words that are not
+	// static (expansions, substitutions) are kept in their source form,
+	// e.g. "$HOME".
 	Commands [][]string
 	// Remote holds the indexes in Commands of the commands that run on
-	// another machine, in the command of ssh: their words name no files
-	// of this one, and their redirections are not in Writes.
+	// another machine, in the command of ssh and the like: their words
+	// name no files of this one, and their redirections are not in Writes.
 	Remote []int
 	// Dynamic names what in the line runs code the parser cannot see:
 	// "computed", "source", "stdin", "prompt", "rebind", "depth". Sorted,
@@ -68,7 +71,7 @@ const (
 	// dynRebind makes a name of a command run another program or code:
 	// hash -p, enable, an assignment to PATH (see rebindVars) or to a
 	// variable that has programs load code, LD_PRELOAD (see loaderVars),
-	// the code of an alias git config keeps.
+	// the code git config and tmux set-option keep for later.
 	dynRebind = "rebind"
 	// dynDepth is code nested deeper than maxDepth, left unparsed.
 	dynDepth = "depth"
@@ -322,7 +325,8 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 		}
 		here, there, local := p.handed(argv, static, redirs)
 		found := p.shellC(argv[:local], static[:local])
-		found = append(found, p.runs(argv[:local], static[:local], split[:local], redirs)...)
+		ran, far := p.runs(argv, static, split, local, redirs)
+		found, there = append(found, ran...), append(there, far...)
 		found = append(found, p.program(argv, static, redirs)...)
 		for _, s := range append(found, here...) {
 			add(s, p.remote)
@@ -822,7 +826,8 @@ func (p *parser) handed(argv []string, static []bool, redirs []*syntax.Redirect)
 
 // sshReads tells whether ssh runs a shell over there that reads its
 // commands from stdin: it has a host and no command, no -n or -f keeps
-// stdin from the shell and no -N, -W, -O, -G, -V or -Q runs none.
+// stdin from the shell, no -N, -W, -O, -G, -V or -Q runs none and no -o
+// RemoteCommand= runs one of its own (see sshKeyword).
 func sshReads(args []string) bool {
 	opts, ops := sshOpts.read(args)
 	if len(ops) == 0 || sshCommand(args) != nil {
@@ -832,7 +837,7 @@ func sshReads(args []string) bool {
 		more, _ := sshOpts.read(args[host+1:])
 		opts = append(opts, more...)
 	}
-	return !has(opts, "n", "f", "N", "W", "O", "G", "V", "Q")
+	return !has(opts, "n", "f", "N", "W", "O", "G", "V", "Q") && !slices.ContainsFunc(opts, remoteCommand)
 }
 
 // The options of the commands of strung, as their getopt calls read them
