@@ -38,6 +38,11 @@ type Server struct {
 	Env     map[string]string `yaml:"env" json:"env,omitempty"`
 	URL     string            `yaml:"url" json:"url,omitempty"`
 	Headers map[string]string `yaml:"headers" json:"headers,omitempty"`
+	// EnvCommand and HeadersCommand give a variable or a header the output
+	// of a command instead of a literal: a token kept in pass, say. A key
+	// is in one of the two maps, not in both (resolve).
+	EnvCommand     map[string]string `yaml:"env_command" json:"env_command,omitempty"`
+	HeadersCommand map[string]string `yaml:"headers_command" json:"headers_command,omitempty"`
 	// Expose is "commands" (the default) or "tools", which also gives the
 	// model the tools' schemas.
 	Expose string `yaml:"expose" json:"expose,omitempty"`
@@ -66,6 +71,9 @@ func LoadConfig(path string) (map[string]Server, error) {
 		}
 		if s.Expose != "" && s.Expose != "commands" && s.Expose != "tools" {
 			return nil, fmt.Errorf("%s: server %s: expose must be commands or tools", path, name)
+		}
+		if err := s.checkCommands(); err != nil {
+			return nil, fmt.Errorf("%s: server %s: %w", path, name, err)
 		}
 	}
 	return f.Servers, nil
@@ -100,15 +108,31 @@ type conn interface {
 	alive() bool
 }
 
-func dial(s Server) (conn, error) {
-	if s.URL != "" {
-		h := map[string]string{}
-		for k, v := range s.Headers {
-			h[k] = os.ExpandEnv(v)
-		}
-		return &httpConn{url: s.URL, headers: h}, nil
+// dial starts the server of s, or opens a session with it: the one place
+// where the values resolve gives become the server's environment and
+// headers. secrets are those of them maskError cannot find in s: the
+// output of the commands, whatever the key, and the literals as expanded.
+func dial(ctx context.Context, s Server) (c conn, secrets []string, err error) {
+	env, headers, err := resolve(ctx, s)
+	if err != nil {
+		return nil, nil, err
 	}
-	return startStdio(s)
+	for k, v := range env {
+		if _, ok := s.EnvCommand[k]; ok || secretWord.MatchString(k) {
+			secrets = append(secrets, v)
+		}
+	}
+	for _, v := range headers {
+		secrets = append(secrets, v)
+	}
+	if s.URL != "" {
+		return &httpConn{url: s.URL, headers: headers}, secrets, nil
+	}
+	sc, err := startStdio(s, env)
+	if err != nil {
+		return nil, secrets, err
+	}
+	return sc, secrets, nil
 }
 
 // initialize performs the MCP handshake.
@@ -168,11 +192,13 @@ type stdio struct {
 	stop sync.Once
 }
 
-func startStdio(s Server) (*stdio, error) {
+// startStdio runs the server of s with env, as resolve gave it, over the
+// proxy's environment.
+func startStdio(s Server, env map[string]string) (*stdio, error) {
 	cmd := exec.Command(s.Command, s.Args...)
 	cmd.Env = os.Environ()
-	for k, v := range s.Env {
-		cmd.Env = append(cmd.Env, k+"="+os.ExpandEnv(v))
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	// Its own process group: npx and the like leave children behind.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

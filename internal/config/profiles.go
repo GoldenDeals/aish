@@ -18,12 +18,19 @@ import (
 // provider's variable gives it. So is effort, lest a level go to a provider
 // that has none such: a table naming a provider other than the top level's
 // ("" being DefaultProvider) but no effort has the provider's default.
+// The proxy keys are no exception, whatever the endpoint: they are of the
+// user's network, not of the endpoint; a table sets them to "" (or
+// no_proxy to "*") for an endpoint reached directly.
 // Pointers tell a key that is set from one that is not.
 type Profile struct {
 	Provider      *string `toml:"provider"`
 	BaseURL       *string `toml:"base_url"`
 	APIKey        *string `toml:"api_key"`
 	APIKeyEnv     *string `toml:"api_key_env"`
+	HTTPProxy     *string `toml:"http_proxy"`
+	HTTPSProxy    *string `toml:"https_proxy"`
+	AllProxy      *string `toml:"all_proxy"`
+	NoProxy       *string `toml:"no_proxy"`
 	Model         *string `toml:"model"`
 	Effort        *string `toml:"effort"`
 	MaxTokens     *int64  `toml:"max_tokens"`
@@ -82,6 +89,10 @@ func (c Config) withProfile(name, from string) (Config, error) {
 	lay(&c.BaseURL, pr.BaseURL)
 	lay(&c.APIKey, pr.APIKey)
 	lay(&c.APIKeyEnv, pr.APIKeyEnv)
+	lay(&c.HTTPProxy, pr.HTTPProxy)
+	lay(&c.HTTPSProxy, pr.HTTPSProxy)
+	lay(&c.AllProxy, pr.AllProxy)
+	lay(&c.NoProxy, pr.NoProxy)
 	lay(&c.Model, pr.Model)
 	lay(&c.Effort, pr.Effort)
 	lay(&c.MaxTokens, pr.MaxTokens)
@@ -143,6 +154,9 @@ func checkProfiles(ps map[string]Profile) error {
 		}
 		if pr.ContextWindow != nil && *pr.ContextWindow < 0 {
 			return fmt.Errorf("profiles.%s.context_window = %d: must not be negative", name, *pr.ContextWindow)
+		}
+		if err := checkProxies("profiles."+name+".", pr.HTTPProxy, pr.HTTPSProxy, pr.AllProxy); err != nil {
+			return err
 		}
 	}
 	return nil

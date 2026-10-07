@@ -314,7 +314,7 @@ func TestMask(t *testing.T) {
 	}
 	cfg := Server{URL: "https://u:pw123@h/mcp?api_key=abc123", Args: []string{"--token", "s3cr3t"},
 		Env: map[string]string{"GITHUB_TOKEN": "ghp_x"}, Headers: map[string]string{"Authorization": "Bearer zzz"}}
-	got = maskError(`Post "https://u:***@h/mcp?api_key=abc123": EOF; s3cr3t ghp_x Bearer zzz`, cfg)
+	got = maskError(`Post "https://u:***@h/mcp?api_key=abc123": EOF; s3cr3t ghp_x Bearer zzz`, cfg, nil)
 	if want := `Post "https://u:***@h/mcp?api_key=***": EOF; *** *** ***`; got != want {
 		t.Errorf("maskError = %q, want %q", got, want)
 	}

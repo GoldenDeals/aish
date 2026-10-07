@@ -46,6 +46,9 @@ func newOpenAIAPI(cfg config.Config) openaiAPI {
 			opts = append(opts, option.WithUnsafeAllowHTTP())
 		}
 	}
+	if c := httpClient(cfg); c != nil {
+		opts = append(opts, option.WithHTTPClient(c))
+	}
 	return openaiAPI{client: openai.NewClient(opts...), model: cfg.Model, effort: cfg.Effort, maxTokens: cfg.MaxTokens}
 }
 

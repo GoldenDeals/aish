@@ -5,12 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -81,6 +83,9 @@ type server struct {
 	err      error
 	failed   time.Time
 	starting *startup
+	// secrets are the values of the last start that maskError cannot find
+	// in cfg: dial's.
+	secrets []string
 }
 
 // startup is a server start in progress; everyone who needs the server
@@ -123,11 +128,13 @@ func (m *Manager) cachePath(server string) string {
 }
 
 // Warm writes the wrappers known from the cache and, in the background,
-// starts the servers never seen before to learn their tools.
+// starts the servers never seen before to learn their tools. Not one with
+// env_command or headers_command: its commands wait for its first use,
+// lest pass ask for a passphrase as the shell starts.
 func (m *Manager) Warm() {
 	m.wrap()
 	for _, s := range m.servers {
-		if !s.known {
+		if !s.known && len(s.cfg.EnvCommand) == 0 && len(s.cfg.HeadersCommand) == 0 {
 			go m.ensure(context.Background(), s, false)
 		}
 	}
@@ -205,9 +212,21 @@ func (m *Manager) Call(ctx context.Context, name string, args map[string]any) (j
 		}
 	}
 	if err != nil {
+		s.mu.Lock()
+		err = s.mask(err) // the end of the server's stderr, say
+		s.mu.Unlock()
 		return nil, fmt.Errorf("%s: %w", s.name, err)
 	}
 	return res, nil
+}
+
+// mask is err with the secrets of s hidden; err itself if it has none.
+// Called under s.mu.
+func (s *server) mask(err error) error {
+	if msg := maskError(err.Error(), s.cfg, s.secrets); msg != err.Error() {
+		return errors.New(msg)
+	}
+	return err
 }
 
 // timeout is that of a tool call.
@@ -276,6 +295,9 @@ func (m *Manager) start(s *server, st *startup) {
 	s.mu.Lock()
 	s.starting = nil
 	if err != nil {
+		// Here, not only in Status: the error goes to the agent too,
+		// through Call and List, and a server may print its token.
+		err = s.mask(err)
 		s.err, s.failed = err, time.Now()
 	} else {
 		s.conn, s.tools, s.known, s.err = c, tools, true, nil
@@ -294,7 +316,10 @@ var unsafeName = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 func (s *server) connect() (conn, []ToolInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
 	defer cancel()
-	c, err := dial(s.cfg)
+	c, secrets, err := dial(ctx, s.cfg)
+	s.mu.Lock()
+	s.secrets = secrets
+	s.mu.Unlock()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -438,7 +463,7 @@ func (m *Manager) Status() StatusResult {
 		case s.starting != nil:
 			st.State = "starting"
 		case s.err != nil:
-			st.State, st.Error, st.Failed = "failed", maskError(s.err.Error(), s.cfg), s.failed
+			st.State, st.Error, st.Failed = "failed", maskError(s.err.Error(), s.cfg, s.secrets), s.failed
 		case s.conn != nil:
 			st.State = "exited"
 		case s.known:
@@ -480,8 +505,9 @@ func maskArgs(args []string) []string {
 
 // maskError hides the config's secrets in an error: a transport error may
 // quote the URL with its query, a server may print its own arguments.
-func maskError(msg string, cfg Server) string {
-	var secrets []string
+// extra are secrets not to be found in cfg: what its commands printed.
+func maskError(msg string, cfg Server, extra []string) string {
+	secrets := slices.Clone(extra)
 	for i, a := range cfg.Args {
 		if k, v, ok := strings.Cut(a, "="); ok && secretWord.MatchString(k) {
 			secrets = append(secrets, v)
@@ -507,6 +533,9 @@ func maskError(msg string, cfg Server) string {
 			}
 		}
 	}
+	// The longest first: a secret inside another would leave the rest of
+	// that one in the open.
+	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	for _, v := range secrets {
 		// Short values would mask unrelated text and are no real secrets.
 		if len(v) >= 3 {

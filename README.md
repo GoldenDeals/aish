@@ -474,12 +474,29 @@ servers:
     env:
       GITHUB_TOKEN: ${GITHUB_TOKEN}   # переменные раскрываются
     timeout: 120                      # секунд на вызов, по умолчанию 60
+  tracker:
+    command: npx
+    args: ["-y", "tracker-mcp"]
+    env_command:                      # значение — вывод команды
+      TRACKER_TOKEN: pass show tracker/token
   remote:
     url: https://example.com/mcp      # Streamable HTTP
     headers:
-      Authorization: Bearer ${TOKEN}
+      Accept-Language: ru
+    headers_command:
+      Authorization: echo "Bearer $(pass show example.com/token)"
     expose: tools                     # отдавать модели схемы как обычные инструменты
 ```
+
+Токен не обязательно держать в файле или экспортировать перед запуском aish: в `env_command` и
+`headers_command` значение переменной или заголовка — вывод команды. Она идёт через `sh -c` в `~`, с
+окружением aish и без stdin, до 30 секунд; конечный перевод строки отрезается, пустой вывод или
+ненулевой код — ошибка старта сервера с концом stderr команды. Команды запускаются при каждом старте
+сервера, вывод нигде не хранится, а в ошибках и в `aish mcp` скрыт, какой бы ни был ключ. Сервер с
+такими командами при запуске aish в фоне не опрашивается: команды ждут первого обращения — вызова
+или `aish tool`. Ключ не может быть сразу в `env` и `env_command` (`headers` и `headers_command`).
+`pass` без ключа в кэше gpg-agent и без графического pinentry пароль здесь может не спросить —
+разблокируй ключ до запуска aish (хотя бы `pass show … >/dev/null`).
 
 - Сервер запускается при первом вызове и живёт до выхода из shell. Список инструментов кэшируется в
   `~/.cache/aish/mcp/`, поэтому в следующий раз команды появятся сразу. Сервер, которого нет в кэше,
@@ -663,6 +680,10 @@ provider = "anthropic"            # или "openai" (Chat Completions), "openai-
 base_url = "http://127.0.0.1:8317" # прокси, например cliproxyapi; нет — официальный API провайдера
 api_key_env = "AISH_API_KEY"
 api_key = ""                      # сам ключ вместо api_key_env; в файле его лучше не держать
+http_proxy = "http://127.0.0.1:8080"  # прокси запросов к модели (см. ниже); ни одного ключа — из окружения
+https_proxy = "http://127.0.0.1:8080" # то же для https://
+all_proxy = "socks5://127.0.0.1:1080" # запасной для схемы без своего; схемы — http, https, socks5, socks5h
+no_proxy = "localhost,.corp.example,10.0.0.0/8" # мимо прокси: хосты, домены, CIDR
 model = "claude-opus-5"           # или $AISH_MODEL
 effort = "high"                   # low … max (у OpenAI ещё none, minimal); нет — уровень модели; или $AISH_EFFORT
 max_tokens = 0                    # лимит ответа; 0 — 32000, на effort xhigh/max — 64000
@@ -714,6 +735,16 @@ thinking-блоки у `anthropic`; у OpenAI при этом ничего не 
 нет ни `api_key`, ни переменной из `api_key_env`, берётся из переменной провайдера:
 `ANTHROPIC_API_KEY` или `OPENAI_API_KEY`.
 
+`http_proxy`, `https_proxy`, `all_proxy` и `no_proxy` — прокси запросов к модели, как у curl:
+`http_proxy` для `http://`, `https_proxy` для `https://`, `all_proxy` — для схемы, у которой своего
+нет (пустое значение — как незаданное), `no_proxy` — мимо прокси (`*` — всё мимо), loopback не
+проксируется никогда. Если задан хоть один из четырёх, переменные окружения (`http_proxy`,
+`HTTPS_PROXY` и прочие, с которыми запущен aish) не читаются вовсе; не задан ни один — работают
+они, как раньше. `all_proxy` (socks5) из окружения aish не берёт, из `config.toml` — берёт. Ключи
+можно задать и в профиле — или выключить там: `http_proxy = ""` (и `all_proxy = ""`, если он задан
+сверху) или `no_proxy = "*"` для локальной Ollama; незаданные профиль берёт у верхнего уровня.
+MCP-серверов ключи не касаются: их запросы идут по окружению aish.
+
 Профили — несколько endpoint'ов в одном файле: рабочий прокси, личный ключ, локальная Ollama.
 Таблица `[profiles.ИМЯ]` накладывается на верхний уровень, а не заменяет его: незаданные в ней
 ключи берутся оттуда, пустая таблица — сам верхний уровень. Кроме ключа API: свой `api_key` или
@@ -721,8 +752,10 @@ thinking-блоки у `anthropic`; у OpenAI при этом ничего не 
 или `base_url`, но не ключ, берёт его из переменной провайдера — ключ одного endpoint'а не уходит
 на другой. И кроме effort, если провайдер профиля другой (пустой `provider` — `anthropic`): без
 своего `effort` такой профиль берёт уровень провайдера по умолчанию — уровня одного провайдера у
-другого может не быть. В профиле бывают `provider`,
-`base_url`, `api_key`, `api_key_env`, `model`, `effort`, `max_tokens` и `context_window`. Действует
+другого может не быть. Профиль наследует прокси верхнего уровня, и тот, что задаёт свой `base_url`:
+прокси — свойство сети, а не endpoint'а. В профиле бывают `provider`,
+`base_url`, `api_key`, `api_key_env`, `http_proxy`, `https_proxy`, `all_proxy`, `no_proxy`, `model`,
+`effort`, `max_tokens` и `context_window`. Действует
 профиль из `$AISH_PROFILE`, иначе из `profile`; нет ни того, ни другого — только верхний уровень,
 как в конфиге без профилей. `$AISH_MODEL` и `$AISH_EFFORT` — поверх выбранного профиля. В shell
 профиль переключает `aish model ИМЯ` (см. «Контекст и модель»).
@@ -766,7 +799,8 @@ git-репозитория (каталога с `.git`) и не в `~` — до�
 проекта не разрешает то, что не разрешили твои политики, а каталогу проекта из одних `forbid` нужен
 свой `permit(principal, action, resource);`; инструмент проекта с именем личного
 пропускается), относительные пути — от каталога с `.aish.toml`; остальные ключи заменяют значение.
-`provider`, `base_url`, `api_key*`, `model`, `effort`, `max_tokens`, `shell`, `sessions_dir`,
+`provider`, `base_url`, `api_key*`, `http_proxy`, `https_proxy`, `all_proxy`, `no_proxy`, `model`,
+`effort`, `max_tokens`, `shell`, `sessions_dir`,
 `mcp_config`, `context_window`, `profile` и `[profiles.*]` в `.aish.toml` запрещены: склонированный
 репозиторий не должен выбирать, куда и за чей счёт уходят запросы. Запрещённый или незнакомый
 ключ — ошибка с именем ключа и файла, запрос не выполняется.

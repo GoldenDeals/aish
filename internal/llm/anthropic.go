@@ -30,6 +30,9 @@ func newAnthropic(cfg config.Config) *anthropicProvider {
 	if cfg.BaseURL != "" {
 		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
 	}
+	if c := httpClient(cfg); c != nil {
+		opts = append(opts, option.WithHTTPClient(c))
+	}
 	return &anthropicProvider{
 		client: anthropic.NewClient(opts...), model: cfg.Model,
 		effort: cfg.Effort, maxTokens: cfg.MaxTokens,

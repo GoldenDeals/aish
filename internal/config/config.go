@@ -29,7 +29,15 @@ type Config struct {
 	// APIKey is used as-is if set; otherwise it is read from APIKeyEnv.
 	APIKey    string `toml:"api_key"`
 	APIKeyEnv string `toml:"api_key_env"`
-	Model     string `toml:"model"`
+	// HTTPProxy, HTTPSProxy and AllProxy are the proxies of the requests
+	// to the model, as curl takes them: AllProxy for a scheme without one
+	// of its own. NoProxy names the hosts reached directly. Any of them
+	// set, the environment (http_proxy and the rest) is not read.
+	HTTPProxy  string `toml:"http_proxy"`
+	HTTPSProxy string `toml:"https_proxy"`
+	AllProxy   string `toml:"all_proxy"`
+	NoProxy    string `toml:"no_proxy"`
+	Model      string `toml:"model"`
 	// Effort is how hard the model thinks, one of the provider's levels.
 	// Empty leaves it to the model.
 	Effort string `toml:"effort"`
@@ -256,6 +264,9 @@ func (c Config) check() error {
 		if f.n < 0 {
 			return fmt.Errorf("%s = %d: must not be negative", f.key, f.n)
 		}
+	}
+	if err := checkProxies("", &c.HTTPProxy, &c.HTTPSProxy, &c.AllProxy); err != nil {
+		return err
 	}
 	if _, err := ParseAge(c.SessionsTTL); err != nil {
 		return fmt.Errorf("sessions_ttl = %q: %w", c.SessionsTTL, err)
