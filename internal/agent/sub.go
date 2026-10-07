@@ -635,7 +635,7 @@ func refused(s *bashScope, cmd, cwd string, env []string) string {
 	in := policy.NewInput(tools.Bash, nil, cwd, env)
 	in.HandOff(cmd)
 	made := fmt.Sprintf("the command runs code made at run time (%s), which cannot be checked", strings.Join(in.Dynamic, ", "))
-	keyword := slices.ContainsFunc(in.Commands, func(argv []string) bool { return argv[0] == "set" && argvSets(argv) != "" })
+	keyword := slices.ContainsFunc(in.Commands, func(argv []string) bool { return argvSets(argv) == setK })
 	switch {
 	case in.ParseError != "":
 		return "cannot parse the command: " + in.ParseError

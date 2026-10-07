@@ -127,17 +127,21 @@ func Load(ctx context.Context, dir string, rules Rules) (*Engine, error) {
 
 // NewInput fills the derived fields of the input for a tool call made from
 // cwd in a shell whose environment is env (nil: the process's own, as for
-// tools.Exec). Cwd is resolved as the paths are, so that
+// tools.Exec) and whose options on are opts, by name, as far as they are
+// known (tools.Exec.Opts): the line the call hands to it runs in the modes
+// they hold from its start, as it does in a bash that started with them in
+// SHELLOPTS and BASHOPTS of env. Cwd is resolved as the paths are, so that
 // `context.paths == [context.cwd]` holds for `cd .` in a directory reached
 // through a symlink. A file tool's relative path is taken from cwd as
 // given, as the tool takes it: from a link, ../x is next to the link.
-func NewInput(tool string, args map[string]any, cwd string, env []string) Input {
+func NewInput(tool string, args map[string]any, cwd string, env []string, opts ...string) Input {
 	home, _ := os.UserHomeDir()
 	in := Input{Tool: tool, Args: args, Cwd: resolve(cwd), Home: resolve(home)}
 	in.sh = shell{
 		pwd:    logical(cwd, getenv(env, "PWD"), in.Cwd),
 		home:   getenv(env, "HOME"),
 		cdpath: getenv(env, "CDPATH"),
+		modes:  shellModes(env, opts),
 		env:    true,
 	}
 	if p, ok := args["path"].(string); ok && p != "" {

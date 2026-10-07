@@ -38,6 +38,10 @@ type shell struct {
 	// quoted tells that the line may hold a ~ or $ at the start of a word
 	// that quotes keep from expanding (see quotedPrefix).
 	quoted bool
+	// modes are the modes the shell is in before the line, by their index
+	// in parser.modes: set -k and shopt -s cdable_vars among its options
+	// (see shellModes).
+	modes [numModes]bool
 	// env tells that the fields above are the shell's, from NewInput: an
 	// Input made otherwise is in Cwd, with Home for HOME.
 	env bool

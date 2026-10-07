@@ -208,6 +208,10 @@ func Load(dir string) *Registry {
 type Exec struct {
 	Dir string
 	Env []string
+	// Opts are the options of set -o and shopt the shell has on, by name,
+	// as its last prompt had them; nil when not known. The policy reads
+	// the commands handed to the shell as it runs them in these.
+	Opts []string
 }
 
 // Getenv is the value of name in Env, or in the process's environment when

@@ -97,7 +97,7 @@ func Parse(src, cwd, home string) (Script, error) {
 // in.
 func parseIn(src string, sh shell) (Script, error) {
 	cwd := sh.pwd
-	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: sh.home}
+	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: sh.home, modes: inShell(sh)}
 	if cwd != "" {
 		p.line = &lines{sh: sh, at: map[*syntax.CallExpr]where{}}
 	}
@@ -690,13 +690,15 @@ var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true
 
 // shellC returns the scripts of `bash -c SCRIPT`, `sh -c`, … wherever a
 // shell is in argv: behind sudo or env, and as an argument of find -exec
-// or anything else that may run it. A script built at run time is marked.
+// or anything else that may run it. A script built at run time is marked;
+// a mode its options start the shell in is followed (see started).
 func (p *parser) shellC(argv []string, static []bool) []string {
 	var code []string
 	for i, a := range argv {
 		if !shells[filepath.Base(a)] {
 			continue
 		}
+		p.started(argv[i+1:], static[i+1:])
 		script, _, _ := shellArgs(argv[i+1:])
 		switch j := i + 1 + script; {
 		case script < 0:
@@ -1267,15 +1269,16 @@ var rebindVars = map[string]bool{
 }
 
 // assigned marks an assignment to the variable name of a value not known
-// before the line runs: one of commandVars runs code made at run time.
-// One of lineVars changes the paths after it whatever its value.
+// before the line runs: one of commandVars runs code made at run time, one
+// of optionVars may start a shell in any mode. One of lineVars changes the
+// paths after it whatever its value.
 func (p *parser) assigned(name string) {
 	switch {
 	case promptVars[name]:
 		p.mark(dynPrompt)
 	case rebindVars[name], loads(name):
 		p.mark(dynRebind)
-	case commandVars[name], lineVars[name]:
+	case commandVars[name], lineVars[name], optionVars[name]:
 		p.mark(dynComputed)
 	}
 }

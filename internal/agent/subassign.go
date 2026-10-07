@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -336,6 +337,11 @@ func argvSets(argv []string) string {
 				_, v, _ := strings.Cut(a, "=")
 				code = append(code, v)
 			}
+		case "bash", "dash", "sh", "zsh":
+			if shellK(argv[1:]) {
+				return setK
+			}
+			code = argv[1:]
 		default:
 			// The words that are no code parse as plain ones.
 			code = argv[1:]
@@ -358,8 +364,12 @@ func argvSets(argv []string) string {
 	case name == "set":
 		for _, a := range argv[1:] {
 			if a == "keyword" || len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.Contains(a, "k") {
-				return "set -k makes NAME=value among the words of any command set a variable"
+				return setK
 			}
+		}
+	case name == "shopt":
+		if shoptKeyword(argv[1:]) {
+			return setK
 		}
 	default:
 		o, ok := nameOptions[name]
@@ -374,6 +384,58 @@ func argvSets(argv []string) string {
 		}
 	}
 	return ""
+}
+
+// setK is why a line that turns set -k on sets variables.
+const setK = "set -k makes NAME=value among the words of any command set a variable"
+
+// shoptKeyword tells whether shopt with the words args turns set -k on:
+// -s and -o among its options, shopt -so keyword or shopt -s -o keyword,
+// and keyword among the names after them.
+func shoptKeyword(args []string) bool {
+	opts := ""
+	for i, a := range args {
+		if a == "--" || len(a) < 2 || a[0] != '-' {
+			if a == "--" {
+				i++
+			}
+			return strings.Contains(opts, "s") && strings.Contains(opts, "o") && slices.Contains(args[i:], "keyword")
+		}
+		opts += a[1:]
+	}
+	return false
+}
+
+// shellK tells whether a shell with the words args starts under set -k:
+// -k or -o keyword among its options, up to its first operand; a name of
+// -o made at run time may be keyword.
+func shellK(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--" || a == "-":
+			return false
+		case a == "--rcfile" || a == "--init-file":
+			i++
+			continue
+		case strings.HasPrefix(a, "--"):
+			continue
+		case len(a) < 2 || a[0] != '-' && a[0] != '+':
+			return false
+		}
+		for _, r := range a[1:] {
+			switch {
+			case r == 'k' && a[0] == '-':
+				return true
+			case (r == 'o' || r == 'O') && i+1 < len(args):
+				i++
+				if a[0] == '-' && r == 'o' && (args[i] == "keyword" || strings.ContainsAny(args[i], "$`")) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // optionNames are the names among the words args of a builtin, as

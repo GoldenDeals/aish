@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -33,8 +34,12 @@ type mode struct {
 	// on holds the commands of the line that may run in the mode.
 	on map[*syntax.CallExpr]bool
 	// ever tells that the line turns the mode on somewhere: the bodies of
-	// its functions and the code it hands to a shell may run in it.
+	// its functions and the code it hands to a shell may run in it. So
+	// does a shell the line starts in the mode (see startsIn, started).
 	ever bool
+	// shell tells that the shell is in the mode before the line runs: its
+	// options have it on (see shellModes).
+	shell bool
 }
 
 func (m *mode) set(call *syntax.CallExpr, on bool) {
@@ -66,10 +71,11 @@ const (
 // commands before it in the mode, or in a function, which may be called
 // before them: the whole line runs in the mode then. A function's body
 // runs in a mode the line turns on anywhere, and so does the code the line
-// hands to a shell, which the parser walks after the line. A mode such
+// hands to a shell, which the parser walks after the line. A line the
+// shell runs in a mode already runs in it from its start. A mode such
 // code turns on the walk of the line has not followed, and one the line
-// leaves on the lines after it run in, which no check of theirs knows:
-// either is marked computed.
+// leaves on the lines after it run in, which no check of theirs knows
+// unless the shell was in it before: either is marked computed.
 func (p *parser) modesOf(stmts []*syntax.Stmt, depth int) {
 	// A step is a command entered, which runs in the modes the line is in
 	// then, or its statement left, which turns them.
@@ -128,9 +134,9 @@ func (p *parser) modesOf(stmts []*syntax.Stmt, depth int) {
 			}
 		}
 		if depth == 0 {
-			md.ever = on
+			md.ever = on || md.shell
 		}
-		state := all || depth > 0 && md.ever
+		state := all || md.shell || depth > 0 && md.ever
 		for _, s := range steps {
 			switch {
 			case s.inFunc && !s.left:
@@ -146,7 +152,7 @@ func (p *parser) modesOf(stmts []*syntax.Stmt, depth int) {
 		}
 		switch {
 		case !on:
-		case depth == 0 && state:
+		case depth == 0 && state && !md.shell:
 			p.mark(dynComputed)
 		case depth > 0 && !p.remote:
 			p.mark(dynComputed)
@@ -364,4 +370,96 @@ func (sh shell) byName(w string) bool {
 		}
 	}
 	return true
+}
+
+// modeOpts are the options of the modes, by their index in parser.modes,
+// with the variable a bash takes each from when it starts: those of set -o
+// from SHELLOPTS, those of shopt from BASHOPTS, lists of names split at
+// colons. bash keeps both readonly, and exported they hold the options it
+// has on.
+var modeOpts = [numModes]struct{ name, from string }{
+	keywordMode: {"keyword", "SHELLOPTS"},
+	cdableMode:  {"cdable_vars", "BASHOPTS"},
+}
+
+// optionVars are the variables of modeOpts. bash refuses an assignment to
+// them, but env, sudo and a shell other than bash pass them on all the
+// same: env SHELLOPTS=keyword bash -c 'git fetch GIT_SSH_COMMAND="sudo ls"'
+// runs sudo. A value made at run time may start a shell in any mode.
+var optionVars = map[string]bool{"SHELLOPTS": true, "BASHOPTS": true}
+
+// shellModes are the modes of a shell whose options on are opts, by name,
+// or that started with env: a bash takes its options from SHELLOPTS and
+// BASHOPTS there, and so do those it starts once they are exported.
+func shellModes(env, opts []string) (modes [numModes]bool) {
+	for m, o := range modeOpts {
+		modes[m] = slices.Contains(opts, o.name) || slices.Contains(strings.Split(getenv(env, o.from), ":"), o.name)
+	}
+	return modes
+}
+
+// inShell is the modes of the parser of a line the shell sh runs.
+func inShell(sh shell) (modes [numModes]mode) {
+	for m, on := range sh.modes {
+		modes[m].shell = on
+	}
+	return modes
+}
+
+// startsIn looks at an assignment of value, static, to the variable name:
+// one of optionVars starts a bash in the modes of the options it lists,
+// and the code the line hands to a shell runs in them, as in one the line
+// turns on itself (see modesOf). It tells whether name is one.
+func (p *parser) startsIn(name, value string) bool {
+	if !optionVars[name] {
+		return false
+	}
+	for m, o := range modeOpts {
+		if o.from == name && slices.Contains(strings.Split(value, ":"), o.name) {
+			p.modes[m].ever = true
+		}
+	}
+	return true
+}
+
+// started looks at the words args after the name of a shell, its options
+// as bash reads them up to its first operand: -k, -o keyword and -O
+// cdable_vars start it in a mode, and the code it is handed runs in it, as
+// in one the line turns on itself. A word made at run time among them may
+// be any option.
+func (p *parser) started(args []string, static []bool) {
+	on := func(m int) { p.modes[m].ever = true }
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case !static[i]:
+			for m := range p.modes {
+				on(m)
+			}
+			return
+		case a == "--" || a == "-":
+			return
+		case a == "--rcfile" || a == "--init-file":
+			i++
+		case strings.HasPrefix(a, "--"):
+		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
+			for _, r := range a[1:] {
+				if r == 'k' && a[0] == '-' {
+					on(keywordMode)
+				}
+				if r != 'o' && r != 'O' || i+1 == len(args) {
+					continue
+				}
+				// -o takes a name of set -o, -O one of shopt.
+				i++
+				for m, o := range modeOpts {
+					if a[0] == '-' && (r == 'o') == (o.from == "SHELLOPTS") && (!static[i] || args[i] == o.name) {
+						on(m)
+					}
+				}
+			}
+		default:
+			return
+		}
+	}
 }

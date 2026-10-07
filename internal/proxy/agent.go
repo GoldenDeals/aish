@@ -149,7 +149,7 @@ func (p *Proxy) agentStart(ctx context.Context, ap rpc.AgentParams) error {
 		// the shell run that command after this one. Not before the turn:
 		// the request that has it may hand a command off yet.
 		_ = os.WriteFile(filepath.Join(p.run, "next.cmd"), nil, 0o600)
-		return a.Start(ctx, ap.Text, execOf(ap))
+		return a.Start(ctx, ap.Text, p.shellExec(ap))
 	})
 }
 
@@ -169,7 +169,7 @@ func (p *Proxy) agentResume(ctx context.Context, ap rpc.AgentParams) error {
 		return err
 	}
 	return p.request(ctx, execOf(ap), false, func(ctx context.Context, a *agent.Agent) error {
-		return a.Resume(ctx, ap.ID, ap.RC, execOf(ap))
+		return a.Resume(ctx, ap.ID, ap.RC, p.shellExec(ap))
 	})
 }
 
@@ -187,6 +187,25 @@ func (p *Proxy) compact(ctx context.Context, ap rpc.AgentParams) error {
 }
 
 func execOf(ap rpc.AgentParams) tools.Exec { return tools.Exec{Dir: ap.Cwd, Env: ap.Env} }
+
+// shellExec is execOf with the options of set -o and shopt the shell had on
+// at its last prompt, as saveState read them: the policy reads the agent's
+// commands in the modes the shell runs them in, set -k from ~/.bashrc
+// included. A command of the request that turns one on is ahead of them
+// until the next prompt; the policy marks such a line itself.
+func (p *Proxy) shellExec(ap rpc.AgentParams) tools.Exec {
+	ex := execOf(ap)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cur != nil {
+		for name, line := range p.cur.Opts {
+			if line == "set -o "+name || line == "shopt -s "+name {
+				ex.Opts = append(ex.Opts, name)
+			}
+		}
+	}
+	return ex
+}
 
 // cancelRequest stops the request in progress, if any, and those waiting
 // for it: Ctrl+C reached the `aish agent` holding one of them, which asks
