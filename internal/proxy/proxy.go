@@ -4,6 +4,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -420,6 +421,11 @@ func (p *Proxy) takeKeys(b []byte) []byte {
 	}
 	if p.line != nil {
 		p.line.typed()
+		if bytes.ContainsAny(b, "\r\n") {
+			if s := p.line.submit(); s != nil {
+				p.emit(s)
+			}
+		}
 	}
 	if p.form != nil {
 		return p.formKey(b)

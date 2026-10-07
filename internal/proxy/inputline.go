@@ -77,6 +77,16 @@ func (l *inputLine) typed() {
 	}
 }
 
+// submit erases the status when Enter is pressed on an empty line: the
+// prompt it was drawn for is left behind, and the next one gets its own.
+// With text on the line the status is already gone.
+func (l *inputLine) submit() []byte {
+	if !l.shown || l.lost || l.wrap {
+		return nil
+	}
+	return l.erase(nil)
+}
+
 // flush is what feed held back of a sequence cut short, for the terminal
 // to get when the line is no longer followed.
 func (l *inputLine) flush() []byte {
