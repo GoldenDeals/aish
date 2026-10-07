@@ -53,7 +53,7 @@ func TestHandOff(t *testing.T) {
 		{"rules without the line", rules, ssh(""), Allow, ""},
 		{"example without the line", example, ssh(""), Allow, ""},
 		// What does not parse is matched as one command.
-		{"rules, unparsed", rules, ssh("echo 'oops"), Ask, `matches "echo 'oops"`},
+		{"rules, unparsed", rules, ssh("echo 'oops"), Ask, `matches "echo 'oops"; ` + unparsedReason(t, "echo 'oops")},
 		{"example, unparsed", example, ssh("echo 'oops"), Ask, "could not parse the command"},
 	} {
 		d, err := c.e.Check(ctx, c.in)

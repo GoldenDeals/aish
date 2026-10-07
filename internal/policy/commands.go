@@ -1,9 +1,11 @@
 package policy
 
 import (
+	"errors"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -70,7 +72,9 @@ func Commands(src string) ([][]string, error) {
 // The code a line hands to eval, bash -c and the like is parsed as a line
 // of its own, down to maxDepth, when it is static; what cannot be known
 // before the line runs is named in Dynamic. On a parse error, of the line
-// or of the code in it, the script holds what was parsed before it.
+// or of the code in it, the script holds the commands before the error,
+// which bash runs, and those of the rest of the code in the line; the
+// error is the line's own, else that of the first code that fails.
 func Parse(src, cwd, home string) (Script, error) {
 	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: home}
 	err := p.parse(src, 0, false)
@@ -129,14 +133,11 @@ type write struct {
 func (p *parser) mark(kind string) { p.kinds[kind] = true }
 
 func (p *parser) parse(src string, depth int, remote bool) error {
-	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
-	if err != nil {
-		return err
-	}
+	stmts, err := statements(src)
 	p.remote = remote
 	var nested []snippet
 	done := map[*syntax.CallExpr]bool{}
-	syntax.Walk(f, func(n syntax.Node) bool {
+	visit := func(n syntax.Node) bool {
 		switch n := n.(type) {
 		case *syntax.Stmt:
 			// The redirections are the statement's: they tell what a shell
@@ -156,18 +157,78 @@ func (p *parser) parse(src string, depth int, remote bool) error {
 			p.redirect(n)
 		}
 		return true
-	})
+	}
+	for _, s := range stmts {
+		syntax.Walk(s, visit)
+	}
 	if len(nested) > 0 && depth >= maxDepth {
 		// What is not parsed must not pass for checked.
 		p.mark(dynDepth)
-		return nil
+		return err
 	}
+	// bash -c "'" fails and the bash -c after it runs all the same: an
+	// error in one piece of code leaves the others to be parsed.
 	for _, s := range nested {
-		if err := p.parse(s.src, depth+1, s.remote); err != nil {
-			return err
+		if e := p.parse(s.src, depth+1, s.remote); err == nil {
+			err = e
 		}
 	}
-	return nil
+	return err
+}
+
+// maxReopen is how many here-documents left open statements closes: one
+// at a time, as the parser stops at the first.
+const maxReopen = 8
+
+// statements parses src as bash runs it: command by command, each one as
+// soon as it is whole. On a syntax error the commands before it are
+// returned with the error: bash, in eval and bash -c as in a script on
+// stdin, has run the lines before the error by then and stops there.
+// Those before it on its own line bash does not run; a policy that sees
+// them too is only stricter. A here-document left open is no error to
+// bash, which ends it at the end of the input with a warning and runs the
+// command: it is closed here too, and the error is returned all the same,
+// for a policy to know the line did not parse as written.
+func statements(src string) ([]*syntax.Stmt, error) {
+	stmts, first := upToError(src)
+	err := first
+	for range maxReopen {
+		stop, open := unclosedHdoc(err)
+		if !open {
+			break
+		}
+		src += "\n" + stop
+		stmts, err = upToError(src)
+	}
+	return stmts, first
+}
+
+// upToError is the statements of src before its first syntax error.
+func upToError(src string) ([]*syntax.Stmt, error) {
+	var stmts []*syntax.Stmt
+	for s, err := range syntax.NewParser(syntax.Variant(syntax.LangBash)).StmtsSeq(strings.NewReader(src)) {
+		if err != nil {
+			// A statement that comes with the error is not whole.
+			return stmts, err
+		}
+		stmts = append(stmts, s)
+	}
+	return stmts, nil
+}
+
+// unclosedHdoc tells whether err is of a here-document left open, and the
+// line that ends it.
+func unclosedHdoc(err error) (string, bool) {
+	var pe syntax.ParseError
+	if !errors.As(err, &pe) {
+		return "", false
+	}
+	quoted, ok := strings.CutPrefix(pe.Text, "unclosed here-document ")
+	if !ok {
+		return "", false
+	}
+	stop, uerr := strconv.Unquote(quoted)
+	return stop, uerr == nil && !strings.Contains(stop, "\n")
 }
 
 // call records the argv of a simple command and of the commands its

@@ -40,12 +40,13 @@ func TestRulesProgramName(t *testing.T) {
 		{`"/usr/bin/sudo" ls 'oops`, Deny, `matches "sudo *"`},
 		{"/usr/bin/sudo ls\necho 'oops", Deny, `matches "sudo *"`},
 		{"  sudo ls\necho 'oops", Deny, `matches "sudo *"`},
-		// The name is the program's, not an operand's.
+		// The name is the program's, not an operand's; a line that does not
+		// parse asks all the same.
 		{"ls /usr/bin/sudo", Allow, ""},
 		{"/usr/bin/sudoedit x", Allow, ""},
 		{"/opt/xsudo ls", Allow, ""},
 		{"/bin/rm -rf /tmp/x", Allow, ""},
-		{"echo /usr/bin/sudo ls 'oops", Allow, ""},
+		{"echo /usr/bin/sudo ls 'oops", Ask, unparsedReason(t, "echo /usr/bin/sudo ls 'oops")},
 	} {
 		d, err := e.Check(ctx, callInput("bash", map[string]any{"command": c.cmd}, home))
 		if err != nil {
@@ -65,6 +66,7 @@ func TestRulesUnparsedWrite(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	const unparsed = "cannot parse the line to see where it writes"
+	etc := "writes outside home: " + resolve("/etc/x")
 	for _, c := range []struct {
 		setting      string
 		cmd          string
@@ -74,9 +76,10 @@ func TestRulesUnparsedWrite(t *testing.T) {
 		{Ask, `echo x > /etc/x 'oops`, Ask, unparsed},
 		{Allow, `echo x > /etc/x 'oops`, Allow, ""},
 		{"", `echo x > /etc/x 'oops`, Allow, ""},
-		{Deny, "echo x >> /etc/x\necho 'oops", Deny, unparsed},
+		// The lines before the error are parsed, and their writes known.
+		{Deny, "echo x >> /etc/x\necho 'oops", Deny, etc + "; " + unparsed},
 		{Deny, `echo x &>/etc/x "oops`, Deny, unparsed},
-		{Deny, "bash -c 'echo x > /etc/x\necho \"oops'", Deny, unparsed},
+		{Deny, "bash -c 'echo x > /etc/x\necho \"oops'", Deny, etc + "; " + unparsed},
 		{Deny, `echo 'oops`, Allow, ""},
 		{Deny, `cat < /etc/x 'oops`, Allow, ""},
 	} {

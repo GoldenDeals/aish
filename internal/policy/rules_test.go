@@ -75,9 +75,10 @@ func TestRules(t *testing.T) {
 		// Matching both lists, the command is denied and the question is moot.
 		{"bash", map[string]any{"command": "sudo apt install ripgrep"}, Deny, `matches "sudo *"`},
 		{"bash", map[string]any{"command": "apt install x; sudo ls"}, Deny, `matches "sudo *"`},
-		// What does not parse is matched as one command.
+		// What does not parse is matched as one command, and asks unless
+		// denied.
 		{"bash", map[string]any{"command": "sudo ls 'oops"}, Deny, `matches "sudo *"`},
-		{"bash", map[string]any{"command": "echo 'oops"}, Allow, ""},
+		{"bash", map[string]any{"command": "echo 'oops"}, Ask, unparsedReason(t, "echo 'oops")},
 		{"write_file", map[string]any{"path": "notes.txt"}, Allow, ""},
 		{"write_file", map[string]any{"path": filepath.Join(home, "a", "b.txt")}, Allow, ""},
 		{"write_file", map[string]any{"path": "/etc/hosts"}, Deny, "writes outside home: " + resolve("/etc/hosts")},

@@ -66,10 +66,18 @@ func (c rulesChecker) Check(ctx context.Context, in Input) (Decision, error) {
 			ds = append(ds, matches(Deny, c.Deny, text)...)
 			ds = append(ds, matches(Ask, c.Ask, text)...)
 		}
-		// A command no pattern has seen may be one a pattern names. Without
-		// patterns nothing is forbidden, and there is nothing to bypass.
-		if len(in.Dynamic) > 0 && len(c.Deny)+len(c.Ask) > 0 {
-			ds = append(ds, Decision{Action: Ask, Reason: fmt.Sprintf("command built at run time (%s)", strings.Join(in.Dynamic, ", "))})
+		// A command no pattern has seen may be one a pattern names: one
+		// built at run time, or one past a parse error: the parser stops
+		// there, and bash, which takes some lines the parser does not, may
+		// go on. Without patterns nothing is forbidden, and there is
+		// nothing to bypass.
+		if len(c.Deny)+len(c.Ask) > 0 {
+			if len(in.Dynamic) > 0 {
+				ds = append(ds, Decision{Action: Ask, Reason: fmt.Sprintf("command built at run time (%s)", strings.Join(in.Dynamic, ", "))})
+			}
+			if in.ParseError != "" {
+				ds = append(ds, Decision{Action: Ask, Reason: fmt.Sprintf("cannot parse the line (%s)", in.ParseError)})
+			}
 		}
 		for _, path := range in.Writes {
 			ds = append(ds, c.write(path, in.Home)...)
