@@ -139,7 +139,7 @@ type write struct {
 func (p *parser) mark(kind string) { p.kinds[kind] = true }
 
 func (p *parser) parse(src string, depth int, remote bool) error {
-	stmts, err := statements(src)
+	stmts, err := p.statements(src)
 	p.remote = remote
 	var nested []snippet
 	done := map[*syntax.CallExpr]bool{}
@@ -194,17 +194,22 @@ const maxReopen = 8
 // them too is only stricter. A here-document left open is no error to
 // bash, which ends it at the end of the input with a warning and runs the
 // command: it is closed here too, and the error is returned all the same,
-// for a policy to know the line did not parse as written.
-func statements(src string) ([]*syntax.Stmt, error) {
+// for a policy to know the line did not parse as written. So is a
+// construct bash fails in only when it runs it (see arith): it is
+// rewritten, and the line marked computed.
+func (p *parser) statements(src string) ([]*syntax.Stmt, error) {
 	stmts, first := upToError(src)
 	err := first
-	for range maxReopen {
-		stop, open := unclosedHdoc(err)
-		if !open {
+	for range maxReopen + maxArith {
+		if stop, open := unclosedHdoc(err); open {
+			src += "\n" + stop
+			stmts, err = upToError(src)
+		} else if r, ok := arith(src, err); ok {
+			p.mark(dynComputed)
+			src, stmts, err = r.src, r.stmts, r.err
+		} else {
 			break
 		}
-		src += "\n" + stop
-		stmts, err = upToError(src)
 	}
 	return stmts, first
 }
