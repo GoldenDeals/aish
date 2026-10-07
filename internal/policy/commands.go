@@ -144,6 +144,9 @@ type parser struct {
 	// the index of each in out; nil without a cwd.
 	line  *lines
 	sites []site
+	// evals is the code of the strings bash evaluates as the line runs
+	// (see evaluates), kept as the line is walked and parsed after it.
+	evals []string
 }
 
 // snippet is code a line hands to a shell, here or on another machine.
@@ -170,6 +173,7 @@ func (p *parser) parse(src string, depth int, remote bool) error {
 	var nested []snippet
 	done := map[*syntax.CallExpr]bool{}
 	visit := func(n syntax.Node) bool {
+		p.evaluates(n)
 		switch n := n.(type) {
 		case *syntax.Stmt:
 			// The redirections are the statement's: they tell what a shell
@@ -198,6 +202,9 @@ func (p *parser) parse(src string, depth int, remote bool) error {
 		syntax.Walk(s, visit)
 	}
 	nested, p.varCode = append(nested, p.varCode...), nil
+	for _, src := range p.takeEvals() {
+		nested = append(nested, snippet{src, remote})
+	}
 	if len(nested) > 0 && depth >= maxDepth {
 		// What is not parsed must not pass for checked.
 		p.mark(dynDepth)
@@ -1204,6 +1211,7 @@ func (p *parser) named(s string) {
 	if ok && strings.ContainsAny(sub, "$`") {
 		p.mark(dynComputed)
 	}
+	p.subscript(s)
 	p.assigned(name)
 }
 
@@ -1257,6 +1265,7 @@ func (p *parser) declWord(v string, export bool, nameref *bool) {
 	if *nameref {
 		p.named(value)
 	}
+	p.declValue(value)
 }
 
 // isStatic tells whether a word is the same text whatever the shell's

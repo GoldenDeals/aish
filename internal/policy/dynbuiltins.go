@@ -13,8 +13,10 @@ import (
 // and its kin run as a command (behind builtin or command) set variables,
 // PS1 and PATH among them; fc runs commands of the history. A word of
 // theirs made at run time may be any option or name: they are marked for
-// it.
+// it. let, test and [ are here for the code in the subscripts of their
+// strings (see evaluates), as are unset and the names of the others.
 var setters = map[string]func(p *parser, args []string, static []bool) []string{
+	"[":         (*parser).test,
 	"bind":      (*parser).bind,
 	"compgen":   (*parser).complete,
 	"complete":  (*parser).complete,
@@ -24,12 +26,14 @@ var setters = map[string]func(p *parser, args []string, static []bool) []string{
 	"fc":        (*parser).fc,
 	"getopts":   (*parser).getopts,
 	"hash":      (*parser).hash,
+	"let":       (*parser).let,
 	"local":     declares(false),
 	"mapfile":   (*parser).mapfile,
 	"printf":    (*parser).printf,
 	"read":      (*parser).read,
 	"readarray": (*parser).mapfile,
 	"readonly":  declares(false),
+	"test":      (*parser).test,
 	"typeset":   declares(false),
 	"unset":     (*parser).unset,
 	"wait":      (*parser).wait,
@@ -328,6 +332,7 @@ func (p *parser) unset(args []string, static []bool) []string {
 			// unset HOME makes $HOME/x /x.
 			p.mark(dynComputed)
 		}
+		p.subscript(args[i])
 	}
 	return nil
 }
