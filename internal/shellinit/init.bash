@@ -470,8 +470,11 @@ unset __aish_km __aish_k __aish_b __aish_q
 
 HISTIGNORE="${HISTIGNORE:+$HISTIGNORE:}__aish_ask *"
 PS0='${__aish_ps0}'"${PS0-}"
+# __aish_precmd returns the code of the user's command, for $? in PS1 and in
+# the PROMPT_COMMAND after it. First in a list, that code, when not 0,
+# neither runs the user's ERR trap a second time nor exits under set -e.
 if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then
-	PROMPT_COMMAND=(__aish_precmd "${PROMPT_COMMAND[@]}")
+	PROMPT_COMMAND=('__aish_precmd && :' "${PROMPT_COMMAND[@]}")
 else
-	PROMPT_COMMAND="__aish_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+	PROMPT_COMMAND="__aish_precmd && :${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 fi
