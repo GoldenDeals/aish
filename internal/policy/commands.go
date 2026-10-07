@@ -152,8 +152,8 @@ type parser struct {
 	// evals is the code of the strings bash evaluates as the line runs
 	// (see evaluates), kept as the line is walked and parsed after it.
 	evals []string
-	// modes are where the line runs its commands under set -k and shopt -s
-	// cdable_vars (see modesOf).
+	// modes are where the line runs its commands in the modes of the shell:
+	// set -k, shopt -s cdable_vars and others (see modesOf).
 	modes [numModes]mode
 	// prompts follows ${x@P} through the line (see prompt).
 	prompts prompts
@@ -177,7 +177,7 @@ func (p *parser) mark(kind string) { p.kinds[kind] = true }
 func (p *parser) parse(src string, depth int, remote bool) error {
 	stmts, err := p.statements(src)
 	p.remote = remote
-	p.modesOf(stmts, depth)
+	p.modesOf(src, stmts, depth)
 	if depth == 0 && p.line != nil {
 		p.line.track(stmts)
 	}

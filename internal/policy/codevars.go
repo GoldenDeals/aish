@@ -20,7 +20,8 @@ var commandVars = map[string]bool{
 
 // loaderVars have programs load code from where they say: a library into
 // every program (LD_PRELOAD), a module (PYTHONPATH, NODE_OPTIONS=--require),
-// key bindings (INPUTRC), the config of git, which runs commands of its own
+// key bindings (INPUTRC), the translations of $"…", whose $(…) bash runs
+// (TEXTDOMAINDIR), the config of git, which runs commands of its own
 // (core.sshCommand, an alias with !), that of kubectl and its kin, whose
 // users run the programs of exec (KUBECONFIG, and the aliases of KUBERC),
 // and that of docker, which runs the helpers of credsStore and the plugins
@@ -33,6 +34,7 @@ var loaderVars = map[string]bool{
 	"LD_AUDIT": true, "LD_LIBRARY_PATH": true, "LD_PRELOAD": true, "NODE_OPTIONS": true, "NODE_PATH": true,
 	"PERL5DB": true, "PERL5LIB": true, "PERL5OPT": true, "PERLLIB": true, "PYTHONHOME": true,
 	"PYTHONPATH": true, "PYTHONSTARTUP": true, "RUBYLIB": true, "RUBYOPT": true,
+	"TEXTDOMAIN": true, "TEXTDOMAINDIR": true,
 }
 
 // loads tells whether the variable name has programs load code: see

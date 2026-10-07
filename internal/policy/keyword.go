@@ -20,12 +20,33 @@ import (
 // cdable_vars, cd NAME with no directory NAME to enter goes to the one the
 // variable NAME holds. A line that turns them on runs its commands after
 // that in them: the parser follows them through the line (see modesOf).
+//
+// Two more change the code bash reads. With set -o history and set -H on,
+// each line it reads goes through history expansion first: !!:s/x/s/ is
+// the line before with x made s, so is ^x^s at the start of a line, and
+// histchars may make them any characters: no word of the code is surely
+// what the parser sees. eval and bash -c read their code with history off,
+// whatever the options: the line, which the user's shell runs by eval, is
+// out of the mode until a set -o history in it, and so is the script of
+// bash -c; a shell that reads its commands from stdin or a file starts in
+// it under -i, -o history and -H, or with them in SHELLOPTS. With shopt -u
+// interactive_comments an interactive shell, as the user's is, in eval
+// too, reads # as any other character: echo A # ; sudo ls runs sudo. Code
+// that may be read under history expansion, and code with a comment that
+// may be read without comments, is computed (see misreads).
+//
+// $"…" is translated by the .mo files of TEXTDOMAIN under TEXTDOMAINDIR in
+// the locale of the shell, and the translation expanded as "…" is unless
+// shopt -s noexpand_translation: the $(…) of a file runs. The shell may
+// hold both without exporting them: a $"…" is computed wherever it is.
 
 // The modes of the shell a line may run its commands in, by their index in
 // parser.modes.
 const (
-	keywordMode = iota // set -k
-	cdableMode         // shopt -s cdable_vars
+	keywordMode  = iota // set -k
+	cdableMode          // shopt -s cdable_vars
+	histMode            // set -o history and set -H: history expansion
+	commentsMode        // shopt -u interactive_comments: # starts no comment
 	numModes
 )
 
@@ -38,7 +59,8 @@ type mode struct {
 	// does a shell the line starts in the mode (see startsIn, started).
 	ever bool
 	// shell tells that the shell is in the mode before the line runs: its
-	// options have it on (see shellModes).
+	// options have it on (see shellModes). Of histMode, that the shells
+	// the line starts take it from SHELLOPTS: eval runs the line out of it.
 	shell bool
 }
 
@@ -75,8 +97,10 @@ const (
 // shell runs in a mode already runs in it from its start. A mode such
 // code turns on the walk of the line has not followed, and one the line
 // leaves on the lines after it run in, which no check of theirs knows
-// unless the shell was in it before: either is marked computed.
-func (p *parser) modesOf(stmts []*syntax.Stmt, depth int) {
+// unless the shell was in it before: either is marked computed. So is src,
+// the code, where bash may read it as other code in a mode (see misreads),
+// and a $"…" in it.
+func (p *parser) modesOf(src string, stmts []*syntax.Stmt, depth int) {
 	// A step is a command entered, which runs in the modes the line is in
 	// then, or its statement left, which turns them.
 	type step struct {
@@ -120,6 +144,10 @@ func (p *parser) modesOf(stmts []*syntax.Stmt, depth int) {
 				if call, ok := n.Cmd.(*syntax.CallExpr); ok && in < 0 {
 					steps = append(steps, step{call: call, turns: turns(call), left: true, inFunc: funcs > 0, deferred: funcs+loops > 0})
 				}
+			case *syntax.DblQuoted:
+				if n.Dollar && in > 0 {
+					p.mark(dynComputed)
+				}
 			}
 			return true
 		})
@@ -133,10 +161,14 @@ func (p *parser) modesOf(stmts []*syntax.Stmt, depth int) {
 				all = all || s.deferred
 			}
 		}
+		own := md.shell && m != histMode
 		if depth == 0 {
-			md.ever = on || md.shell
+			md.ever = on || own
 		}
-		state := all || md.shell || depth > 0 && md.ever
+		if (on || own || depth > 0 && md.ever) && misreads(m, src) {
+			p.mark(dynComputed)
+		}
+		state := all || own || depth > 0 && md.ever
 		for _, s := range steps {
 			switch {
 			case s.inFunc && !s.left:
@@ -152,7 +184,7 @@ func (p *parser) modesOf(stmts []*syntax.Stmt, depth int) {
 		}
 		switch {
 		case !on:
-		case depth == 0 && state && !md.shell:
+		case depth == 0 && state && !own:
 			p.mark(dynComputed)
 		case depth > 0 && !p.remote:
 			p.mark(dynComputed)
@@ -164,6 +196,48 @@ func (p *parser) modesOf(stmts []*syntax.Stmt, depth int) {
 	}
 }
 
+// misreads tells whether bash, reading src in the mode m, may run other
+// code than the parser reads in it: any under history expansion, one with
+// a comment where # starts none.
+func misreads(m int, src string) bool {
+	switch m {
+	case histMode:
+		return true
+	case commentsMode:
+		return commented(src)
+	}
+	return false
+}
+
+// commented tells whether src has a comment: a # the parser takes for the
+// start of one. Up to the first, src reads as it does without comments,
+// and so does src that fails to parse before it, where bash stops too; a
+// # in src that fails to parse is taken for one, wherever it is.
+func commented(src string) bool {
+	if !strings.Contains(src, "#") {
+		return false
+	}
+	f, err := syntax.NewParser(syntax.KeepComments(true), syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
+	found := err != nil
+	if f != nil && !found {
+		syntax.Walk(f, func(n syntax.Node) bool {
+			_, c := n.(*syntax.Comment)
+			found = found || c
+			return !found
+		})
+	}
+	return found
+}
+
+// allOn is what a word made at run time among the options of set or shopt
+// may do: turn any mode on.
+func allOn() (t [numModes]turn) {
+	for m := range t {
+		t[m] = turnsOn
+	}
+	return t
+}
+
 // turns tells what call does to each mode, as the builtin it runs: set or
 // shopt, by itself or behind builtin and command.
 func turns(call *syntax.CallExpr) (t [numModes]turn) {
@@ -173,69 +247,75 @@ func turns(call *syntax.CallExpr) (t [numModes]turn) {
 	}
 	switch argv[0] {
 	case "set":
-		t[keywordMode], _ = setTurns(argv[1:], static[1:])
+		t, _ = setTurns(argv[1:], static[1:])
 	case "shopt":
 		t = shoptTurns(argv[1:], static[1:])
 	}
 	return t
 }
 
-// setTurns reads the words of set as bash 5.3 does for keyword: options
+// setTurns reads the words of set as bash 5.3 does for the modes: options
 // up to "-", "--" or the first word that starts with neither - nor +, an o
 // in them taking the next word for the name of an option unless that is
 // empty or starts with one of them. A word made at run time among them may
-// be any option (computed): it may turn keyword on. Turned on and off in
-// one set, keyword is on: set stops at an option it does not know, with
+// be any option (computed): it may turn any mode on. Turned on and off in
+// one set, a mode is on: set stops at an option it does not know, with
 // the options before it set.
-func setTurns(args []string, static []bool) (t turn, computed bool) {
-	on, off := false, false
+func setTurns(args []string, static []bool) (t [numModes]turn, computed bool) {
+	var on, off [numModes]bool
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if !static[i] {
-			return turnsOn, true
+			return allOn(), true
 		}
 		if a == "-" || a == "--" || a == "" || a[0] != '-' && a[0] != '+' {
 			break
 		}
 		for _, c := range a[1:] {
-			name := ""
+			var o *modeOpt
 			switch {
-			case c == 'k':
-				name = "keyword"
-			case c != 'o' || i+1 == len(args):
+			case c != 'o':
+				o = flagged(c)
+			case i+1 == len(args):
 			case !static[i+1]:
-				return turnsOn, true
+				return allOn(), true
 			case args[i+1] != "" && args[i+1][0] != '-' && args[i+1][0] != '+':
 				i++
-				name = args[i]
+				o = named(args[i], false)
 			}
-			if name == "keyword" {
-				on = on || a[0] == '-'
-				off = off || a[0] == '+'
+			switch {
+			case o == nil:
+			case (a[0] == '-') != o.off:
+				on[o.mode] = true
+			default:
+				off[o.mode] = true
 			}
 		}
 	}
-	switch {
-	case on:
-		return turnsOn, false
-	case off:
-		return turnsOff, false
+	for m := range t {
+		switch {
+		case on[m]:
+			t[m] = turnsOn
+		case off[m]:
+			t[m] = turnsOff
+		}
 	}
-	return keeps, false
+	return t, false
 }
 
 // shoptTurns reads the words of shopt as bash does: its options -s, -u,
 // -o (with which the names are those of set -o), -p and -q up to the first
 // word that is none, then the names of options. A word made at run time
-// among the options may be any of them and names, among the names of -s
-// any name: it may turn either mode on.
+// among the options may be any of them and names, among the names any
+// name: it may turn any mode on that the option, set or unset, puts the
+// shell in.
 func shoptTurns(args []string, static []bool) (t [numModes]turn) {
 	set, unset, o := false, false, false
 	i := 0
 	for ; i < len(args); i++ {
 		a := args[i]
 		if !static[i] {
-			return [numModes]turn{turnsOn, turnsOn}
+			return allOn()
 		}
 		if a == "--" {
 			i++
@@ -252,16 +332,16 @@ func shoptTurns(args []string, static []bool) (t [numModes]turn) {
 		// Neither lists the options; both is an error.
 		return t
 	}
-	m, name := cdableMode, "cdable_vars"
-	if o {
-		m, name = keywordMode, "keyword"
-	}
 	for j := i; j < len(args); j++ {
-		switch {
-		case !static[j] && set, args[j] == name && set:
-			t[m] = turnsOn
-		case static[j] && args[j] == name:
-			t[m] = turnsOff
+		for _, opt := range modeOpts {
+			switch {
+			case opt.shopt == o:
+				// -o names the options of set -o, else those of shopt.
+			case !static[j] && set != opt.off, args[j] == opt.name && set != opt.off:
+				t[opt.mode] = turnsOn
+			case static[j] && args[j] == opt.name && t[opt.mode] != turnsOn:
+				t[opt.mode] = turnsOff
+			}
 		}
 	}
 	return t
@@ -372,14 +452,65 @@ func (sh shell) byName(w string) bool {
 	return true
 }
 
-// modeOpts are the options of the modes, by their index in parser.modes,
-// with the variable a bash takes each from when it starts: those of set -o
-// from SHELLOPTS, those of shopt from BASHOPTS, lists of names split at
-// colons. bash keeps both readonly, and exported they hold the options it
-// has on.
-var modeOpts = [numModes]struct{ name, from string }{
-	keywordMode: {"keyword", "SHELLOPTS"},
-	cdableMode:  {"cdable_vars", "BASHOPTS"},
+// modeOpt is an option of the shell that puts it in a mode, by the name
+// set -o or shopt has for it.
+type modeOpt struct {
+	mode  int
+	name  string
+	shopt bool
+	// off tells that the shell is in the mode with the option off.
+	off bool
+	// flag is the letter of set and bash for the option, 0 for none.
+	flag rune
+}
+
+// modeOpts are the options of the modes, with the variable a bash takes
+// each from when it starts: those of set -o from SHELLOPTS, those of shopt
+// from BASHOPTS, lists of names split at colons. bash keeps both readonly,
+// and exported they hold the options it has on: they start no shell in a
+// mode of an option off.
+var modeOpts = []modeOpt{
+	{mode: keywordMode, name: "keyword", flag: 'k'},
+	{mode: cdableMode, name: "cdable_vars", shopt: true},
+	{mode: histMode, name: "history"},
+	{mode: histMode, name: "histexpand", flag: 'H'},
+	{mode: commentsMode, name: "interactive-comments", off: true},
+	{mode: commentsMode, name: "interactive_comments", shopt: true, off: true},
+}
+
+// from is the variable a bash takes the option from when it starts.
+func (o modeOpt) from() string {
+	if o.shopt {
+		return "BASHOPTS"
+	}
+	return "SHELLOPTS"
+}
+
+// is tells whether name is the option, as set -o or shopt names it.
+func (o modeOpt) is(name string) bool {
+	return strings.ReplaceAll(name, "-", "_") == strings.ReplaceAll(o.name, "-", "_")
+}
+
+// flagged is the option of a mode the letter c of set and bash stands for;
+// nil for none.
+func flagged(c rune) *modeOpt {
+	for i := range modeOpts {
+		if modeOpts[i].flag == c {
+			return &modeOpts[i]
+		}
+	}
+	return nil
+}
+
+// named is the option of a mode named name, of shopt or of set -o; nil for
+// none.
+func named(name string, shopt bool) *modeOpt {
+	for i := range modeOpts {
+		if modeOpts[i].shopt == shopt && modeOpts[i].name == name {
+			return &modeOpts[i]
+		}
+	}
+	return nil
 }
 
 // optionVars are the variables of modeOpts. bash refuses an assignment to
@@ -389,11 +520,22 @@ var modeOpts = [numModes]struct{ name, from string }{
 var optionVars = map[string]bool{"SHELLOPTS": true, "BASHOPTS": true}
 
 // shellModes are the modes of a shell whose options on are opts, by name,
-// or that started with env: a bash takes its options from SHELLOPTS and
-// BASHOPTS there, and so do those it starts once they are exported.
+// nil when not known, or that started with env: a bash takes its options
+// from SHELLOPTS and BASHOPTS there, and so do those it starts once they
+// are exported. A list that leaves out an option has it off. histMode is
+// that of the shells the line starts, from SHELLOPTS (see mode.shell).
 func shellModes(env, opts []string) (modes [numModes]bool) {
-	for m, o := range modeOpts {
-		modes[m] = slices.Contains(opts, o.name) || slices.Contains(strings.Split(getenv(env, o.from), ":"), o.name)
+	for _, o := range modeOpts {
+		list := getenv(env, o.from())
+		listed := slices.Contains(strings.Split(list, ":"), o.name)
+		switch {
+		case o.off:
+			modes[o.mode] = modes[o.mode] || opts != nil && !slices.ContainsFunc(opts, o.is) || list != "" && !listed
+		case o.mode == histMode:
+			modes[o.mode] = modes[o.mode] || listed
+		default:
+			modes[o.mode] = modes[o.mode] || slices.Contains(opts, o.name) || listed
+		}
 	}
 	return modes
 }
@@ -414,9 +556,9 @@ func (p *parser) startsIn(name, value string) bool {
 	if !optionVars[name] {
 		return false
 	}
-	for m, o := range modeOpts {
-		if o.from == name && slices.Contains(strings.Split(value, ":"), o.name) {
-			p.modes[m].ever = true
+	for _, o := range modeOpts {
+		if o.from() == name && !o.off && slices.Contains(strings.Split(value, ":"), o.name) {
+			p.modes[o.mode].ever = true
 		}
 	}
 	return true
@@ -425,10 +567,24 @@ func (p *parser) startsIn(name, value string) bool {
 // started looks at the words args after the name of a shell, its options
 // as bash reads them up to its first operand: -k, -o keyword and -O
 // cdable_vars start it in a mode, and the code it is handed runs in it, as
-// in one the line turns on itself. A word made at run time among them may
-// be any option.
+// in one the line turns on itself. So does +O interactive_comments for a
+// shell with code the parser reads, of -c or stdin, and -i, -H and -o
+// history, or SHELLOPTS of the line's environment that lists them, for one
+// that reads its commands from stdin: one with -c runs its script as eval
+// does, with history off. The code of a file is not read: its modes are of
+// no other code. A word made at run time among them may be any option.
 func (p *parser) started(args []string, static []bool) {
-	on := func(m int) { p.modes[m].ever = true }
+	script, _, stdin := shellArgs(args)
+	on := func(m int) {
+		switch {
+		case m == histMode && !stdin, m == commentsMode && !stdin && script < 0:
+		default:
+			p.modes[m].ever = true
+		}
+	}
+	if p.modes[histMode].shell {
+		on(histMode)
+	}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
@@ -444,17 +600,21 @@ func (p *parser) started(args []string, static []bool) {
 		case strings.HasPrefix(a, "--"):
 		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
 			for _, r := range a[1:] {
-				if r == 'k' && a[0] == '-' {
-					on(keywordMode)
+				if o := flagged(r); o != nil && (a[0] == '-') != o.off {
+					on(o.mode)
+				}
+				if r == 'i' && a[0] == '-' {
+					// Interactive, it has history expansion on.
+					on(histMode)
 				}
 				if r != 'o' && r != 'O' || i+1 == len(args) {
 					continue
 				}
 				// -o takes a name of set -o, -O one of shopt.
 				i++
-				for m, o := range modeOpts {
-					if a[0] == '-' && (r == 'o') == (o.from == "SHELLOPTS") && (!static[i] || args[i] == o.name) {
-						on(m)
+				for _, o := range modeOpts {
+					if (a[0] == '-') != o.off && o.shopt == (r == 'O') && (!static[i] || args[i] == o.name) {
+						on(o.mode)
 					}
 				}
 			}

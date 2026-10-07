@@ -721,6 +721,18 @@ tmux в строке `if-shell`, Perl в `{= =}` у `parallel`, конфиг `ss
 `computed`), и код, который строка отдаёт shell'у с `keyword` в `SHELLOPTS` (`env SHELLOPTS=keyword bash -c …`;
 `cdable_vars` — в `BASHOPTS`) или с `bash -k`, `-o keyword`, `-O cdable_vars`; `SHELLOPTS` и `BASHOPTS` из подстановок —
 `computed`.
+Код, который bash прочтёт с раскрытием истории, — `computed` целиком: после `set -o history` и `set -H` каждая
+следующая прочитанная строка сначала раскрывается (`!!:s/x/s/` — предыдущая строка с заменой, `^x^s` в начале строки
+тоже, а `histchars` меняет эти символы на любые). Строку агента shell исполняет через `eval`, а `eval` и `bash -c`
+читают код с выключенной историей при любых опциях, так что `!` в них — как раньше; режим включает `set -o history`,
+`set -H` или `shopt -so history` в самом коде (в строке, `eval`, `bash -c`), а shell, читающий команды со stdin
+(`bash <<< …`, here-document), начинает в нём с `-i`, `-o history`, `-H` или с ними в `SHELLOPTS` (из строки или
+экспортированной). С выключенной `interactive_comments` интерактивный shell, а с ним и его `eval`, читает `#` как
+обычный символ: `echo A # ; sudo ls` запускает `sudo`. Код с комментарием, который так прочтётся, — `computed`: после
+`shopt -u interactive_comments` (`set +o interactive-comments`, `bash +O interactive_comments`) и вся строка, если
+опция выключена в shell (по его опциям или `BASHOPTS`/`SHELLOPTS` окружения). `$"…"` bash переводит по `.mo`-файлу
+`TEXTDOMAIN` из `TEXTDOMAINDIR` и раскрывает перевод — `$(…)` из файла исполняется: `$"…"` — `computed` всегда
+(shell может держать обе переменные неэкспортированными), присваивание `TEXTDOMAIN` и `TEXTDOMAINDIR` — `rebind`.
 `paths` — операнды,
 похожие на пути, уже абсолютные и с раскрытыми симлинками: `rm -rf ~/`, `rm -rf "$HOME"` и
 `rm -rf /home/me/../me/` дают один и тот же `context.home`, и правило одно; `$PWD` раскрывается в
