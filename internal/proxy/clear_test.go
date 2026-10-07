@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -45,6 +44,7 @@ func TestClearCommand(t *testing.T) {
 	}
 	p := New(sess)
 	p.run = t.TempDir()
+	ctx := asUser(p)
 	restore := filepath.Join(p.run, "restore.bash")
 	if err := os.WriteFile(restore, []byte("cd /srv\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -54,7 +54,7 @@ func TestClearCommand(t *testing.T) {
 		return err == nil
 	}
 	run := func(params string) (rpc.Info, error) {
-		v, err := p.handle(context.Background(), rpc.MethodClear, json.RawMessage(params))
+		v, err := p.handle(ctx, rpc.MethodClear, json.RawMessage(params))
 		if err != nil {
 			return rpc.Info{}, err
 		}

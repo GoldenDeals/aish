@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -190,7 +191,9 @@ func (p *Proxy) saveState(cwd string) {
 
 // resume switches the shell to session id: the journal at once, the shell
 // at its next prompt, when __aish_precmd sources the script written here.
-func (p *Proxy) resume(id string) (_ rpc.Info, err error) {
+// The script is the other session's functions, aliases and variables, so
+// only the user switches, as clear says.
+func (p *Proxy) resume(ctx context.Context, id string) (_ rpc.Info, err error) {
 	if err := session.CheckID(id); err != nil {
 		return rpc.Info{}, err
 	}
@@ -199,10 +202,14 @@ func (p *Proxy) resume(id string) (_ rpc.Info, err error) {
 			p.stopBackground() // with the session they belong to
 		}
 	}()
+	fg := p.fromShell(ctx)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.asking {
 		return rpc.Info{}, errors.New("sessions are switched by the user, not by the assistant")
+	}
+	if fg != nil {
+		return rpc.Info{}, fg
 	}
 	if id == p.sess.ID {
 		return rpc.Info{}, fmt.Errorf("already in session %s", id)

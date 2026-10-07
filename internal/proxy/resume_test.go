@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -16,10 +15,11 @@ func TestModelEffort(t *testing.T) {
 	}
 	p := New(sess)
 	p.prov, p.model, p.window, p.fixedWindow = &scripted{}, "a", 1000, true
+	ctx := asUser(p)
 
 	set := func(mp rpc.ModelParams) (rpc.Info, error) {
 		b, _ := json.Marshal(mp)
-		v, err := p.handle(context.Background(), rpc.MethodModel, b)
+		v, err := p.handle(ctx, rpc.MethodModel, b)
 		if err != nil {
 			return rpc.Info{}, err
 		}

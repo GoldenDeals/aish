@@ -743,10 +743,14 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 		if mp.Model == "" {
 			return nil, errors.New("no model given")
 		}
+		fg := p.fromShell(ctx)
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		if p.asking {
 			return nil, errors.New("the model is switched by the user, not by the assistant")
+		}
+		if fg != nil {
+			return nil, fg
 		}
 		return p.switchModel(mp)
 	case rpc.MethodStatus:
@@ -783,13 +787,13 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 				return nil, err
 			}
 		}
-		return p.clear(cp)
+		return p.clear(ctx, cp)
 	case rpc.MethodResume:
 		var rp rpc.ResumeParams
 		if err := json.Unmarshal(params, &rp); err != nil {
 			return nil, err
 		}
-		return p.resume(rp.ID)
+		return p.resume(ctx, rp.ID)
 	case rpc.MethodMCPStatus:
 		return p.mcp.Status(), nil
 	case rpc.MethodMCPList:

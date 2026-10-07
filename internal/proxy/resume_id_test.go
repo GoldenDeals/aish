@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -36,10 +35,11 @@ func TestResumeID(t *testing.T) {
 	}
 	p := New(sess)
 	p.run = t.TempDir()
+	ctx := asUser(p)
 	restore := filepath.Join(p.run, "restore.bash")
 	resume := func(id string) (rpc.Info, error) {
 		b, _ := json.Marshal(rpc.ResumeParams{ID: id})
-		v, err := p.handle(context.Background(), rpc.MethodResume, b)
+		v, err := p.handle(ctx, rpc.MethodResume, b)
 		if err != nil {
 			return rpc.Info{}, err
 		}

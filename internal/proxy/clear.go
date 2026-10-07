@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,17 +15,24 @@ import (
 // clear starts this shell's session over for `aish clear` and `aish new`,
 // saving the current one first or the next one from the start if asked.
 // The names are checked before anything is saved or dropped: a taken one
-// changes nothing.
-func (p *Proxy) clear(cp rpc.ClearParams) (_ rpc.Info, err error) {
+// changes nothing. Only the user, at the shell's foreground, clears: the
+// agent's command is refused by p.asking, and between requests a process
+// in the background — a subagent's command, a job the agent's command
+// left — by fromShell.
+func (p *Proxy) clear(ctx context.Context, cp rpc.ClearParams) (_ rpc.Info, err error) {
 	defer func() {
 		if err == nil {
 			p.stopBackground() // with the session they belong to
 		}
 	}()
+	fg := p.fromShell(ctx)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.asking {
 		return rpc.Info{}, errors.New("sessions are cleared by the user, not by the assistant")
+	}
+	if fg != nil {
+		return rpc.Info{}, fg
 	}
 	// A name without its journal on disk would be a file of nothing.
 	if cp.Name != "" && !cp.Save || cp.NewName != "" && !cp.SaveNew {
