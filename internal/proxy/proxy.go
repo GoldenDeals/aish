@@ -4,7 +4,6 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -411,6 +410,7 @@ func (p *Proxy) key(b []byte) []byte {
 	if p.early != nil {
 		return p.earlyKey(b)
 	}
+	defer p.syncPaste() // the keys may have opened or closed a reader of them
 	return p.takeKeys(p.wholeKeys(b))
 }
 
@@ -439,8 +439,9 @@ func (p *Proxy) takeKeys(b []byte) []byte {
 	if p.form != nil {
 		return p.formKey(b)
 	}
-	i := bytes.IndexByte(b, ctrlO)
-	// A user's command (an editor, say) gets Ctrl+O as usual.
+	// A user's command (an editor, say) gets Ctrl+O as usual, and readline
+	// one pasted, with the rest of the paste.
+	i := p.seq.shell.find(b, ctrlO)
 	if i < 0 || p.user != nil {
 		return b
 	}
@@ -485,6 +486,7 @@ func (p *Proxy) closeView() {
 	_, _ = p.out.Write(append(p.view.close(), cursor...))
 	_, _ = p.out.Write(p.held)
 	p.view, p.held = nil, nil
+	p.syncPaste() // after what was held: the mode the shell set there is in it
 }
 
 func (p *Proxy) resized() {
@@ -506,8 +508,8 @@ func (p *Proxy) resized() {
 
 // restoreScreen takes the viewer, the panes and the form off the terminal
 // once the shell is gone: nobody would close them, and the terminal would
-// be left on the alternate screen or without its cursor. The form ends
-// unanswered, as on Esc.
+// be left on the alternate screen or without its cursor, or in the
+// bracketed paste mode the proxy set. The form ends unanswered, as on Esc.
 func (p *Proxy) restoreScreen() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -521,6 +523,7 @@ func (p *Proxy) restoreScreen() {
 	if p.form != nil {
 		p.closeForm()
 	}
+	p.setPaste(false) // even under a question, which waits for its request
 }
 
 // emit writes to the terminal, or holds the output while the viewer or the
@@ -595,6 +598,7 @@ func (p *Proxy) output(b []byte) {
 		show = p.line.feed(show)
 	}
 	p.emit(show)
+	p.pasteOutput(b, show)
 }
 
 // cleared marks in the journal where the user erased the screen: the

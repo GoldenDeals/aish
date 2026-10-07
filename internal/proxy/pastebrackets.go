@@ -18,7 +18,8 @@ import (
 // what follows such a key would go to the shell without the brackets, a
 // newline running a line. The paste goes nowhere, or as text to the
 // form's Other. Brackets come only with the terminal's bracketed paste
-// mode on: readline's at the prompt, not while a request runs.
+// mode on: readline's at the prompt, and the proxy's own while it reads
+// the keys, see pasteMode.
 type keySeq struct {
 	part  []byte      // an escape sequence cut by the last read
 	gen   int         // which part the timer is for
@@ -26,6 +27,9 @@ type keySeq struct {
 	paste bool        // inside a paste kept from the shell
 	text  bool        // ... which is typed as the form's Other
 	last  time.Time   // when the paste last sent anything
+
+	shell pasteScan // the pastes in the keys that go on to the shell
+	mode  pasteMode // the terminal's bracketed paste mode
 }
 
 // escWait is how long a read may follow the one that cut an escape
@@ -38,10 +42,12 @@ const pasteGap = time.Second
 var (
 	pasteStart = []byte("\x1b[200~")
 	pasteEnd   = []byte("\x1b[201~")
+	pasteOff   = []byte("\x1b[?2004l")
 )
 
 // readsKeys reports whether the proxy takes the keys itself, rather than
-// passing them on to the shell. Called under p.mu.
+// passing them on to the shell; syncPaste follows whatever changes it.
+// Called under p.mu.
 func (p *Proxy) readsKeys() bool { return p.holding() || p.ask != nil || p.form != nil }
 
 // wholeKeys returns b with the sequence the last read cut put back in
@@ -80,7 +86,7 @@ func (p *Proxy) wholeKeys(b []byte) []byte {
 		k.last = now
 		i := bytes.Index(b, pasteEnd)
 		if i < 0 {
-			n := len(b) - endCut(b)
+			n := len(b) - endCut(b, pasteEnd)
 			keys = append(keys, p.pasteText(b[:n])...)
 			if n < len(b) {
 				k.part = bytes.Clone(b[n:])
@@ -119,6 +125,7 @@ func (p *Proxy) loneKeys(gen int) {
 		// Nothing of these goes to the shell from a reader of keys; with
 		// none left, the Esc was meant for the one gone.
 		p.takeKeys(part)
+		p.syncPaste()
 	}
 }
 
@@ -169,12 +176,147 @@ func openSeq(b []byte) int {
 	return len(b)
 }
 
-// endCut is how many bytes at the end of b may begin the paste's end.
-func endCut(b []byte) int {
-	for n := min(len(b), len(pasteEnd)-1); n > 0; n-- {
-		if bytes.HasPrefix(pasteEnd, b[len(b)-n:]) {
+// endCut is how many bytes at the end of b may begin seq.
+func endCut(b, seq []byte) int {
+	for n := min(len(b), len(seq)-1); n > 0; n-- {
+		if bytes.HasPrefix(seq, b[len(b)-n:]) {
 			return n
 		}
 	}
 	return 0
+}
+
+// pasteMode is the terminal's bracketed paste mode. Readline turns it off
+// before it runs a line, a request too, and on again at the next prompt:
+// meanwhile a paste comes without brackets, and to a question, the form,
+// the panes or the viewer it would be keys, y in it answering Yes and the
+// rest, a newline in it, going on to the shell to run. So while the proxy
+// reads the keys it turns the mode on itself, and once it stops it gives
+// back the one the shell's output last set. The mode is the terminal's,
+// not a screen's: the alternate screen of the viewer and the panes neither
+// keeps nor gives it back.
+type pasteMode struct {
+	shell bool   // on, as the shell's output last set it
+	on    bool   // the proxy turned it on to read the keys
+	again bool   // the shell turned it off since: on again after its output
+	cut   []byte // a sequence the shell's last write cut short
+}
+
+var modeSet = []byte("\x1b[?") // a private mode set or reset follows
+
+// syncPaste turns the mode on when the proxy has begun to read the keys,
+// and gives the shell's back when it has stopped. Called under p.mu after
+// whatever opens or closes the viewer, the panes, a question or the form.
+func (p *Proxy) syncPaste() { p.setPaste(p.readsKeys()) }
+
+// setPaste is syncPaste with whether the proxy reads the keys given. The
+// mode goes to the terminal at once, past what the viewer holds: the keys
+// are read now. Called under p.mu.
+func (p *Proxy) setPaste(on bool) {
+	m := &p.seq.mode
+	if m.on == on {
+		return
+	}
+	m.on, m.again = on, false
+	if on || m.shell {
+		_, _ = p.out.Write(pasteOn)
+	} else {
+		_, _ = p.out.Write(pasteOff)
+	}
+}
+
+// pasteOutput follows the mode through the shell's output b, of which show
+// went to the terminal or to what it holds. Turned off while the proxy
+// reads the keys, the mode goes on again after it, once show leaves no
+// sequence open that it would break. Called under p.mu.
+func (p *Proxy) pasteOutput(b, show []byte) {
+	m := &p.seq.mode
+	if m.feed(b) && m.on && !m.shell {
+		m.again = true
+	}
+	if m.again && openSeq(show) == len(show) {
+		m.again = false
+		p.emit(pasteOn)
+	}
+}
+
+// feed keeps the mode the shell's output b sets, if it sets it, and
+// reports whether it does, either way.
+func (m *pasteMode) feed(b []byte) bool {
+	if m.cut != nil {
+		b = append(m.cut, b...)
+		m.cut = nil
+	}
+	set := false
+	for {
+		i := bytes.Index(b, modeSet)
+		if i < 0 {
+			break
+		}
+		j := i + len(modeSet)
+		for j < len(b) && (b[j] >= '0' && b[j] <= '9' || b[j] == ';') {
+			j++
+		}
+		if j == len(b) {
+			if j-i <= maxSeq {
+				m.cut = bytes.Clone(b[i:])
+			}
+			return set
+		}
+		if b[j] == 'h' || b[j] == 'l' {
+			for _, n := range bytes.Split(b[i+len(modeSet):j], []byte{';'}) {
+				if string(n) == "2004" {
+					m.shell, set = b[j] == 'h', true
+				}
+			}
+		}
+		b = b[j:]
+	}
+	if n := endCut(b, modeSet); n > 0 {
+		m.cut = bytes.Clone(b[len(b)-n:])
+	}
+	return set
+}
+
+// pasteScan follows the bracketed pastes through the keys that go on to
+// the shell as they come, brackets cut by the reads too. A key the proxy
+// takes for itself there, Ctrl+O at the prompt or one that sends a signal
+// before it, is text inside a paste: Alacritty leaves Ctrl+C out of what
+// it pastes, other terminals do not.
+type pasteScan struct {
+	in   bool      // inside a paste
+	n    int       // bytes of the next bracket the last read ended in
+	last time.Time // when the paste last sent anything
+}
+
+// find returns where in b the first of keys outside a paste is, -1 if
+// none, following the pastes through the whole of b.
+func (s *pasteScan) find(b []byte, keys ...byte) int {
+	now := time.Now()
+	if s.in && now.Sub(s.last) > pasteGap {
+		s.in, s.n = false, 0 // its end never came
+	}
+	at := -1
+	for i, c := range b {
+		bracket := pasteStart
+		if s.in {
+			bracket = pasteEnd
+		}
+		switch {
+		case c == bracket[s.n]:
+			if s.n++; s.n == len(bracket) {
+				s.in, s.n = !s.in, 0
+			}
+			continue
+		case c == 0x1b:
+			s.n = 1
+			continue
+		}
+		s.n = 0
+		if at < 0 && !s.in && bytes.IndexByte(keys, c) >= 0 {
+			at = i
+		}
+	}
+	s.last = now
+	return at
 }

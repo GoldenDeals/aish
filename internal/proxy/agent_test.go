@@ -290,7 +290,7 @@ func TestAskKey(t *testing.T) {
 		if k.draw != "" {
 			want += back + k.draw
 		}
-		if s := out.String(); s != want {
+		if s := modeless(out.String()); s != want {
 			t.Fatalf("after %q:\n got %q\nwant %q", k.key, s, want)
 		}
 	}
@@ -305,7 +305,7 @@ func TestAskKey(t *testing.T) {
 		t.Errorf("Enter at once: %q, %v", a.s, a.err)
 	}
 	want += back + "Yes\x1b[K\r\n\x1b[?25h"
-	if s := out.String(); s != want {
+	if s := modeless(out.String()); s != want {
 		t.Errorf("terminal\n got %q\nwant %q", s, want)
 	}
 
@@ -316,7 +316,7 @@ func TestAskKey(t *testing.T) {
 	if a := answered(res); a.s != "n" {
 		t.Errorf("No and Enter: %q", a.s)
 	}
-	if s := out.String(); !strings.HasSuffix(s, back+"No\x1b[K\r\n\x1b[?25h") {
+	if s := modeless(out.String()); !strings.HasSuffix(s, back+"No\x1b[K\r\n\x1b[?25h") {
 		t.Errorf("No not left on the screen: %q", s)
 	}
 
@@ -335,7 +335,7 @@ func TestAskKey(t *testing.T) {
 	if a := answered(res); a.s != "y" {
 		t.Errorf("y: %q", a.s)
 	}
-	if s := out.String(); !strings.HasSuffix(s, back+"Yes\x1b[K\r\n\x1b[?25h") {
+	if s := modeless(out.String()); !strings.HasSuffix(s, back+"Yes\x1b[K\r\n\x1b[?25h") {
 		t.Errorf("Yes not left on the screen: %q", s)
 	}
 
@@ -347,7 +347,7 @@ func TestAskKey(t *testing.T) {
 	if a := answered(res); a.s != "n" {
 		t.Errorf("narrow: %q", a.s)
 	}
-	if s, want := out.String(), "\x1b[?25lallow?\r\n"+yes+back+no+back+"No\x1b[K\r\n\x1b[?25h"; s != want {
+	if s, want := modeless(out.String()), "\x1b[?25lallow?\r\n"+yes+back+no+back+"No\x1b[K\r\n\x1b[?25h"; s != want {
 		t.Errorf("narrow terminal\n got %q\nwant %q", s, want)
 	}
 	cols = 80
@@ -358,7 +358,7 @@ func TestAskKey(t *testing.T) {
 	if a := answered(res); !errors.Is(a.err, context.Canceled) {
 		t.Errorf("interrupted question: %v", a.err)
 	}
-	if s := out.String(); !strings.HasSuffix(s, "\x1b[?25h") {
+	if s := modeless(out.String()); !strings.HasSuffix(s, "\x1b[?25h") {
 		t.Errorf("the cursor stayed hidden: %q", s)
 	}
 

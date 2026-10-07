@@ -410,6 +410,7 @@ func (p *Proxy) showPanes() {
 	ps.shown = true
 	ps.resize(p.size())
 	_, _ = p.out.Write([]byte(panesOpen))
+	p.syncPaste()
 	p.drawPanes()
 }
 
@@ -449,6 +450,7 @@ func (p *Proxy) detachPanes() {
 	_, _ = p.out.Write([]byte(panesClose))
 	_, _ = p.out.Write(p.held)
 	p.held = nil
+	p.syncPaste() // after what was held: the mode the shell set there is in it
 }
 
 // closePanes ends the layout: the screen comes back with what it held, a

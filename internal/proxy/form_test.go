@@ -344,7 +344,7 @@ func TestFormKeys(t *testing.T) {
 		t.Errorf("Ctrl+C did not reach the shell: %q", got)
 	}
 	shown := len(p.form.shown)
-	before := len(out.String())
+	before := len(modeless(out.String()))
 	if got := p.key([]byte(keyEnterSeq)); got != nil {
 		t.Errorf("enter went to the shell: %q", got)
 	}
@@ -352,7 +352,7 @@ func TestFormKeys(t *testing.T) {
 	if want := []agent.Answer{{Picked: []string{"Patch"}}, {Picked: []string{"Icons"}}}; r.err != nil || !reflect.DeepEqual(r.ans, want) {
 		t.Errorf("answers %+v, %v", r.ans, r.err)
 	}
-	s := out.String()
+	s := modeless(out.String())
 	if clean := capture.Clean([]byte(s)); !strings.HasPrefix(s, "\x1b[?25l") || !strings.Contains(clean, "Approach 1/2") || !strings.Contains(clean, "Features 2/2") {
 		t.Errorf("terminal %q", s)
 	}
@@ -378,7 +378,7 @@ func TestFormCancel(t *testing.T) {
 	if r := result(t, res); r.ans != nil || r.err != nil {
 		t.Errorf("esc: %+v", r)
 	}
-	if s := out.String(); !strings.HasSuffix(s, "\x1b[J\x1b[A\x1b[?25h") || p.form != nil {
+	if s := modeless(out.String()); !strings.HasSuffix(s, "\x1b[J\x1b[A\x1b[?25h") || p.form != nil {
 		t.Errorf("esc left %q, form %v", s, p.form)
 	}
 
@@ -387,7 +387,7 @@ func TestFormCancel(t *testing.T) {
 	if r := result(t, res); !errors.Is(r.err, context.Canceled) {
 		t.Errorf("interrupted: %+v", r)
 	}
-	if s := out.String(); !strings.HasSuffix(s, "\x1b[J\x1b[A\x1b[?25h") || p.form != nil {
+	if s := modeless(out.String()); !strings.HasSuffix(s, "\x1b[J\x1b[A\x1b[?25h") || p.form != nil {
 		t.Errorf("interrupted, left %q, form %v", s, p.form)
 	}
 

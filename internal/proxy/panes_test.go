@@ -354,7 +354,7 @@ func TestPaneKeys(t *testing.T) {
 
 	for _, leave := range []string{"q", "\x0f"} {
 		out.reset()
-		if got := p.key([]byte(leave)); len(got) != 0 || ps.shown || out.String() != panesClose {
+		if got := p.key([]byte(leave)); len(got) != 0 || ps.shown || modeless(out.String()) != panesClose {
 			t.Errorf("%q: passed %q, shown %v, wrote %q", leave, got, ps.shown, out.String())
 		}
 		p.emit([]byte("text"))
@@ -401,7 +401,7 @@ func TestPaneClose(t *testing.T) {
 	if p.panes != nil || p.held != nil {
 		t.Fatal("the layout stayed")
 	}
-	s := out.String()
+	s := modeless(out.String())
 	i := strings.LastIndex(s, panesClose)
 	if i < 0 {
 		t.Fatalf("the screen did not come back: %q", s)
@@ -535,7 +535,7 @@ func TestPaneAfterRequest(t *testing.T) {
 	p.asking = false
 	w.Finish(130)
 	u.ClosePanes()
-	if s := out.String(); !strings.HasSuffix(s, panesClose) || len(p.folds) != 1 {
+	if s := modeless(out.String()); !strings.HasSuffix(s, panesClose) || len(p.folds) != 1 {
 		t.Errorf("terminal %q, folds %q", s, p.folds)
 	}
 
@@ -578,7 +578,7 @@ func TestPanesStayForTheCall(t *testing.T) {
 		t.Fatalf("the layout closed with the fifth: %q", out.String())
 	}
 	u.ClosePanes()
-	s := out.String()
+	s := modeless(out.String())
 	if strings.Count(s, panesOpen) != 1 || strings.Count(s, panesClose) != 1 {
 		t.Fatalf("the layout opened %d times, closed %d", strings.Count(s, panesOpen), strings.Count(s, panesClose))
 	}
@@ -694,7 +694,7 @@ func TestPaneCallShown(t *testing.T) {
 	w.Finish(0)
 	u.ClosePanes()
 	live.Finish(-1)
-	s := out.String()
+	s := modeless(out.String())
 	after := s[strings.LastIndex(s, panesClose)+len(panesClose):]
 	if want := "bg job\r\n  " + paneOK + "✓"; !strings.HasPrefix(after, want) {
 		t.Errorf("after the layout %q, want %q…", after, want)
@@ -766,7 +766,7 @@ func TestPanesOfTaskCall(t *testing.T) {
 			}
 		}
 	})
-	s := out.String()
+	s := modeless(out.String())
 	open, end := strings.Index(s, panesOpen), strings.Index(s, panesClose)
 	if open < 0 || end < open {
 		t.Fatalf("no layout: %q", s)

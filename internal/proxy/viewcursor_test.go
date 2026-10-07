@@ -130,7 +130,7 @@ func TestViewCursorPrompt(t *testing.T) {
 	}
 	before := len(out.String())
 	p.key([]byte{ctrlO})
-	if s := out.String()[before:]; s != "\x1b[?1049l"+showCursor {
+	if s := modeless(out.String()[before:]); s != "\x1b[?1049l"+showCursor {
 		t.Errorf("the viewer closed with %q", s)
 	}
 

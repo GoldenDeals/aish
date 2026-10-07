@@ -559,6 +559,7 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	}
 	pr := &prompt{yes: true, done: make(chan string, 1)}
 	p.ask = pr
+	p.syncPaste() // a paste is no answer
 	// The choices end short of the last column: there the cursor would
 	// stay on it, and stepping back from it would miss by one.
 	cols, _ := p.size()
@@ -576,6 +577,7 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 		if p.ask == pr {
 			p.ask = nil
 			p.emit([]byte("\x1b[?25h"))
+			p.syncPaste()
 		}
 		p.mu.Unlock()
 		return "", ctx.Err()
@@ -682,6 +684,7 @@ func (p *Proxy) askForm(ctx context.Context, qs []agent.Question) ([]agent.Answe
 	of := &openForm{f: newForm(qs), done: make(chan struct{})}
 	p.form = of
 	p.at = nil // the agent closed the line of the call: no status goes there
+	p.syncPaste()
 	p.emit([]byte("\x1b[?25l"))
 	p.drawForm()
 	p.mu.Unlock()
@@ -692,6 +695,7 @@ func (p *Proxy) askForm(ctx context.Context, qs []agent.Question) ([]agent.Answe
 		p.mu.Lock()
 		if p.form == of {
 			p.closeForm()
+			p.syncPaste()
 		}
 		p.mu.Unlock()
 		return nil, ctx.Err()

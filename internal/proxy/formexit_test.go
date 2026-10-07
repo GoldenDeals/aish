@@ -78,7 +78,7 @@ func TestRestoreScreenForm(t *testing.T) {
 	p, out, res, cancel := formProxy(t, &cols)
 	defer cancel()
 	p.restoreScreen()
-	if s := out.String(); !strings.HasSuffix(s, "\x1b[?25h") {
+	if s := modeless(out.String()); !strings.HasSuffix(s, "\x1b[?25h") {
 		t.Errorf("the cursor is hidden: %q", s)
 	}
 	if r := result(t, res); r.ans != nil || r.err != nil {
@@ -105,7 +105,7 @@ func TestRestoreScreenViewer(t *testing.T) {
 	p.resized() // the form is drawn anew, under the viewer
 	before := len(out.String())
 	p.restoreScreen()
-	s := out.String()[before:]
+	s := modeless(out.String()[before:])
 	if !strings.HasPrefix(s, "\x1b[?1049l\x1b[?25l") || !strings.Contains(s, "Which approach?") || !strings.HasSuffix(s, "\x1b[?25h") {
 		t.Errorf("closed with %q", s)
 	}

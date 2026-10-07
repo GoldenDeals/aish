@@ -16,9 +16,9 @@ import (
 // takes the terminal raw; one that does not gets the keys earlyWait after
 // the first prompt.
 //
-// The keys go at once with a key that sends a signal, for a ~/.bashrc that
-// hangs, and when the shell prints anything before its first prompt:
-// ~/.bashrc may be asking (ssh-add, read -p).
+// The keys go at once with a key that sends a signal, not pasted, for a
+// ~/.bashrc that hangs, and when the shell prints anything before its
+// first prompt: ~/.bashrc may be asking (ssh-add, read -p).
 type early struct {
 	w        io.Writer // the PTY
 	held     []byte
@@ -49,7 +49,8 @@ func (p *Proxy) holdEarly(w io.Writer) {
 func (p *Proxy) earlyKey(b []byte) []byte {
 	e := p.early
 	e.held = append(e.held, b...)
-	if len(e.held) <= maxEarly && !bytes.ContainsAny(b, "\x03\x1a\x1c") {
+	// Ctrl+C, Ctrl+Z or Ctrl+\ inside a paste is the text pasted.
+	if len(e.held) <= maxEarly && p.seq.shell.find(b, 0x03, 0x1a, 0x1c) < 0 {
 		return nil
 	}
 	p.early = nil
