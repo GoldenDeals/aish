@@ -638,7 +638,14 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 `env`, `nice`, `ionice`, `nohup`, `setsid`, `stdbuf`, `time`, `timeout`, `watch`, `flock`, `xargs`, `chroot`,
 `unshare`, `nsenter`, `setpriv`, `taskset`, `chrt`, `prlimit`, `setarch`, `systemd-run`, `systemd-inhibit`,
 `strace`, `ltrace`, `valgrind`, `gdb`, `firejail`, `fakeroot`, `proxychains4`, `torsocks`, `unbuffer`,
-`numactl`, `cgexec`, `chpst`, `caffeinate` и другие. Так же разбирается код,
+`numactl`, `cgexec`, `chpst`, `caffeinate`, `capsh --`, `ip netns exec`, `ip vrf exec`, `bwrap`, `systemd-nspawn`,
+`dbus-run-session`, `ssh-agent`, `eatmydata`, `flatpak-spawn`, `toolbox run`, `distrobox enter` и другие. Команда
+контейнера, пода или машины — `docker`/`podman` `exec`, `run` и `create` (и `--entrypoint`, `--health-cmd`), `kubectl exec`,
+`lxc`/`incus` `exec`, `machinectl shell` — для политик команда этой машины, а не удалённая, как у `ssh`: тома делят
+с ней файлы, и её пути и редиректы проверяются как здешние; без команды `docker run -i`, `lxc shell`,
+`machinectl shell` и `distrobox enter` запускают shell на stdin. Под другим корнем (`bwrap`, `systemd-nspawn`,
+`capsh --chroot`, `podman run --rootfs`, `-p RootDirectory=` и `RootImage=` у `systemd-run` и `run0`) пути —
+`computed`, как под `chroot`. Так же разбирается код,
 который строка отдаёт shell: `eval` со статичными аргументами, here-string и here-document для
 `bash`/`sh`, `env -S`, значение `alias`, команда `trap`, `bind -x`, `complete -C`, `compgen -C` и
 `mapfile -C`, строки `su -c`, `runuser -c`, `flock ФАЙЛ -c`, `script -c`

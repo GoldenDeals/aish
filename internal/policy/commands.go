@@ -426,7 +426,14 @@ func (p *parser) next(argv []string, static, split []bool) ([]string, []bool, []
 	if cmd == 0 {
 		return nil, nil, nil
 	}
-	argv, static, split = argv[cmd:], static[cmd:], split[cmd:]
+	if prog, st := w.programOf(opts, static[1:]); prog != nil {
+		// The program stands in the place of the word at cmd.
+		argv = append(slices.Clone(prog), argv[cmd+1:]...)
+		static = append(slices.Repeat([]bool{st}, len(prog)), static[cmd+1:]...)
+		split = append(make([]bool, len(prog)), split[cmd+1:]...)
+	} else {
+		argv, static, split = argv[cmd:], static[cmd:], split[cmd:]
+	}
 	if w.fills != nil {
 		static, split = slices.Clone(static), slices.Clone(split)
 		w.fills(p, opts, argv, static, split)
@@ -503,6 +510,13 @@ type wrapper struct {
 	// bare tells that with no command the wrapper runs a shell, which reads
 	// its commands from stdin: chroot DIR, unshare, pkexec.
 	bare bool
+	// attach lists the options without which a bare wrapper runs no shell
+	// on stdin: docker run -i IMAGE, machinectl shell.
+	attach []string
+	// prog makes the program the wrapper runs in place of the word at the
+	// index of its command, and whether it is static; nil for that word:
+	// capsh -- runs its shell, docker run --entrypoint the entrypoint.
+	prog func(opts []option, static []bool) ([]string, bool)
 	// reads reads the words in place of opts when getopt alone does not
 	// tell where the command is: the priority of chrt is one only when it
 	// is a number, the architecture of setarch comes before its options.
@@ -621,8 +635,9 @@ func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*synt
 		code = w.check(p, opts, args, static, cmd)
 	}
 	shell := has(opts, w.shell...)
+	bare := w.bare && (w.attach == nil || has(opts, w.attach...))
 	switch {
-	case has(opts, w.none...), !shell && (!w.bare || cmd < len(args)):
+	case has(opts, w.none...), !shell && (!bare || cmd < len(args)):
 		return code
 	case cmd == len(args):
 		return append(code, p.stdin(redirs)...)

@@ -58,6 +58,7 @@ var moreWrappers = map[string]wrapper{
 	"nsenter": {
 		opts: getopt{short: "+ahVt:m::u::i::n::N:p::C::U::T::S:G:r::w::W::ecFZ", long: "all help version target: mount:: uts:: ipc:: net:: net-socket: pid:: user:: cgroup:: time:: setuid: setgid: root:: wd:: wdns:: env no-fork join-cgroup preserve-credentials keep-caps user-parent follow-context"},
 		none: []string{"h", "help", "V", "version"}, bare: true, chdir: []string{"r", "root", "w", "wd", "W", "wdns"},
+		check: nsenterCheck,
 	},
 	"numactl": {
 		opts: getopt{short: "+ai:w:p:P:c:N:C:m:slbHS:f:o:L:tM:dDI:uTV", long: "all interleave: weighted-interleave: preferred: preferred-many: cpubind: cpunodebind: physcpubind: membind: show localalloc balancing hardware shm: file: offset: length: strict shmmode: dump dump-nodes shmid: huge touch cpu-compress verify version"},
@@ -398,7 +399,8 @@ func unitFills(_ *parser, opts []option, argv []string, static, split []bool) {
 
 // fakerootCheck returns the code fakeroot runs with eval: echo of the
 // value of -l, which it takes for the library, and the line that starts
-// faked: the value of -f for the program, -s and -i for its files.
+// faked: the value of -f for the program, -s and -i for its files. The
+// library goes to LD_PRELOAD of the command, as rebind.
 func fakerootCheck(p *parser, opts []option, _ []string, static []bool, _ int) []string {
 	var code []string
 	faked, line, in := "faked", "", ""
@@ -414,6 +416,7 @@ func fakerootCheck(p *parser, opts []option, _ []string, static []bool, _ int) [
 		switch o.name {
 		case "l", "lib":
 			code = append(code, "echo "+o.value)
+			p.mark(dynRebind)
 		case "f", "faked":
 			faked, evals = o.value, true
 		case "s":

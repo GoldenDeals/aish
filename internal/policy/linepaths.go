@@ -415,7 +415,7 @@ func (p *parser) place(orig, call *syntax.CallExpr, redirs []*syntax.Redirect) [
 }
 
 // roots tells whether argv runs a command under another root: chroot,
-// sudo -R, and the options of rooted.
+// sudo -R, and the options of rooted and reroots.
 func roots(argv []string) bool {
 	switch name := filepath.Base(argv[0]); {
 	case name == "chroot":
@@ -423,9 +423,9 @@ func roots(argv []string) bool {
 	case name == "sudo":
 		opts, _ := wrappers["sudo"].read(argv[1:])
 		return has(opts, "R", "chroot")
-	case rooted[name] != nil:
+	case rooted[name] != nil, reroots[name] != nil:
 		opts, _ := wrappers[name].read(argv[1:])
-		return has(opts, rooted[name]...)
+		return has(opts, rooted[name]...) || reroots[name] != nil && reroots[name](opts)
 	}
 	return false
 }

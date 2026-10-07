@@ -168,9 +168,10 @@ func TestParseWrapperOptionCode(t *testing.T) {
 		{`echo id | torsocks --shell`, nil, []string{"stdin"}},
 
 		// fakeroot runs the value of -l through eval echo, and the line of
-		// faked, with -f, -s and -i in it, through eval.
-		{`fakeroot -l '$(sudo ls)' true`, [][]string{sudoLs}, nil},
-		{`fakeroot --lib 'x; sudo ls' true`, [][]string{sudoLs}, nil},
+		// faked, with -f, -s and -i in it, through eval; the library of -l
+		// is LD_PRELOAD of the command.
+		{`fakeroot -l '$(sudo ls)' true`, [][]string{sudoLs}, []string{"rebind"}},
+		{`fakeroot --lib 'x; sudo ls' true`, [][]string{sudoLs}, []string{"rebind"}},
 		{`fakeroot -f 'sudo ls' true`, [][]string{sudoLs}, nil},
 		{`fakeroot -s 'x; sudo ls' true`, [][]string{sudoLs}, nil},
 		{`fakeroot -i 'x; sudo ls' true`, [][]string{sudoLs}, nil},
