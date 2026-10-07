@@ -14,6 +14,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/inebotov/aish/internal/config"
+	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/session"
 )
 
@@ -52,6 +54,18 @@ const (
 // AgentParams with the shell's cwd and environment, for the project file
 // and the profile they select; Applied back.
 const MethodApplyConfig = "apply_config"
+
+// The config in force, for the commands in the shell that show it or go by
+// it: MethodConfig is the config of a request from a directory,
+// ConfigParams and Config back; MethodModels lists the models of a profile
+// of it with its key, which stays in the proxy, ModelsParams and
+// []llm.ModelInfo back; MethodPolicy asks its policies about a tool call,
+// PolicyParams and policy.Decision back.
+const (
+	MethodConfig = "config"
+	MethodModels = "models"
+	MethodPolicy = "policy"
+)
 
 // Fold is an output hidden from the terminal, shown again with Ctrl+O.
 type Fold struct {
@@ -107,10 +121,10 @@ type ModelParams struct {
 
 // Applied is what `aish apply-config` put in force: Keys of config.toml
 // whose values changed (profiles.work.model), Files read anew that changed
-// (a project file, a directory of policies), and Info, the shell's profile,
-// model and effort, which may have followed the edit. Restart names the
-// keys (and the MCP config file) changed since aish started that only a
-// restart applies: the proxy takes them as it starts the shell.
+// (a project file, a directory of policies, the MCP config), and Info, the
+// shell's profile, model and effort, which may have followed the edit.
+// Restart names the keys changed since aish started that only a restart
+// applies: the proxy takes them as it starts the shell.
 type Applied struct {
 	Keys    []string `json:"keys,omitempty"`
 	Files   []string `json:"files,omitempty"`
@@ -118,6 +132,65 @@ type Applied struct {
 	Info    Info     `json:"info"`
 	// Switched is whether Info differs from what the shell had before.
 	Switched bool `json:"switched,omitempty"`
+}
+
+// ConfigParams ask for the config a request of the shell from Cwd would go
+// by; Env is the shell's environment, for the profile config.toml selects
+// there. Profile, if set, asks for that profile of config.toml, "" its top
+// level, instead of the shell's; Policies, for the policies in force too.
+type ConfigParams struct {
+	Cwd      string   `json:"cwd"`
+	Env      []string `json:"env,omitempty"`
+	Profile  *string  `json:"profile,omitempty"`
+	Policies bool     `json:"policies,omitempty"`
+}
+
+// Config is the config in force for a command in the shell: the files as
+// aish read them at its start or at the last `aish apply-config`, not as
+// they are on disk.
+type Config struct {
+	// Config is the profile asked for with the project file of Cwd laid
+	// over; its model and effort are config.toml's, the shell's are in
+	// Info. The API keys and the proxies of the requests are not in it:
+	// they stay in the proxy. The profiles are there by name only.
+	Config  config.Config `json:"config"`
+	Project string        `json:"project,omitempty"`
+	// Global is how many of the [policy] rules of Config are config.toml's;
+	// the rest are the project file's.
+	Global int `json:"global"`
+	// Default is the profile config.toml selects for Env; DefaultErr says
+	// why it selects none.
+	Default    string `json:"default,omitempty"`
+	DefaultErr string `json:"default_err,omitempty"`
+	// Policies are the files of the Cedar policies in force, if asked for;
+	// PolicyErr says why there are none, and why a request would fail.
+	Policies  []policy.Summary `json:"policies,omitempty"`
+	PolicyErr string           `json:"policy_err,omitempty"`
+	// Changed names the config files on disk that differ from those in
+	// force: what `aish apply-config` would apply.
+	Changed []string `json:"changed,omitempty"`
+}
+
+// ModelsParams ask for the models of Profile, "" the top level of
+// config.toml; Env is the shell's environment, for the key.
+type ModelsParams struct {
+	Profile string   `json:"profile,omitempty"`
+	Env     []string `json:"env,omitempty"`
+}
+
+// PolicyParams ask the policies in force what they say of a call of Tool
+// with Args by the agent of the shell at Cwd with Env: as subagent Agent,
+// if set. Line, if HandOff, is the command the call hands the shell;
+// Server is the MCP server of the tool, if any.
+type PolicyParams struct {
+	Cwd     string         `json:"cwd"`
+	Env     []string       `json:"env,omitempty"`
+	Tool    string         `json:"tool"`
+	Args    map[string]any `json:"args,omitempty"`
+	Line    string         `json:"line,omitempty"`
+	HandOff bool           `json:"hand_off,omitempty"`
+	Server  string         `json:"server,omitempty"`
+	Agent   string         `json:"agent,omitempty"`
 }
 
 // Status is what `aish status` shows of the session, counted by the proxy,

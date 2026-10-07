@@ -83,9 +83,9 @@ var usage = `usage:
                              list the profiles and the models, or switch the
                              profile of config.toml, the model and/or the
                              effort (low … max, default) for this shell
-  aish apply-config          put config.toml, .aish.toml and the policies, as they
-                             are now, in force for this shell: aish reads them
-                             as it starts and with this command only
+  aish apply-config          put config.toml, .aish.toml, the policies and mcp.yaml,
+                             as they are now, in force for this shell: aish reads
+                             them as it starts and with this command only
   aish expand                print outputs folded during the last request (Ctrl+O)
 
 In the shell: commands run as usual; text that is not a command goes to the
@@ -112,12 +112,15 @@ func run(args []string) int {
 		// renamed, say: on the top level every command still works,
 		// `aish model root` too.
 		top, topErr := conf.LoadProfile("")
-		if topErr != nil {
+		switch {
+		case byProxy(args):
+			// It goes by the config in force, or by none: the file waits
+			// for aish apply-config, which tells what is wrong with it.
+		case topErr != nil:
 			return fail(err)
-		}
-		// Not on each request and after each of its commands: the agent
-		// is the proxy's, which reads config.toml itself.
-		if len(args) == 0 || args[0] != "agent" {
+		case len(args) == 0 || args[0] != "agent":
+			// Not on each request and after each of its commands: the
+			// agent is the proxy's, which reads config.toml itself.
 			fmt.Fprintf(os.Stderr, "\x1b[33maish: %v; on the top level of config.toml\x1b[0m\n", err)
 		}
 		cfg = top
@@ -207,17 +210,6 @@ func shell(conf *config.Snapshot, cfg config.Config, args []string) int {
 	return startShell(conf, cfg, sess, resume && sess.Len() > 0)
 }
 
-// shellConfig is cfg with the profile, the model and the effort this shell
-// uses: `aish model` may have switched them.
-func shellConfig(cfg config.Config, client *rpc.Client) config.Config {
-	var info rpc.Info
-	if client.Call(rpc.MethodInfo, nil, &info) == nil && info.Model != "" {
-		cfg, _ = profileOf(cfg, info)
-		cfg.Model, cfg.Effort = info.Model, info.Effort
-	}
-	return cfg
-}
-
 func trimDashes(a []string) []string {
 	if len(a) > 0 && a[0] == "--" {
 		return a[1:]
@@ -280,10 +272,11 @@ func listTools(w io.Writer, reg *tools.Registry) {
 func toolCmd(cfg config.Config, args []string) int {
 	// The project's tools too, as the agent would have them here.
 	cwd, _ := os.Getwd()
-	cfg, project, err := config.Project(cfg, cwd)
+	a, err := inForce(cfg, cwd, nil, false)
 	if err != nil {
 		return fail(err)
 	}
+	cfg, project := a.cfg, a.project
 	// Not on every run: the agent and the subagents call aish tool NAME
 	// too, and the note would land in the output of each of their calls.
 	if len(args) == 0 {

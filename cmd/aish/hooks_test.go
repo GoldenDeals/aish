@@ -98,8 +98,10 @@ func TestPrintHooksTrust(t *testing.T) {
 	writeHook(t, cfg.HooksDir, hooks.PreTool, "no-sudo", 0o755)
 
 	var b bytes.Buffer
-	if err := printHooks(&b, cfg, repo); err != nil {
+	if a, err := onDisk(cfg, repo, nil, false); err != nil {
 		t.Fatal(err)
+	} else {
+		printHooks(&b, a.cfg, a.project)
 	}
 	out := ansi.ReplaceAllString(b.String(), "")
 	if !strings.Contains(out, "no-sudo") || strings.Contains(out, "repo-guard") {
@@ -113,8 +115,10 @@ func TestPrintHooksTrust(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.Reset()
-	if err := printHooks(&b, cfg, repo); err != nil {
+	if a, err := onDisk(cfg, repo, nil, false); err != nil {
 		t.Fatal(err)
+	} else {
+		printHooks(&b, a.cfg, a.project)
 	}
 	out = ansi.ReplaceAllString(b.String(), "")
 	if !strings.Contains(out, "  no-sudo     "+cfg.HooksDir) || !strings.Contains(out, "  repo-guard  "+repo) ||

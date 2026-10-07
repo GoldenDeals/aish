@@ -55,7 +55,7 @@ func TestPolicyLine(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := policyLine(eng, tc.dir, tc.global, tc.rules.Len(), tc.project); got != tc.want {
+			if got := policyLine(eng.Summary(), tc.dir, tc.global, tc.rules.Len(), tc.project); got != tc.want {
 				t.Errorf("policyLine:\n got %q\nwant %q", got, tc.want)
 			}
 		})

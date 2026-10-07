@@ -43,13 +43,13 @@ func contextCmd(cfg config.Config, args []string) int {
 	}
 	info := st.Info
 	// What the next request would take, as in statusCmd: the profile of
-	// the shell and the settings of this directory.
-	cfg, _ = profileOf(cfg, info)
+	// the shell and the settings of this directory, as they are in force.
 	cwd, _ := os.Getwd()
-	cfg, _, err = config.Project(cfg, cwd)
+	a, err := inForce(cfg, cwd, nil, false)
 	if err != nil {
 		return fail(err)
 	}
+	cfg = a.cfg
 	// Built as the agent builds them: masked and truncated, so this shows
 	// no secret the model is not sent.
 	msgs, err := agent.ContextMessages(es, cfg)

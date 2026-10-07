@@ -1,20 +1,17 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/inebotov/aish/internal/agent"
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/mcp"
-	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 )
@@ -30,17 +27,16 @@ func statusCmd(cfg config.Config) int {
 		return fail(err)
 	}
 	info := st.Info
-	// The profile of the shell, which `aish model` may have switched.
-	def := cfg.Profile
-	cfg, profErr := profileOf(cfg, info)
-	// The settings of this directory: what the next request would take.
+	// The settings of this directory, of the profile of the shell, which
+	// `aish model` may have switched: what the next request would take.
 	cwd, _ := os.Getwd()
-	// Past config.Project the project's rules are in the same list.
-	global := rulesOf(cfg).Len()
-	cfg, project, err := config.Project(cfg, cwd)
+	a, err := inForce(cfg, cwd, nil, true)
 	if err != nil {
 		return fail(err)
 	}
+	cfg, project, def, profErr := a.cfg, a.project, a.def, a.profErr
+	// Past config.Project the project's rules are in the same list.
+	global := a.global
 
 	row := func(k, v string) { fmt.Printf("  \x1b[2m%-16s\x1b[0m %s\n", k, v) }
 	head := func(s string) { fmt.Printf("\x1b[1m%s\x1b[0m\n", s) }
@@ -112,13 +108,16 @@ func statusCmd(cfg config.Config) int {
 	row("markdown", fmt.Sprint(cfg.Markdown))
 	row("prompt_status", fmt.Sprint(cfg.PromptStatus))
 	row("config", configFiles(project, st.ProjectConfig, cfg.Untrusted))
+	if note := changedNote(a.changed); note != "" {
+		row("", strings.TrimSuffix(note, "\n"))
+	}
 	dirs := func(list string) string { return strings.Join(filepath.SplitList(list), ", ") }
-	// Loaded as the agent would: an error shows here, not on the next request.
-	if eng, err := policy.Load(context.Background(), cfg.PolicyDir, rulesOf(cfg)); err != nil {
+	// As the agent has them: an error shows here, not on the next request.
+	if a.policyErr != nil {
 		// The row says policy already, and a validation error names its file.
-		row("policy", "\x1b[31m"+strings.TrimPrefix(err.Error(), "policy: ")+"\x1b[0m")
+		row("policy", "\x1b[31m"+strings.TrimPrefix(a.policyErr.Error(), "policy: ")+"\x1b[0m")
 	} else {
-		row("policy", policyLine(eng, cfg.PolicyDir, global, rulesOf(cfg).Len(), project))
+		row("policy", policyLine(a.policies, cfg.PolicyDir, global, rulesOf(cfg).Len(), project))
 	}
 	row("tools", dirs(cfg.ToolsDir))
 	row("hooks", hooksLine(cfg.HooksDir))
@@ -236,13 +235,13 @@ func parseModelArgs(provider string, levels []string, args []string) (modelArgs,
 
 // modelCmd lists the profiles and the models of this shell's, or switches
 // its profile, model and effort.
-func modelCmd(conf config.Config, args []string) int {
+func modelCmd(disk config.Config, args []string) int {
 	client, err := rpc.FromEnv()
 	if err != nil {
 		return fail(err)
 	}
-	// As in shellConfig, a proxy that does not answer leaves config.toml's
-	// list to show; a switch fails on its own.
+	// A proxy that does not answer leaves config.toml's list to show; a
+	// switch fails on its own.
 	var info rpc.Info
 	if client.Call(rpc.MethodInfo, nil, &info) != nil {
 		info = rpc.Info{}
@@ -253,19 +252,33 @@ func modelCmd(conf config.Config, args []string) int {
 	if info.Asking && len(args) > 0 {
 		return fail(errors.New("the model is switched by the user, not by the assistant"))
 	}
+	// The profiles of the config in force: the proxy knows no other.
+	cwd, _ := os.Getwd()
+	cur, err := inForce(disk, cwd, nil, false)
+	if err != nil {
+		return fail(err)
+	}
+	conf := cur.cfg
 	// Another profile comes with its own model and effort, unless given;
 	// the shell's comes with the shell's.
 	profile, args, switching := profileArg(conf, args)
-	var cfg config.Config
-	shell := !switching && info.Model != ""
-	if switching {
-		if cfg, err = config.LoadProfile(profile); err != nil {
+	if !switching && len(args) > 0 {
+		if err := notInForce(conf, args[0]); err != nil {
 			return fail(err)
 		}
-	} else if cfg, err = profileOf(conf, info); err != nil {
-		// cfg is conf, what config.toml has, still worth showing; the
+	}
+	cfg := conf
+	shell := !switching && info.Model != ""
+	if switching {
+		other, err := inForce(disk, cwd, &profile, false)
+		if err != nil {
+			return fail(err)
+		}
+		cfg = other.cfg
+	} else if cur.profErr != nil {
+		// cfg is what config.toml selects, still worth showing; the
 		// shell's model is of the profile gone and does not go over it.
-		fmt.Printf("\x1b[33mprofile %s is not in config.toml: %v\x1b[0m\n", info.Profile, err)
+		fmt.Printf("\x1b[33mprofile %s is not in config.toml: %v\x1b[0m\n", info.Profile, cur.profErr)
 		shell = false
 	}
 	file := cfg // config.toml's, for how to keep the switch
@@ -284,9 +297,7 @@ func modelCmd(conf config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	ms, listErr := prov.Models(ctx)
+	ms, listErr := listModels(client, cfg.Profile, prov)
 	slices.SortFunc(ms, func(a, b llm.ModelInfo) int { return strings.Compare(a.ID, b.ID) })
 
 	if len(args) == 0 && !switching {
@@ -366,7 +377,7 @@ func modelCmd(conf config.Config, args []string) int {
 		return fail(err)
 	}
 	var keep []string
-	if cfg.Profile != conf.Profile {
+	if cfg.Profile != cur.def {
 		keep = append(keep, "profile")
 	}
 	if name != file.Model {
@@ -377,7 +388,7 @@ func modelCmd(conf config.Config, args []string) int {
 	}
 	// The top level is named too when the shell comes to it, or config.toml
 	// selects another.
-	if cfg.Profile != "" || switching || cfg.Profile != conf.Profile || cfg.Profile != info.Profile {
+	if cfg.Profile != "" || switching || cfg.Profile != cur.def || cfg.Profile != info.Profile {
 		fmt.Printf("profile %s, ", profileName(cfg.Profile))
 	}
 	fmt.Printf("model %s, effort %s for this shell", name, effortName(effort))

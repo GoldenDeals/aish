@@ -13,32 +13,32 @@ import (
 	"github.com/inebotov/aish/internal/tools"
 )
 
-// policyCmd loads the policies, so that a validation error shows up right
-// after editing a file, and with a tool call asks them about it without
-// running the model: `aish policy bash 'sudo ls'`; with --agent NAME, as a
-// call of subagent NAME. The [policy] rules of the config are one more
-// checker of the engine and answer there too.
+// policyCmd shows the policies in force, and with a tool call asks them
+// about it without running the model: `aish policy bash 'sudo ls'`; with
+// --agent NAME, as a call of subagent NAME. The [policy] rules of the
+// config are one more checker of the engine and answer there too. Inside
+// aish they are the proxy's, which the requests go by: an edit is checked
+// and put in force by `aish apply-config`. Outside, those on disk are
+// loaded, so that a validation error shows up right after editing a file.
 func policyCmd(cfg config.Config, args []string) int {
 	agent, args, err := agentFlag(args)
 	if err != nil {
 		return fail(err)
 	}
-	global := rulesOf(cfg).Len()
 	// The project's policies too, as the agent would have them here.
 	cwd, _ := os.Getwd()
-	cfg, project, err := config.Project(cfg, cwd)
+	a, err := inForce(cfg, cwd, nil, len(args) == 0)
 	if err != nil {
 		return fail(err)
 	}
-	fmt.Fprint(os.Stderr, untrustedNote(cfg, project))
-	ctx := context.Background()
-	rules := rulesOf(cfg)
-	eng, err := policy.Load(ctx, cfg.PolicyDir, rules)
-	if err != nil {
-		return fail(err)
-	}
+	cfg = a.cfg
+	fmt.Fprint(os.Stderr, untrustedNote(cfg, a.project))
+	fmt.Fprint(os.Stderr, changedNote(a.changed))
 	if len(args) == 0 {
-		fmt.Println(policyLine(eng, cfg.PolicyDir, global, rules.Len(), project))
+		if a.policyErr != nil {
+			return fail(a.policyErr)
+		}
+		fmt.Println(policyLine(a.policies, cfg.PolicyDir, a.global, rulesOf(cfg).Len(), a.project))
 		return 0
 	}
 	reg := loadTools(cfg, nil)
@@ -50,19 +50,11 @@ func policyCmd(cfg config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	in := policy.NewInput(t.Name(), targs, cwd, os.Environ())
+	pp := rpc.PolicyParams{Cwd: cwd, Env: os.Environ(), Tool: t.Name(), Args: targs, Server: tools.ServerOf(t), Agent: agent}
 	if h, ok := t.(tools.HandsOff); ok {
-		if line, ok := h.Command(targs); ok {
-			in.HandOff(line)
-		}
+		pp.Line, pp.HandOff = h.Command(targs)
 	}
-	in.Server = tools.ServerOf(t)
-	in.Model = cfg.Model
-	if client, err := rpc.FromEnv(); err == nil {
-		in.Model = shellConfig(cfg, client).Model
-	}
-	in.Agent = agent
-	d, err := eng.Check(ctx, in)
+	d, err := askPolicies(cfg, pp)
 	if err != nil {
 		return fail(err)
 	}
@@ -72,6 +64,35 @@ func policyCmd(cfg config.Config, args []string) int {
 	}
 	fmt.Printf("%s: %s\n", d.Action, d.Reason)
 	return 1
+}
+
+// askPolicies is what the policies in force say of the call pp: inside
+// aish the proxy's, as compiled for its requests, made by the shell's
+// model; outside, those of cfg, loaded now.
+func askPolicies(cfg config.Config, pp rpc.PolicyParams) (policy.Decision, error) {
+	model := cfg.Model
+	if client, err := rpc.FromEnv(); err == nil {
+		var d policy.Decision
+		if err := client.Call(rpc.MethodPolicy, pp, &d); !olderProxy(err) {
+			return d, err
+		}
+		// As before rpc policy: those on disk, the shell's model.
+		var info rpc.Info
+		if client.Call(rpc.MethodInfo, nil, &info) == nil && info.Model != "" {
+			model = info.Model
+		}
+	}
+	ctx := context.Background()
+	eng, err := policy.Load(ctx, cfg.PolicyDir, rulesOf(cfg))
+	if err != nil {
+		return policy.Decision{}, err
+	}
+	in := policy.NewInput(pp.Tool, pp.Args, pp.Cwd, pp.Env)
+	if pp.HandOff {
+		in.HandOff(pp.Line)
+	}
+	in.Server, in.Model, in.Agent = pp.Server, model, pp.Agent
+	return eng.Check(ctx, in)
 }
 
 // agentFlag takes a leading --agent NAME off the arguments of aish policy:
@@ -102,9 +123,10 @@ func agentFlag(args []string) (string, []string, error) {
 }
 
 // policyLine says what policies are in force: the Cedar files of dir with
-// their policy counts and the [policy] rules, global from config.toml and
-// the rest from the project's file. `aish policy` and `aish status` print it.
-func policyLine(eng *policy.Engine, dir string, global, total int, project string) string {
+// their policy counts, as Engine.Summary has them, and the [policy] rules,
+// global from config.toml and the rest from the project's file. `aish
+// policy` and `aish status` print it.
+func policyLine(summary []policy.Summary, dir string, global, total int, project string) string {
 	var list []string
 	for _, d := range filepath.SplitList(dir) {
 		list = append(list, home(d))
@@ -112,7 +134,7 @@ func policyLine(eng *policy.Engine, dir string, global, total int, project strin
 	dirs := strings.Join(list, ", ")
 	n := 0
 	var files []string
-	for _, s := range eng.Summary() {
+	for _, s := range summary {
 		n += s.Policies
 		files = append(files, fmt.Sprintf("%s (%d)", s.File, s.Policies))
 	}

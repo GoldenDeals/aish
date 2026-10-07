@@ -61,11 +61,11 @@ type CallParams struct {
 // first call; its tool list and instructions are cached on disk, so the
 // next shell knows them from its start without starting anything.
 type Manager struct {
-	servers  []*server
 	cacheDir string
 
-	mu    sync.Mutex
-	notes map[string]bool // caches not written, and why
+	mu      sync.Mutex
+	servers []*server       // replaced whole by Reload, see list
+	notes   map[string]bool // caches not written, and why
 }
 
 type server struct {
@@ -86,6 +86,8 @@ type server struct {
 	// instructions are what initialize said about the use of the tools;
 	// like tools, known from the cache before the server starts.
 	instructions string
+	// stopped: Reload let the server go, and it is not started again.
+	stopped bool
 }
 
 // startup is a server start in progress; everyone who needs the server
@@ -147,7 +149,7 @@ func (m *Manager) cachePath(server string) string {
 // wait for its first use, lest pass ask for a passphrase as the shell
 // starts.
 func (m *Manager) Warm() {
-	for _, s := range m.servers {
+	for _, s := range m.list() {
 		if !s.known && len(s.cfg.EnvCommand) == 0 && len(s.cfg.HeadersCommand) == 0 {
 			go m.ensure(context.Background(), s, false)
 		}
@@ -156,12 +158,13 @@ func (m *Manager) Warm() {
 
 func (m *Manager) List(ctx context.Context, wait bool) ListResult {
 	var res ListResult
+	servers := m.list()
 	if wait {
 		// All at once, so that the client waits startTimeout, not that
 		// many times over.
-		errs := make([]error, len(m.servers))
+		errs := make([]error, len(servers))
 		var wg sync.WaitGroup
-		for i, s := range m.servers {
+		for i, s := range servers {
 			s.mu.Lock()
 			known := s.known
 			s.mu.Unlock()
@@ -172,11 +175,11 @@ func (m *Manager) List(ctx context.Context, wait bool) ListResult {
 		wg.Wait()
 		for i, err := range errs {
 			if err != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", m.servers[i].name, err))
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", servers[i].name, err))
 			}
 		}
 	}
-	for _, s := range m.servers {
+	for _, s := range servers {
 		s.mu.Lock()
 		for _, t := range s.tools {
 			t.Timeout = startTimeout + s.timeout()
@@ -258,7 +261,7 @@ func (s *server) timeout() time.Duration {
 }
 
 func (m *Manager) find(name string) (*server, ToolInfo) {
-	for _, s := range m.servers {
+	for _, s := range m.list() {
 		s.mu.Lock()
 		for _, t := range s.tools {
 			if t.Name == name {
@@ -276,6 +279,10 @@ func (m *Manager) find(name string) (*server, ToolInfo) {
 func (m *Manager) ensure(ctx context.Context, s *server, force bool) (conn, error) {
 	for {
 		s.mu.Lock()
+		if s.stopped {
+			defer s.mu.Unlock()
+			return nil, errStopped
+		}
 		if s.conn != nil && s.conn.alive() {
 			defer s.mu.Unlock()
 			return s.conn, nil
@@ -314,6 +321,11 @@ func (m *Manager) start(s *server, st *startup) {
 	c, tools, instructions, err := s.connect()
 	s.mu.Lock()
 	s.starting = nil
+	if err == nil && s.stopped {
+		// Not saved either: the cache is the next config's now.
+		go c.close()
+		c, err = nil, errStopped
+	}
 	if err != nil {
 		// Here, not only in Status: the error goes to the agent too,
 		// through Call and List, and a server may print its token.
@@ -407,7 +419,7 @@ func (m *Manager) note(format string, args ...any) {
 // take a couple of seconds.
 func (m *Manager) Close() {
 	var wg sync.WaitGroup
-	for _, s := range m.servers {
+	for _, s := range m.list() {
 		s.mu.Lock()
 		if s.conn != nil {
 			wg.Go(s.conn.close)
@@ -437,7 +449,7 @@ type StatusResult struct {
 
 func (m *Manager) Status() StatusResult {
 	var res StatusResult
-	for _, s := range m.servers {
+	for _, s := range m.list() {
 		st := Status{Name: s.name, Transport: "stdio", Expose: s.cfg.Expose}
 		if s.cfg.URL != "" {
 			st.Transport, st.Target = "http", maskURL(s.cfg.URL)

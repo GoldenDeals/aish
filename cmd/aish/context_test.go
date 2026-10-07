@@ -182,6 +182,8 @@ func TestContextCmd(t *testing.T) {
 			return rpc.Status{Info: rpc.Info{SessionID: "s1", Window: 200_000}, Tokens: 1234, Commands: 1, Requests: 1}, nil
 		case rpc.MethodHistory:
 			return es, nil
+		case rpc.MethodConfig:
+			return rpc.Config{Config: config.Default()}, nil
 		}
 		return nil, errors.New("unexpected " + method)
 	})

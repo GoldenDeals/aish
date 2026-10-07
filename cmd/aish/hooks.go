@@ -23,26 +23,25 @@ func hooksCmd(cfg config.Config, args []string) int {
 		return fail(errors.New("usage: aish hooks"))
 	}
 	cwd, _ := os.Getwd()
-	if err := printHooks(os.Stdout, cfg, cwd); err != nil {
+	a, err := inForce(cfg, cwd, nil, false)
+	if err != nil {
 		return fail(err)
 	}
+	fmt.Fprint(os.Stderr, changedNote(a.changed))
+	printHooks(os.Stdout, a.cfg, a.project)
 	return 0
 }
 
-// printHooks lists the hooks of cwd as the agent finds them, the project
-// file's with them. Its hooks_dir counts only when the file is trusted;
-// one that is not is named, lest its hooks be taken for running.
-func printHooks(w io.Writer, cfg config.Config, cwd string) error {
-	cfg, project, err := config.Project(cfg, cwd)
-	if err != nil {
-		return err
-	}
+// printHooks lists the hooks of cfg, of a directory with project its
+// project file laid over, as the agent finds them, the project file's with
+// them. Its hooks_dir counts only when the file is trusted; one that is
+// not is named, lest its hooks be taken for running.
+func printHooks(w io.Writer, cfg config.Config, project string) {
 	set, problems := hooks.Find(cfg.HooksDir)
 	listHooks(w, set, problems, cfg.HooksDir)
 	if slices.Contains(cfg.Untrusted, "hooks_dir") {
 		fmt.Fprintf(w, "%s sets hooks_dir, but is not trusted: its hooks run after aish trust\n", home(project))
 	}
-	return nil
 }
 
 // listHooks prints the hooks of set by event, in the order they run, and

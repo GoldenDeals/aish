@@ -36,11 +36,11 @@ func (p *Proxy) tellDefErr(err error) {
 }
 
 // tellConfigPath says the shell has another $AISH_CONFIG than the proxy,
-// exported or unset there after aish started: `aish model` and `aish
-// status` there read the file it names, the agent the one aish started
-// with. The proxy keeps its own, which aish read as it started, before
-// there was a shell to ask. Once for a value while it lasts. Called under
-// reqMu.
+// exported or unset there after aish started: a command there that reads
+// config.toml, `aish resume` say, reads the file it names, while the agent,
+// `aish model` and `aish status` go by the one aish started with. The proxy
+// keeps its own, which aish read as it started, before there was a shell
+// to ask. Once for a value while it lasts. Called under reqMu.
 func (p *Proxy) tellConfigPath(getenv func(string) string) {
 	def := filepath.Join(config.Dir(), "config.toml")
 	// The proxy's own environment, not the shell's: the one

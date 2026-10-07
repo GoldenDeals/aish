@@ -11,23 +11,26 @@ import (
 
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
+	"github.com/inebotov/aish/internal/mcp"
 	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 )
 
 // The config files — config.toml with its profiles, the project files,
-// the policies — are read as aish starts and when the user runs `aish
-// apply-config`, not in between: a request goes by p.conf, the snapshot of
-// them, and by p.policies, compiled from them once and kept until then. An edit is in force
-// all at once and when the user says so, rather than one key from the
-// next request and another only after a restart. What the proxy takes for
+// the policies, the MCP config — are read as aish starts and when the
+// user runs `aish apply-config`, not in between: a request goes by
+// p.conf, the snapshot of them, by p.policies, compiled from them once and
+// kept until then, and by the servers of p.mcp. An edit is in force all at
+// once and when the user says so, rather than one key from the next
+// request and another only after a restart. What the proxy takes for
 // itself (applyFields) comes from the same snapshot. Trust in a project
 // file is the exception: it is checked against the disk at every use (see
 // config.Snapshot), so that an edit turns the project's code off at once.
 //
 // The config a request of the shell from a directory goes by is what
 // prepare makes of p.snapshot(): LoadProfile of the shell's profile,
-// Project of the directory over it, the shell's model and effort.
+// Project of the directory over it, the shell's model and effort. The
+// commands in the shell show that one too (inforce.go), not the files.
 
 // snapshot is the snapshot of the config files requests go by. A proxy
 // that Run has not given one, a test's, takes it at the first need.
@@ -88,7 +91,7 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 	}
 	old := p.snapshot()
 	sh := shellModel{profile: p.profile, model: p.model, effort: p.effort, def: p.defProfile}
-	started, mcpSum := p.started, p.mcpSum
+	started, mcpFile, mcpSum := p.started, p.mcpFile, p.mcpSum
 	p.mu.Unlock()
 
 	next := config.NewSnapshot()
@@ -110,6 +113,18 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 	if _, err := fresh.Engine(ctx, cfg.PolicyDir, rulesOf(cfg)); err != nil {
 		return rpc.Applied{}, fmt.Errorf("%w; nothing applied", err)
 	}
+	// The MCP config, read anew if it is another file or was edited; one
+	// that does not parse is not applied, as config.toml is not. The sum
+	// is taken first: an edit while the file is read is told of
+	// afterwards rather than missed.
+	mcpNow := fileSum(top.MCPConfig)
+	reloadMCP := top.MCPConfig != mcpFile || mcpNow != mcpSum
+	var servers map[string]mcp.Server
+	if reloadMCP {
+		if servers, err = mcp.LoadConfig(top.MCPConfig); err != nil {
+			return rpc.Applied{}, fmt.Errorf("%w; nothing applied", err)
+		}
+	}
 
 	res := rpc.Applied{Keys: old.Keys(next)}
 	for _, f := range old.Stale() {
@@ -119,6 +134,9 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 	}
 	dirs, _ := p.policies.Changed()
 	res.Files = append(res.Files, dirs...)
+	if mcpNow != mcpSum { // another file alone is named by its key
+		res.Files = append(res.Files, top.MCPConfig)
+	}
 	was := top
 	if started != nil {
 		was = *started
@@ -126,9 +144,6 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 		was = c
 	}
 	res.Restart = restartKeys(was, top)
-	if started != nil && fileSum(started.MCPConfig) != mcpSum {
-		res.Restart = append(res.Restart, started.MCPConfig)
-	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -153,6 +168,13 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 		p.setProfile(to.cfg, to.prov)
 		p.setModel(to.model, window)
 		p.effort = to.effort
+	}
+	if reloadMCP {
+		// The servers that stay go on as they are; the agent lists the
+		// new set with its next request.
+		p.mcp.Reload(servers)
+		p.mcp.Warm()
+		p.mcpFile, p.mcpSum = top.MCPConfig, mcpNow
 	}
 	// Kept by a key without the proxies of the requests: made anew.
 	p.agentProv, p.agentProvKey = nil, ""
@@ -239,7 +261,7 @@ func (p *Proxy) follow(old, next *config.Snapshot, top, def config.Config, defEr
 // restartKeys are the keys of config.toml that differ between was, the
 // config aish started with, and now, and that only a restart applies: the
 // bash it runs, the route its rc file reads once, the sessions it keeps
-// and prunes as it starts, the MCP servers it started.
+// and prunes as it starts.
 func restartKeys(was, now config.Config) []string {
 	var keys []string
 	for _, k := range []struct {
@@ -250,7 +272,6 @@ func restartKeys(was, now config.Config) []string {
 		{"route", was.Route != now.Route},
 		{"sessions_dir", was.SessionsDir != now.SessionsDir},
 		{"sessions_ttl", was.SessionsTTL != now.SessionsTTL},
-		{"mcp_config", was.MCPConfig != now.MCPConfig},
 	} {
 		if k.differ {
 			keys = append(keys, k.name)
@@ -280,6 +301,9 @@ func fileSum(path string) string {
 func (p *Proxy) tellChanged(conf *config.Snapshot, pols *policy.Cache, cwd string) {
 	_, keys := pols.Changed()
 	keys = append(keys, conf.Changed(cwd)...)
+	if f, now, changed := p.mcpChanged(); changed {
+		keys = append(keys, f+"\x00"+now)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !slices.ContainsFunc(keys, func(k string) bool { return !p.confSaid[k] }) {
@@ -292,4 +316,29 @@ func (p *Proxy) tellChanged(conf *config.Snapshot, pols *policy.Cache, cwd strin
 		p.confSaid[k] = true
 	}
 	p.emit([]byte("\x1b[2m[aish: config changed on disk: aish apply-config to apply it]\x1b[0m\r\n"))
+}
+
+// mcpChanged tells whether the MCP config the servers are of differs on
+// disk now from the file read, and what it reads now.
+func (p *Proxy) mcpChanged() (file, now string, changed bool) {
+	p.mu.Lock()
+	file, sum := p.mcpFile, p.mcpSum
+	p.mu.Unlock()
+	if file == "" { // none read: a proxy Run has not started
+		return "", "", false
+	}
+	now = fileSum(file)
+	return file, now, now != sum
+}
+
+// unapplied names the config files on disk that differ from those in
+// force, of conf and of the policies: what `aish apply-config` would apply.
+func (p *Proxy) unapplied(conf *config.Snapshot) []string {
+	names := conf.Stale()
+	dirs, _ := p.policies.Changed()
+	names = append(names, dirs...)
+	if f, _, changed := p.mcpChanged(); changed {
+		names = append(names, f)
+	}
+	return names
 }

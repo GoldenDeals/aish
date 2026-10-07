@@ -131,12 +131,13 @@ type Proxy struct {
 	newProvider  func(config.Config) (llm.Provider, error) // nil: llm.New; tests set it
 
 	// The config files as read at the start or by `aish apply-config`,
-	// under p.mu, see applyconfig.go. started is the config Run got,
-	// mcpSum the sha256 of its mcp_config then: what only a restart
-	// applies is told by them. confSaid are the edits on disk, not applied
-	// yet, that tellChanged told of.
+	// under p.mu, see applyconfig.go. started is the config Run got: what
+	// only a restart applies is told by it. mcpFile is the MCP config the
+	// servers of p.mcp are of, mcpSum its sha256 when read. confSaid are
+	// the edits on disk, not applied yet, that tellChanged told of.
 	conf     *config.Snapshot
 	started  *config.Config
+	mcpFile  string
 	mcpSum   string
 	confSaid map[string]bool
 }
@@ -157,7 +158,8 @@ func New(sess *session.Session) *Proxy {
 // apply-config` reads them anew.
 func (p *Proxy) Run(conf *config.Snapshot, cfg config.Config) (int, error) {
 	p.mu.Lock()
-	p.conf, p.started, p.mcpSum = conf, &cfg, fileSum(cfg.MCPConfig)
+	p.conf, p.started = conf, &cfg
+	p.mcpFile, p.mcpSum = cfg.MCPConfig, fileSum(cfg.MCPConfig)
 	p.applyFields(cfg)
 	p.mu.Unlock()
 	p.fixedWindow = cfg.ContextWindow > 0
@@ -742,6 +744,24 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 			return nil, err
 		}
 		return p.applyConfig(ctx, ap)
+	case rpc.MethodConfig:
+		var cp rpc.ConfigParams
+		if err := json.Unmarshal(params, &cp); err != nil {
+			return nil, err
+		}
+		return p.configFor(ctx, cp)
+	case rpc.MethodModels:
+		var mp rpc.ModelsParams
+		if err := json.Unmarshal(params, &mp); err != nil {
+			return nil, err
+		}
+		return p.models(ctx, mp)
+	case rpc.MethodPolicy:
+		var pp rpc.PolicyParams
+		if err := json.Unmarshal(params, &pp); err != nil {
+			return nil, err
+		}
+		return p.checkPolicy(ctx, pp)
 	case rpc.MethodStatus:
 		p.mu.Lock()
 		defer p.mu.Unlock()

@@ -60,6 +60,9 @@ func (p *Proxy) switchModel(mp rpc.ModelParams) (rpc.Info, error) {
 	prov, other := p.prov, mp.Profile != p.profile
 	var cfg config.Config
 	if other {
+		if _, err := p.snapshot().LoadProfile(mp.Profile); err != nil {
+			return rpc.Info{}, notApplied(err) // one added to the file since, say
+		}
 		var err error
 		if cfg, prov, err = p.toProfile(mp.Profile); err != nil {
 			return rpc.Info{}, err
