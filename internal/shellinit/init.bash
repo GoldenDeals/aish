@@ -84,8 +84,10 @@ __aish_route() {
 		return
 		;;
 	'!'*)
-		# Forced bash. A bare `!` keeps bash history expansion (`!!`, `!$`).
-		case $__aish_trim in '!!'* | '!$'* | '!-'* | '!'[0-9]*) ;; *)
+		# Forced bash: `!cmd` runs cmd. History expansion (`!!`, `!$`) keeps
+		# its `!`, and so does bash's own negation, `!` before a blank or
+		# alone: `! [ -f keep ] && rm -rf dir` without it removes dir.
+		case $__aish_trim in '!' | '!'[[:space:]]* | '!!'* | '!$'* | '!-'* | '!'[0-9]*) ;; *)
 			READLINE_LINE=${__aish_trim#!}
 			READLINE_POINT=${#READLINE_LINE}
 			__aish_buf=$READLINE_LINE
