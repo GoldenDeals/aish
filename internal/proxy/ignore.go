@@ -12,14 +12,26 @@ import (
 // journal_ignore pattern. Each simple command of the line is matched on its
 // own, the way the policy sees them, so that `sudo env`, `env | grep X` and
 // `bash -c env` are caught by the pattern `env`; a line bash cannot parse is
-// matched whole, as HISTIGNORE would.
+// matched by the commands before the error, whole, as HISTIGNORE would, and
+// by each of its lines.
 func ignoredCommand(line string, patterns []string) bool {
 	if len(patterns) == 0 {
 		return false
 	}
 	cmds, err := policy.Commands(line)
 	if err != nil || len(cmds) == 0 {
-		cmds = [][]string{{strings.TrimSpace(line)}}
+		cmds = append(cmds, []string{strings.TrimSpace(line)})
+	}
+	if err != nil {
+		// bash runs a paste line by line, up to the error, and a line past
+		// it may be a command the parse never got to. Matching one bash
+		// does not run costs its output; missing one, a secret in the
+		// journal.
+		for l := range strings.SplitSeq(line, "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				cmds = append(cmds, []string{l})
+			}
+		}
 	}
 	for _, argv := range cmds {
 		cmd := strings.Join(argv, " ")
