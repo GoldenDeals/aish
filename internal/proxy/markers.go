@@ -1,6 +1,14 @@
 package proxy
 
-import "bytes"
+import (
+	"bytes"
+	"strconv"
+	"strings"
+
+	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/session"
+)
 
 // maxMarker bounds how much output an unterminated marker holds back. Not
 // smaller: cmd-start carries the whole command line, pasted ones included.
@@ -89,4 +97,109 @@ func (f *Filter) Feed(p []byte, onText func([]byte), onMarker func(Marker)) {
 func parseMarker(b []byte) Marker {
 	kind, payload, _ := bytes.Cut(b, []byte{';'})
 	return Marker{Kind: string(kind), Payload: string(payload)}
+}
+
+func (p *Proxy) marker(m Marker) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	switch m.Kind {
+	case "cmd-start":
+		p.dropLine()
+		p.user = &segment{cmd: m.Payload, buf: capture.NewBuffer(headCap, tailCap)}
+	case "ask-start":
+		p.dropLine()
+		p.asking = true
+		p.folds = nil
+		// A command that asks (an alias of __aish_ask) is the request's:
+		// in the journal it would hold the whole reply as its output.
+		p.user = nil
+	case "cmd-end":
+		defer p.drawStatus() // once the command is in the journal
+		p.earlyPrompt()
+		p.at = nil
+		p.asking = false
+		p.handed = "" // cut short by Ctrl+C or return, or never run
+		if p.tool != nil {
+			p.finishFold(p.tool, 130)
+			p.tool = nil
+		}
+		// Back at the prompt: an agent command interrupted with Ctrl+C never
+		// sent agent-end. Keep what it printed for the next `agent start`.
+		for id, seg := range p.agent {
+			out, tui := render(seg.buf)
+			p.finish(id, rpc.Output{Output: out, Exit: 130, TUI: tui})
+			if seg.fold != nil {
+				p.finishFold(seg.fold, 130)
+			} else if seg.last.text {
+				p.emit([]byte("\r\n"))
+			}
+		}
+		clear(p.agent)
+		if p.waits {
+			// The agent's line of calls waited for a command cut short, or
+			// never run: no agent goes on with it now, the prompt would.
+			p.emit([]byte("  " + dim + "(interrupted)" + reset + "\r\n"))
+		}
+		p.hide, p.waits = false, false
+		p.stopSpin()
+		p.stopWatch()
+		rc, cwd, _ := strings.Cut(m.Payload, ";")
+		defer p.saveState(cwd) // with the command that changed it in the journal
+		seg := p.user
+		p.user = nil
+		if p.switched {
+			p.switched = false
+			return // `aish resume` belongs to neither session
+		}
+		if seg == nil || strings.TrimSpace(seg.cmd) == "" {
+			return
+		}
+		exit, _ := strconv.Atoi(rc)
+		out, tui := render(seg.buf)
+		if seg.cleared && strings.TrimSpace(out) == "" {
+			return // `clear` itself: nothing left on the screen
+		}
+		if ignoredCommand(seg.cmd, p.ignore) {
+			out = session.NotRecorded
+		}
+		_ = p.sess.Append(session.Entry{Kind: session.KindShell, Cmd: seg.cmd, Output: out, Exit: exit, Cwd: cwd, TUI: tui})
+	case "agent-start":
+		id, cmd, _ := strings.Cut(m.Payload, ";")
+		seg := &segment{cmd: cmd, buf: capture.NewBuffer(headCap, tailCap)}
+		if p.hide {
+			seg.fold = newQuiet("❯ " + cmd)
+			if p.spin != nil {
+				p.spin.fold = seg.fold
+			}
+		} else if p.foldLines >= 0 {
+			seg.fold = newFold("❯ "+cmd, p.foldLines)
+			if p.foldLines == 0 {
+				seg.fold.at = p.at
+			}
+			p.watchFold(seg.fold) // it may wait for input, see foldprompt.go
+		}
+		p.at, p.hide = nil, false
+		p.agent[id] = seg
+	case "agent-end":
+		p.stopSpin() // the agent goes on with its line
+		p.stopWatch()
+		f := strings.SplitN(m.Payload, ";", 3)
+		if len(f) < 3 {
+			return
+		}
+		id := f[0]
+		seg, ok := p.agent[id]
+		if !ok {
+			return
+		}
+		delete(p.agent, id)
+		exit, _ := strconv.Atoi(f[1])
+		if seg.fold != nil {
+			p.finishFold(seg.fold, exit)
+		} else if seg.last.text {
+			p.emit([]byte("\r\n"))
+		}
+		out, tui := render(seg.buf)
+		p.finish(id, rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui})
+	}
 }

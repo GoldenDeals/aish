@@ -162,3 +162,30 @@ func (v *viewer) key(in []byte) (closed bool) {
 	v.clamp()
 	return false
 }
+
+// viewFolds are the outputs of the current or last request, including the
+// one being printed.
+func (p *Proxy) viewFolds() []Fold {
+	folds := append([]Fold{}, p.folds...)
+	if f := p.liveFold(); f != nil && !f.open {
+		// A command cut short on the screen is there before it prints anything.
+		if raw := f.raw.Bytes(); len(raw) > 0 || f.cut() {
+			folds = append(folds, Fold{Title: f.title + "  (running)", Text: string(raw)})
+		}
+	}
+	return folds
+}
+
+// closeView shows the cursor the viewer hid, unless an open question or
+// form keeps it hidden. What was held goes after it, so that a spinner
+// drawn meanwhile hides it again.
+func (p *Proxy) closeView() {
+	cursor := "\x1b[?25h"
+	if p.ask != nil || p.form != nil {
+		cursor = "\x1b[?25l"
+	}
+	_, _ = p.out.Write(append(p.view.close(), cursor...))
+	_, _ = p.out.Write(p.held)
+	p.view, p.held = nil, nil
+	p.syncPaste() // after what was held: the mode the shell set there is in it
+}

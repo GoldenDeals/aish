@@ -1,40 +1,14 @@
 package proxy
 
 import (
-	"context"
 	"fmt"
-	"time"
 
 	"github.com/mattn/go-runewidth"
 
 	"github.com/GoldenDeals/aish/internal/config"
-	"github.com/GoldenDeals/aish/internal/llm"
+	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
 )
-
-// lookupWindow asks prov, the provider of profile, for the context size of
-// model, which the models list reports for Anthropic. The shell may have
-// switched to another profile or model by the time it answers.
-func (p *Proxy) lookupWindow(prov llm.Provider, profile, model string) {
-	if prov == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	ms, err := prov.Models(ctx)
-	if err != nil {
-		return
-	}
-	for _, m := range ms {
-		if m.ID == model && m.Window > 0 {
-			p.mu.Lock()
-			if p.profile == profile && p.model == model && p.window == 0 {
-				p.window = m.Window
-			}
-			p.mu.Unlock()
-		}
-	}
-}
 
 // statusText is the context size, the profile when it is not the one
 // config.toml selects (config.Root for its top level), the model and its
@@ -93,4 +67,41 @@ func (p *Proxy) drawStatus() {
 	}
 	p.line = newInputLine(w, h, text, color)
 	p.emit(p.line.draw())
+}
+
+// info is what `aish` commands ask the proxy about the shell. Called under
+// p.mu.
+func (p *Proxy) info() rpc.Info {
+	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Saved: p.sess.Saved(),
+		Profile: p.profile, Model: p.model, Effort: p.effort, Window: p.window, Asking: p.asking}
+}
+
+// status counts what `aish status` shows. Called under p.mu.
+func (p *Proxy) status() rpc.Status {
+	all := p.sess.Entries()
+	es := session.Current(all)
+	st := rpc.Status{Info: p.info(), ProjectConfig: p.project}
+	st.Tokens, _ = p.contextTokens(es)
+	for _, e := range all {
+		switch e.Kind {
+		case session.KindSummary:
+			st.Compacts++
+		case session.KindAssistant:
+			st.ToolCalls += len(e.ToolCalls)
+			st.InputTokens += e.InputTokens
+			st.CachedTokens += e.CachedTokens
+			st.OutputTokens += e.OutputTokens
+		}
+	}
+	for _, e := range es {
+		switch e.Kind {
+		case session.KindShell:
+			st.Commands++
+		case session.KindUser:
+			st.Requests++
+		case session.KindAssistant:
+			st.Measured = st.Measured || e.InputTokens > 0
+		}
+	}
+	return st
 }

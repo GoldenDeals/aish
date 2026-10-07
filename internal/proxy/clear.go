@@ -100,14 +100,3 @@ func (p *Proxy) clear(ctx context.Context, cp rpc.ClearParams) (_ rpc.Info, err 
 	}
 	return p.info(), nil
 }
-
-// stopBackground stops the agent's subagents in the background, if any.
-// Not under p.mu: it waits for them, and their commands may call the proxy.
-func (p *Proxy) stopBackground() {
-	p.mu.Lock()
-	a := p.ag
-	p.mu.Unlock()
-	if a != nil {
-		a.StopBackground()
-	}
-}
