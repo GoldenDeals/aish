@@ -47,6 +47,9 @@ type ListParams struct {
 type ListResult struct {
 	Tools  []ToolInfo `json:"tools"`
 	Errors []string   `json:"errors,omitempty"`
+	// Instructions are what the servers of Tools say about the use of their
+	// tools, by server; those with none are not here.
+	Instructions map[string]string `json:"instructions,omitempty"`
 }
 
 type CallParams struct {
@@ -55,8 +58,8 @@ type CallParams struct {
 }
 
 // Manager owns the MCP servers of one shell. A server is started on its
-// first call; its tool list is cached on disk, so the next shell knows the
-// tools from its start without starting anything.
+// first call; its tool list and instructions are cached on disk, so the
+// next shell knows them from its start without starting anything.
 type Manager struct {
 	servers  []*server
 	cacheDir string
@@ -80,6 +83,9 @@ type server struct {
 	// secrets are the values of the last start that maskError cannot find
 	// in cfg: dial's.
 	secrets []string
+	// instructions are what initialize said about the use of the tools;
+	// like tools, known from the cache before the server starts.
+	instructions string
 }
 
 // startup is a server start in progress; everyone who needs the server
@@ -90,6 +96,9 @@ type startup struct {
 	err  error
 }
 
+// NewManager makes the manager of the servers of cfgs, as mcp.yaml gives
+// them, knowing from the cache in cacheDir what it can without starting
+// any: their tools and instructions.
 func NewManager(cfgs map[string]Server, cacheDir string) *Manager {
 	m := &Manager{cacheDir: cacheDir, notes: map[string]bool{}}
 	names := make([]string, 0, len(cfgs))
@@ -100,21 +109,33 @@ func NewManager(cfgs map[string]Server, cacheDir string) *Manager {
 	for _, n := range names {
 		cfg := cfgs[n]
 		if cfg.Expose == "" {
-			cfg.Expose = "commands"
+			cfg.Expose = "deferred"
 		}
 		b, _ := json.Marshal(cfg)
 		sum := sha256.Sum256(b)
 		s := &server{name: n, cfg: cfg, key: hex.EncodeToString(sum[:8])}
-		var c struct {
-			Key   string     `json:"key"`
-			Tools []ToolInfo `json:"tools"`
-		}
-		if b, err := os.ReadFile(m.cachePath(n)); err == nil && json.Unmarshal(b, &c) == nil && c.Key == s.key {
-			s.tools, s.known = c.Tools, true
-		}
+		m.readCache(s)
 		m.servers = append(m.servers, s)
 	}
 	return m
+}
+
+// cacheFile is what save writes for a server and readCache reads. A file
+// written before instructions were cached has none: the server gave none
+// as far as the next shell knows, till it starts again.
+type cacheFile struct {
+	Key          string     `json:"key"`
+	Tools        []ToolInfo `json:"tools"`
+	Instructions string     `json:"instructions,omitempty"`
+}
+
+// readCache gives s, not started yet, the tools and instructions of its
+// cache, unless the cache is of another config.
+func (m *Manager) readCache(s *server) {
+	var c cacheFile
+	if b, err := os.ReadFile(m.cachePath(s.name)); err == nil && json.Unmarshal(b, &c) == nil && c.Key == s.key {
+		s.tools, s.instructions, s.known = c.Tools, c.Instructions, true
+	}
 }
 
 func (m *Manager) cachePath(server string) string {
@@ -163,6 +184,12 @@ func (m *Manager) List(ctx context.Context, wait bool) ListResult {
 				t.Timeout *= 2 // Call may start a new session and repeat it there
 			}
 			res.Tools = append(res.Tools, t)
+		}
+		if len(s.tools) > 0 && s.instructions != "" {
+			if res.Instructions == nil {
+				res.Instructions = map[string]string{}
+			}
+			res.Instructions[s.name] = s.instructions
 		}
 		s.mu.Unlock()
 	}
@@ -284,7 +311,7 @@ func (m *Manager) ensure(ctx context.Context, s *server, force bool) (conn, erro
 // start does not stop with the caller that asked for it: others may be
 // waiting for the server too, and the start is bounded by startTimeout.
 func (m *Manager) start(s *server, st *startup) {
-	c, tools, err := s.connect()
+	c, tools, instructions, err := s.connect()
 	s.mu.Lock()
 	s.starting = nil
 	if err != nil {
@@ -293,11 +320,11 @@ func (m *Manager) start(s *server, st *startup) {
 		err = s.mask(err)
 		s.err, s.failed = err, time.Now()
 	} else {
-		s.conn, s.tools, s.known, s.err = c, tools, true, nil
+		s.conn, s.tools, s.instructions, s.known, s.err = c, tools, instructions, true, nil
 	}
 	s.mu.Unlock()
 	if err == nil {
-		m.save(s, tools)
+		m.save(s, cacheFile{Key: s.key, Tools: tools, Instructions: instructions})
 	}
 	st.conn, st.err = c, err
 	close(st.done)
@@ -305,7 +332,7 @@ func (m *Manager) start(s *server, st *startup) {
 
 var unsafeName = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
-func (s *server) connect() (conn, []ToolInfo, error) {
+func (s *server) connect() (_ conn, _ []ToolInfo, instructions string, _ error) {
 	ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
 	defer cancel()
 	c, secrets, err := dial(ctx, s.cfg)
@@ -313,11 +340,12 @@ func (s *server) connect() (conn, []ToolInfo, error) {
 	s.secrets = secrets
 	s.mu.Unlock()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
-	if err := initialize(ctx, c); err != nil {
+	instructions, err = initialize(ctx, c)
+	if err != nil {
 		c.close()
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 	var tools []ToolInfo
 	cursor := ""
@@ -329,7 +357,7 @@ func (s *server) connect() (conn, []ToolInfo, error) {
 		raw, err := c.call(ctx, "tools/list", params)
 		if err != nil {
 			c.close()
-			return nil, nil, fmt.Errorf("tools/list: %w", err)
+			return nil, nil, "", fmt.Errorf("tools/list: %w", err)
 		}
 		var page struct {
 			Tools []struct {
@@ -341,7 +369,7 @@ func (s *server) connect() (conn, []ToolInfo, error) {
 		}
 		if err := json.Unmarshal(raw, &page); err != nil {
 			c.close()
-			return nil, nil, fmt.Errorf("tools/list: %w", err)
+			return nil, nil, "", fmt.Errorf("tools/list: %w", err)
 		}
 		for _, t := range page.Tools {
 			name := unsafeName.ReplaceAllString(s.name+"_"+t.Name, "_")
@@ -349,13 +377,13 @@ func (s *server) connect() (conn, []ToolInfo, error) {
 				Description: t.Description, Schema: t.InputSchema, Expose: s.cfg.Expose})
 		}
 		if cursor = page.NextCursor; cursor == "" {
-			return c, tools, nil
+			return c, tools, instructions, nil
 		}
 	}
 }
 
-func (m *Manager) save(s *server, tools []ToolInfo) {
-	b, err := json.Marshal(map[string]any{"key": s.key, "tools": tools})
+func (m *Manager) save(s *server, c cacheFile) {
+	b, err := json.Marshal(c)
 	if err == nil {
 		err = os.MkdirAll(m.cacheDir, 0o700)
 	}

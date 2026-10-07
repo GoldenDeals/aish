@@ -56,7 +56,12 @@ func clientStub() {
 		json.Unmarshal(in.Bytes(), &m)
 		switch m.Method {
 		case "initialize":
-			reply(m.ID, `{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"stub"}}`)
+			// $AISH_MCP_INSTRUCTIONS, JSON, is what it says of its tools.
+			inst := ""
+			if s := os.Getenv("AISH_MCP_INSTRUCTIONS"); s != "" {
+				inst = `,"instructions":` + s
+			}
+			reply(m.ID, `{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"stub"}`+inst+`}`)
 		case "tools/list":
 			reply(m.ID, `{"tools":[{"name":"work","inputSchema":{"type":"object"}}]}`)
 			if deaf {

@@ -49,7 +49,8 @@ func Local(ctx context.Context, m *Manager, wait bool) ([]tools.Tool, []string) 
 	})
 }
 
-// convert makes tools of a listing, each run through run.
+// convert makes tools of a listing, each run through run and carrying the
+// instructions of its server.
 func convert(res ListResult, run func(context.Context, ToolInfo, map[string]any) (string, error)) ([]tools.Tool, []string) {
 	var out []tools.Tool
 	for _, info := range res.Tools {
@@ -58,23 +59,25 @@ func convert(res ListResult, run func(context.Context, ToolInfo, map[string]any)
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", info.Name, err))
 			continue
 		}
-		out = append(out, remote{info: info, args: args, run: run})
+		out = append(out, remote{info: info, args: args, run: run, instructions: res.Instructions[info.Server]})
 	}
 	return out, res.Errors
 }
 
 // remote is an MCP tool: a call goes to its server through the manager.
 type remote struct {
-	info ToolInfo
-	args []tools.Arg
-	run  func(context.Context, ToolInfo, map[string]any) (string, error)
+	info         ToolInfo
+	args         []tools.Arg
+	run          func(context.Context, ToolInfo, map[string]any) (string, error)
+	instructions string
 }
 
-func (t remote) Name() string      { return t.info.Name }
-func (t remote) Desc() string      { return t.info.Description }
-func (t remote) Args() []tools.Arg { return t.args }
-func (t remote) Server() string    { return t.info.Server }
-func (t remote) Hidden() bool      { return t.info.Expose != "tools" }
+func (t remote) Name() string         { return t.info.Name }
+func (t remote) Desc() string         { return t.info.Description }
+func (t remote) Args() []tools.Arg    { return t.args }
+func (t remote) Server() string       { return t.info.Server }
+func (t remote) Hidden() bool         { return t.info.Expose != "tools" }
+func (t remote) Instructions() string { return t.instructions }
 
 // Schema is the server's own, with what Args lose (enums, nesting); a tool
 // without one takes no arguments.

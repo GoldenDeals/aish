@@ -69,12 +69,18 @@ type HandsOff interface {
 // them.
 type Dialog interface{ Dialog() bool }
 
-// Hidden tools are not offered to the model as tools; it runs them from
-// bash as `aish tool NAME`, which keeps their schemas out of every request.
+// Hidden tools are deferred: their schemas are not sent with every request.
+// The model sees their names in the system prompt and loads the ones it
+// needs with tool_search; from then on they are offered as any other tool.
 type Hidden interface{ Hidden() bool }
 
 // Origin is where a tool comes from, for the policy: its MCP server.
 type Origin interface{ Server() string }
+
+// Instructed tools come with what their origin says about their use: an
+// MCP server's instructions for all its tools, which go into the system
+// prompt once for the server.
+type Instructed interface{ Instructions() string }
 
 // Streaming tools write their output to Execute's live writer as they
 // run, like a command; the agent shows it folded instead of a summary.
@@ -104,6 +110,14 @@ func Streams(t Tool) bool {
 func ServerOf(t Tool) string {
 	if o, ok := t.(Origin); ok {
 		return o.Server()
+	}
+	return ""
+}
+
+// InstructionsOf is what t says about its use, "" for nothing.
+func InstructionsOf(t Tool) string {
+	if i, ok := t.(Instructed); ok {
+		return i.Instructions()
 	}
 	return ""
 }

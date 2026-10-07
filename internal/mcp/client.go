@@ -43,8 +43,9 @@ type Server struct {
 	// is in one of the two maps, not in both (resolve).
 	EnvCommand     map[string]string `yaml:"env_command" json:"env_command,omitempty"`
 	HeadersCommand map[string]string `yaml:"headers_command" json:"headers_command,omitempty"`
-	// Expose is "commands" (the default) or "tools", which also gives the
-	// model the tools' schemas.
+	// Expose is "deferred" (the default), for tools the model sees by name
+	// and loads with tool_search, or "tools", whose schemas it is given with
+	// every request.
 	Expose string `yaml:"expose" json:"expose,omitempty"`
 	// Timeout of a tool call, in seconds.
 	Timeout int `yaml:"timeout" json:"timeout,omitempty"`
@@ -69,8 +70,8 @@ func LoadConfig(path string) (map[string]Server, error) {
 		if (s.Command == "") == (s.URL == "") {
 			return nil, fmt.Errorf("%s: server %s needs either command or url", path, name)
 		}
-		if s.Expose != "" && s.Expose != "commands" && s.Expose != "tools" {
-			return nil, fmt.Errorf("%s: server %s: expose must be commands or tools", path, name)
+		if s.Expose != "" && s.Expose != "deferred" && s.Expose != "tools" {
+			return nil, fmt.Errorf("%s: server %s: expose must be deferred or tools", path, name)
 		}
 		if err := s.checkCommands(); err != nil {
 			return nil, fmt.Errorf("%s: server %s: %w", path, name, err)
@@ -135,17 +136,25 @@ func dial(ctx context.Context, s Server) (c conn, secrets []string, err error) {
 	return sc, secrets, nil
 }
 
-// initialize performs the MCP handshake.
-func initialize(ctx context.Context, c conn) error {
-	_, err := c.call(ctx, "initialize", map[string]any{
+// initialize performs the MCP handshake and returns the instructions the
+// server gives for the use of its tools, "" for none. Instructions that are
+// not a string count as none: they are a hint, not worth the server.
+func initialize(ctx context.Context, c conn) (instructions string, err error) {
+	raw, err := c.call(ctx, "initialize", map[string]any{
 		"protocolVersion": protocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "aish", "version": "0.1"},
 	})
 	if err != nil {
-		return fmt.Errorf("initialize: %w", err)
+		return "", fmt.Errorf("initialize: %w", err)
 	}
-	return c.notify(ctx, "notifications/initialized", nil)
+	var res struct {
+		Instructions json.RawMessage `json:"instructions"`
+	}
+	if json.Unmarshal(raw, &res) == nil && len(res.Instructions) > 0 {
+		json.Unmarshal(res.Instructions, &instructions)
+	}
+	return strings.TrimSpace(instructions), c.notify(ctx, "notifications/initialized", nil)
 }
 
 // cancelRequest tells the server in the background that nobody waits for

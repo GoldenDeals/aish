@@ -251,11 +251,6 @@ func (a *Agent) append(es ...session.Entry) error {
 	return err
 }
 
-// mcpNote tells the model about MCP tools it is not given schemas for.
-const mcpNote = "# Additional tools\n" +
-	"More tools (from MCP servers) are available through the bash tool, as `aish tool SERVER_TOOL ARGS`: " +
-	"`aish tool` lists them, `aish tool NAME -h` shows how to call one."
-
 // maxPauses is how many turns in a row the API may pause before the
 // request ends as if the model were done.
 const maxPauses = 3
@@ -384,12 +379,8 @@ func (a *Agent) turn(ctx context.Context) error {
 
 func (a *Agent) request(entries []session.Entry) llm.Request {
 	extra := a.Cfg.SystemPrompt
-	hidden := false
-	for _, t := range a.Tools.All() {
-		hidden = hidden || tools.IsHidden(t)
-	}
-	if hidden {
-		extra = strings.TrimSpace(mcpNote + "\n\n" + extra)
+	if note := a.toolsPrompt(); note != "" {
+		extra = strings.TrimSpace(note + "\n\n" + extra)
 	}
 	if a.env == "" {
 		// From a.entries, not entries: Compact adds its prompt as a request
@@ -404,24 +395,18 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 		}
 		a.mask, a.maskKey = m, key
 	}
-	req := llm.Request{
+	return llm.Request{
 		System:   system(a.env, extra),
 		Messages: Messages(ownRaw(entries, a.Cfg.Profile), a.Cfg.MaxOutputBytes, a.mask),
+		Tools:    a.toolDefs(entries),
 	}
-	for _, t := range a.Tools.All() {
-		if tools.IsHidden(t) {
-			continue
-		}
-		req.Tools = append(req.Tools, llm.ToolDef{Name: t.Name(), Description: t.Desc(), Schema: t.Schema()})
-	}
-	return req
 }
 
 // call executes one tool call. For a tool that hands its command off
 // (bash) it leaves the command for the shell and reports handedOff; the
 // result arrives with Resume. A dialog (ask_user) the user answers.
 func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, err error) {
-	t, ok := a.Tools.Get(c.Name)
+	t, ok := a.tool(c.Name)
 	if !ok {
 		return false, a.append(toolResult(c, "unknown tool "+c.Name, true))
 	}

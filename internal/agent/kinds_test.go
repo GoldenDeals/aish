@@ -82,7 +82,7 @@ func TestNewKindOfTool(t *testing.T) {
 			t.Error("a hidden tool was offered to the model")
 		}
 	}
-	if !strings.Contains(req.System, "# Additional tools") {
+	if !strings.Contains(req.System, "# Deferred tools") {
 		t.Error("no note on the hidden tools")
 	}
 	if len(ui.lives) != 1 || ui.lives[0] != "⚙ stream a" {
