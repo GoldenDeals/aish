@@ -19,7 +19,6 @@ import (
 	"github.com/GoldenDeals/aish/internal/mcp"
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
-	"github.com/GoldenDeals/aish/internal/shellinit"
 )
 
 // Run starts bash and blocks until it exits, returning its exit code.
@@ -27,6 +26,39 @@ import (
 // select for its environment: requests go by conf until `aish
 // apply-config` reads them anew.
 func (p *Proxy) Run(conf *config.Snapshot, cfg config.Config) (int, error) {
+	p.configure(conf, cfg)
+	sh := &shellRun{}
+	defer sh.cleanup()
+	if err := p.setup(sh, cfg); err != nil {
+		return 1, err
+	}
+	return p.loop(sh)
+}
+
+// shellRun is the shell setup started for loop, and what is undone once it
+// is gone.
+type shellRun struct {
+	cmd         *exec.Cmd
+	ptmx        *os.File // the PTY's master side
+	nonce       string   // of the markers, see NewFilter
+	stopSignals func()   // see forwardSignals
+	undo        []func()
+}
+
+// onExit has f run by cleanup: the last one given first, as deferred calls
+// are.
+func (sh *shellRun) onExit(f func()) { sh.undo = append(sh.undo, f) }
+
+func (sh *shellRun) cleanup() {
+	for i := len(sh.undo) - 1; i >= 0; i-- {
+		sh.undo[i]()
+	}
+}
+
+// configure takes the config aish started with: the snapshot requests go
+// by, what the proxy takes from it for itself, and the shell's profile,
+// model and effort, or those the resumed session kept.
+func (p *Proxy) configure(conf *config.Snapshot, cfg config.Config) {
 	p.mu.Lock()
 	p.conf, p.started = conf, &cfg
 	p.mcpFile, p.mcpSum = cfg.MCPConfig, fileSum(cfg.MCPConfig)
@@ -45,6 +77,13 @@ func (p *Proxy) Run(conf *config.Snapshot, cfg config.Config) (int, error) {
 		p.restoreModel(*p.resumed)
 	}
 	p.mu.Unlock()
+}
+
+// setup starts the shell for loop: it takes the terminal, locks the
+// session, makes $AISH_RUN, starts the MCP servers and the socket, then
+// bash in its PTY (startShell). What it did, sh.cleanup undoes in reverse,
+// also when it fails halfway.
+func (p *Proxy) setup(sh *shellRun, cfg config.Config) error {
 	p.out = os.Stdout
 	p.size = func() (int, int) {
 		w, h, err := term.GetSize(int(os.Stdin.Fd()))
@@ -54,16 +93,16 @@ func (p *Proxy) Run(conf *config.Snapshot, cfg config.Config) (int, error) {
 		return w, h
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return 1, errors.New("aish must be started from a terminal")
+		return errors.New("aish must be started from a terminal")
 	}
 	self, err := os.Executable()
 	if err != nil {
-		return 1, err
+		return err
 	}
 	if err := p.sess.Lock(); err != nil {
-		return 1, err
+		return err
 	}
-	defer func() { p.session().Unlock() }()
+	sh.onExit(func() { p.session().Unlock() })
 	// After Lock: the session resumed is as old as it was left.
 	if ttl := cfg.SessionsMaxAge(); ttl > 0 {
 		pruned, err := session.Prune(cfg.SessionsDir, ttl)
@@ -74,16 +113,16 @@ func (p *Proxy) Run(conf *config.Snapshot, cfg config.Config) (int, error) {
 			fmt.Fprintf(os.Stderr, "aish: pruning sessions: %v\n", err)
 		}
 	}
-	nonce := rand.Text()
-	run, err := makeRunDir(self, nonce, cfg.Route)
+	sh.nonce = rand.Text()
+	run, err := makeRunDir(self, sh.nonce, cfg.Route)
 	if err != nil {
-		return 1, err
+		return err
 	}
-	defer os.RemoveAll(run)
+	sh.onExit(func() { _ = os.RemoveAll(run) })
 	p.run = run
 	if p.restore != "" {
 		if err := os.WriteFile(filepath.Join(run, "restore.bash"), []byte(p.restore), 0o600); err != nil {
-			return 1, err
+			return err
 		}
 	}
 
@@ -94,145 +133,80 @@ func (p *Proxy) Run(conf *config.Snapshot, cfg config.Config) (int, error) {
 	}
 	p.mcp = mcp.NewManager(servers, filepath.Join(config.CacheDir(), "mcp"))
 	p.mcp.Warm()
-	defer p.mcp.Close()
+	sh.onExit(p.mcp.Close)
 
 	sock := filepath.Join(run, "sock")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
-		return 1, err
+		return err
 	}
-	defer l.Close()
+	sh.onExit(func() { _ = l.Close() })
 	go rpc.Serve(l, p.handle)
 
-	bash, err := bashPath(cfg.Shell)
-	if err != nil {
-		return 1, err
+	if err := p.startShell(sh, cfg.Shell, self, run, sock); err != nil {
+		return err
 	}
-	cmd := exec.Command(bash, "--rcfile", filepath.Join(run, "rc"), "-i")
-	cmd.Env = append(os.Environ(),
-		"AISH_SOCK="+sock,
-		"AISH_RUN="+run,
-		"AISH_BIN="+self,
-		"AISH_SESSION="+p.sess.ID,
-		"AISH_TOOLS_PATH="+filepath.Join(run, "bin"),
-	)
-	ptmx, err := pty.Start(cmd)
-	if err != nil {
-		return 1, err
-	}
-	defer ptmx.Close()
-	p.setTerminal(ptmx)
+	return p.takeTerminal(sh)
+}
 
+// takeTerminal has the shell follow the terminal's size and aish's
+// signals, and puts the terminal in raw mode: from now on the keys go to
+// the shell, or to the proxy, as they come.
+func (p *Proxy) takeTerminal(sh *shellRun) error {
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
 	go func() {
 		for range winch {
-			_ = pty.InheritSize(os.Stdin, ptmx)
+			_ = pty.InheritSize(os.Stdin, sh.ptmx)
 			p.resized()
 		}
 	}()
 	winch <- syscall.SIGWINCH
-	defer signal.Stop(winch)
+	sh.onExit(func() { signal.Stop(winch) })
 
 	hup := make(chan os.Signal, 2)
 	signal.Notify(hup, syscall.SIGHUP, syscall.SIGTERM)
-	defer signal.Stop(hup)
-	stopSignals := forwardSignals(hup, cmd.Process, shutdownGrace)
+	sh.onExit(func() { signal.Stop(hup) })
+	sh.stopSignals = forwardSignals(hup, sh.cmd.Process, shutdownGrace)
 
 	old, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
 		// bash is running already. A bash that traps the hangup of the
-		// deferred ptmx.Close would outlive aish without its $AISH_RUN,
-		// which the deferred RemoveAll takes.
-		stopSignals()
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-			_ = cmd.Process.Kill()
+		// ptmx.Close in cleanup would outlive aish without its $AISH_RUN,
+		// which cleanup removes.
+		sh.stopSignals()
+		if err := syscall.Kill(-sh.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			_ = sh.cmd.Process.Kill()
 		}
-		_ = cmd.Wait()
-		return 1, err
+		_ = sh.cmd.Wait()
+		return err
 	}
-	defer term.Restore(int(os.Stdin.Fd()), old)
+	sh.onExit(func() { _ = term.Restore(int(os.Stdin.Fd()), old) })
+	return nil
+}
 
-	p.holdEarly(ptmx) // before the output is read: no prompt has gone by
-	go p.input(os.Stdin, ptmx)
+// loop runs the shell setup started until it exits: the keys go to it, and
+// its output to the recorder and the terminal.
+func (p *Proxy) loop(sh *shellRun) (int, error) {
+	p.holdEarly(sh.ptmx) // before the output is read: no prompt has gone by
+	go p.input(os.Stdin, sh.ptmx)
 
 	outDone := make(chan struct{})
 	go func() {
 		defer close(outDone)
-		p.pump(ptmx, NewFilter(nonce))
+		p.pump(sh.ptmx, NewFilter(sh.nonce))
 	}()
 
-	waitErr := cmd.Wait()
-	stopSignals()
+	waitErr := sh.cmd.Wait()
+	sh.stopSignals()
 	// Drain whatever bash wrote last; the PTY reports EIO once it is gone.
 	select {
 	case <-outDone:
 	case <-time.After(200 * time.Millisecond):
 	}
 	p.restoreScreen()
-	// Before the deferred cleanup: their commands are in process groups
-	// of their own and would outlive aish.
+	// Before cleanup: their commands are in process groups of their own
+	// and would outlive aish.
 	p.stopBackground()
 	return exitCode(waitErr)
-}
-
-// makeRunDir creates the session's directory. Its bin, $AISH_TOOLS_PATH,
-// holds aish when PATH has none: the function aish of init.bash is only
-// the shell's, while a subagent's bash, hooks and external tools run as
-// processes of their own, and the model calls MCP tools from bash as `aish
-// tool NAME`. Tools and subcommands are not commands: bin comes first in
-// PATH, and they would take names from the whole shell; who wants them
-// short gives them aliases.
-func makeRunDir(self, nonce string, route config.Route) (string, error) {
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		base = os.TempDir()
-	}
-	run, err := os.MkdirTemp(base, "aish-")
-	if err != nil {
-		return "", err
-	}
-	bin := filepath.Join(run, "bin")
-	if err := os.Mkdir(bin, 0o700); err != nil {
-		return "", err
-	}
-	if _, err := exec.LookPath("aish"); err != nil {
-		script := fmt.Sprintf("#!/bin/sh\nexec %q \"$@\"\n", self)
-		if err := os.WriteFile(filepath.Join(bin, "aish"), []byte(script), 0o755); err != nil {
-			return "", err
-		}
-	}
-	for _, f := range []string{"next.cmd", "next.id"} {
-		if err := os.WriteFile(filepath.Join(run, f), nil, 0o600); err != nil {
-			return "", err
-		}
-	}
-	// The shell and the agent read the nonce from here: in the environment
-	// every command would inherit it.
-	if err := os.WriteFile(filepath.Join(run, "nonce"), []byte(nonce+"\n"), 0o600); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(filepath.Join(run, "route"), routeFile(route), 0o600); err != nil {
-		return "", err
-	}
-	return run, os.WriteFile(filepath.Join(run, "rc"), []byte(shellinit.RCFile()), 0o600)
-}
-
-// bashPath is the bash to run: the configured one, else the user's login
-// shell if it is a bash, as it need not be the first one in PATH (a newer
-// bash in /opt, an old /bin/bash on macOS).
-func bashPath(configured string) (string, error) {
-	if configured != "" {
-		p, err := exec.LookPath(configured)
-		if err != nil {
-			return "", fmt.Errorf("shell in config: %w", err)
-		}
-		return p, nil
-	}
-	if sh := os.Getenv("SHELL"); filepath.Base(sh) == "bash" {
-		if p, err := exec.LookPath(sh); err == nil {
-			return p, nil
-		}
-	}
-	return exec.LookPath("bash")
 }
