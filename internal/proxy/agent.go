@@ -15,7 +15,6 @@ import (
 	"github.com/inebotov/aish/internal/config"
 	"github.com/inebotov/aish/internal/llm"
 	"github.com/inebotov/aish/internal/mcp"
-	"github.com/inebotov/aish/internal/policy"
 	"github.com/inebotov/aish/internal/rpc"
 	"github.com/inebotov/aish/internal/session"
 	"github.com/inebotov/aish/internal/skills"
@@ -203,21 +202,23 @@ func (p *Proxy) cancelRequest() {
 	}
 }
 
-// prepare gives the agent what this request needs: the config as it is
-// now, with this shell's model and effort; the provider, kept while they
-// stay the same; the policies, compiled again only when their files or
-// the [policy] rules change; and, for a fresh request, the tools of the
-// shell's directory; for a later step of one, its tools and hooks anew
+// prepare gives the agent what this request needs: the config as the
+// snapshot of the config files has it (see applyconfig.go), with this
+// shell's profile, model and effort and the project file of its directory;
+// the provider, kept while they stay the same; the policies, compiled the
+// first time a request needs them; and, for a fresh request, the tools of
+// the shell's directory; for a later step of one, its tools and hooks anew
 // once the project is no longer trusted.
 func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.Agent, error) {
-	// What config.toml selects now, by $AISH_PROFILE as the shell has it:
+	p.mu.Lock()
+	conf := p.snapshot()
+	// What config.toml selects, by $AISH_PROFILE as the shell has it now:
 	// what the status compares the shell's profile with, and where a shell
 	// goes whose profile is gone. It fails where the shell's profile may
 	// not, on a profile $AISH_PROFILE or the profile key names and
 	// config.toml has not: tellDefErr tells of it, and a shell whose
 	// profile is gone too goes to the top level.
-	def, defErr := config.LoadEnv(ex.Getenv)
-	p.mu.Lock()
+	def, defErr := conf.LoadEnv(ex.Getenv)
 	if defErr == nil {
 		p.defProfile = def.Profile
 	}
@@ -233,15 +234,16 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 		p.windowAsked = "" // see lookupOnce
 	}
 	p.mu.Unlock()
-	cfg, err := config.LoadProfile(profile)
+	cfg, err := conf.LoadProfile(profile)
 	if err != nil {
 		return nil, err
 	}
 	if fresh {
 		p.tellDefErr(defErr)
 		p.tellConfigPath(ex.Getenv)
+		p.tellChanged(conf, &p.policies, ex.Dir)
 	}
-	cfg, project, err := config.Project(cfg, ex.Dir)
+	cfg, project, err := conf.Project(cfg, ex.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +252,9 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	}
 	p.mu.Lock()
 	p.project = project
+	// The agent opens the line of a call by it, and the output under the
+	// call is folded by the same: the project's value, not config.toml's.
+	p.foldLines = cfg.FoldLines
 	cfg.Model, cfg.Effort = model, effort
 	if cfg.ContextWindow == 0 {
 		cfg.ContextWindow = window // the API's or `aish model`'s, for compact_at
@@ -273,8 +278,7 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 		p.lookupOnce(prov, profile, model, cfg.APIKey)
 		p.mu.Unlock()
 	}
-	rules := policy.Rules{Deny: cfg.Policy.Deny, Ask: cfg.Policy.Ask, WriteOutsideHome: cfg.Policy.WriteOutsideHome}
-	pol, err := p.policies.Engine(ctx, cfg.PolicyDir, rules)
+	pol, err := p.policies.Engine(ctx, cfg.PolicyDir, rulesOf(cfg))
 	if err != nil {
 		return nil, err
 	}

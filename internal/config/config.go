@@ -179,12 +179,28 @@ func Load() (Config, error) { return LoadEnv(os.Getenv) }
 
 // loadWith is LoadEnv with the profile named by profile, if not nil.
 func loadWith(profile *string, getenv func(string) string) (Config, error) {
-	cfg := Default()
-	path := os.Getenv("AISH_CONFIG")
-	if path == "" {
-		path = filepath.Join(Dir(), "config.toml")
+	path := configFile()
+	data, err := os.ReadFile(path)
+	return parse(path, data, err, profile, getenv)
+}
+
+// configFile is config.toml: $AISH_CONFIG, or config.toml in Dir.
+func configFile() string {
+	if path := os.Getenv("AISH_CONFIG"); path != "" {
+		return path
 	}
-	md, err := toml.DecodeFile(path, &cfg)
+	return filepath.Join(Dir(), "config.toml")
+}
+
+// parse is loadWith of data, what reading path gave, with readErr: a file
+// that is not there leaves the defaults.
+func parse(path string, data []byte, readErr error, profile *string, getenv func(string) string) (Config, error) {
+	cfg := Default()
+	err := readErr
+	var md toml.MetaData
+	if err == nil {
+		md, err = toml.Decode(string(data), &cfg)
+	}
 	if err == nil {
 		err = unknown(md)
 	}

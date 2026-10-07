@@ -108,10 +108,11 @@ func (p *Proxy) makeProvider(cfg config.Config) (llm.Provider, error) {
 	return llm.New(cfg)
 }
 
-// toProfile reads profile name of config.toml and makes its provider for
-// the models list and the levels of effort.
+// toProfile reads profile name of config.toml, as the snapshot of it has
+// it, and makes its provider for the models list and the levels of effort.
+// Called under p.mu.
 func (p *Proxy) toProfile(name string) (config.Config, llm.Provider, error) {
-	cfg, err := config.LoadProfile(name)
+	cfg, err := p.snapshot().LoadProfile(name)
 	if err != nil {
 		return config.Config{}, nil, err
 	}

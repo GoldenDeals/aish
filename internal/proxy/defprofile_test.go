@@ -66,23 +66,25 @@ func TestDefProfileGoneTold(t *testing.T) {
 	}
 
 	rewrite(t, profilesTOML)
+	apply(t, p, nil)
 	ask(t, p, nil)
 	rewrite(t, gone)
+	apply(t, p, nil)
 	ask(t, p, nil)
 	if n := told(); n != 2 {
 		t.Errorf("back again, told %d times", n)
 	}
 
-	// A config.toml the shell's profile fails on too is the request's
-	// error, not a line besides it.
+	// A config.toml the shell's profile fails on too is not applied: the
+	// error is apply-config's, and the requests go by the one before.
 	rewrite(t, "model = [\n")
-	p.marker(Marker{Kind: "ask-start"})
-	before := p.out.(*terminal).String()
-	ap := rpc.AgentParams{Text: "hi", Cwd: filepath.Join(os.Getenv("HOME"), "work")}
-	if _, err := call(t, p, rpc.MethodAgentStart, ap); err == nil {
-		t.Fatal("a broken config.toml did not fail the request")
+	ap := rpc.AgentParams{Cwd: filepath.Join(os.Getenv("HOME"), "work")}
+	if _, err := call(t, p, rpc.MethodApplyConfig, ap); err == nil {
+		t.Fatal("a broken config.toml was applied")
 	}
+	before := p.out.(*terminal).String()
+	ask(t, p, nil)
 	if after := p.out.(*terminal).String(); strings.Contains(after[len(before):], "[aish: config.toml") {
-		t.Errorf("told besides the error: %q", after[len(before):])
+		t.Errorf("told again: %q", after[len(before):])
 	}
 }

@@ -61,7 +61,8 @@ func ask(t *testing.T, p *Proxy, env []string) {
 }
 
 // A profile renamed or removed in config.toml would fail every request:
-// the shell goes to the one config.toml selects, and is told so.
+// once the edit is applied, the shell goes to the one config.toml
+// selects, and is told so.
 func TestGoneProfile(t *testing.T) {
 	t.Setenv("AISH_PROFILE", "")
 	withoutLocal, _, _ := strings.Cut(profilesTOML, "[profiles.local]")
@@ -78,6 +79,7 @@ func TestGoneProfile(t *testing.T) {
 				t.Fatal(err)
 			}
 			rewrite(t, tc.toml)
+			apply(t, p, nil)
 			ask(t, p, nil)
 			p.mu.Lock()
 			profile, model, effort := p.profile, p.model, p.effort
@@ -118,6 +120,7 @@ func TestSelectedProfileGone(t *testing.T) {
 			}
 			t.Setenv("AISH_PROFILE", tc.env)
 			rewrite(t, tc.toml)
+			apply(t, p, nil)
 			ask(t, p, nil)
 			p.mu.Lock()
 			profile, def := p.profile, p.defProfile
@@ -127,6 +130,7 @@ func TestSelectedProfileGone(t *testing.T) {
 			}
 
 			rewrite(t, strings.Replace(tc.toml, "[profiles.local]", "[profiles.lan]", 1))
+			apply(t, p, nil)
 			ask(t, p, nil)
 			p.mu.Lock()
 			profile = p.profile
@@ -139,21 +143,34 @@ func TestSelectedProfileGone(t *testing.T) {
 }
 
 // The status names the shell's profile when it is not the one config.toml
-// selects, as config.toml is now, not as it was when aish started.
+// selects, as config.toml was applied last, not as it was when aish
+// started.
 func TestDefProfileFollowsConfig(t *testing.T) {
 	t.Setenv("AISH_PROFILE", "")
 	p, _ := profiled(t)
 	answering(p)
+	if _, err := call(t, p, rpc.MethodModel, rpc.ModelParams{Profile: "local", Model: "qwen3:8b"}); err != nil {
+		t.Fatal(err)
+	}
+	status := func() string {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		text, _ := p.statusText()
+		return text
+	}
+	if text := status(); !strings.Contains(text, "local · qwen3:8b") {
+		t.Errorf("status %q", text)
+	}
 	rewrite(t, strings.Replace(profilesTOML, `profile = "work"`, `profile = "local"`, 1))
+	apply(t, p, nil)
 	ask(t, p, nil)
 	p.mu.Lock()
 	def, profile := p.defProfile, p.profile
-	text, _ := p.statusText()
 	p.mu.Unlock()
-	if def != "local" || profile != "work" {
+	if def != "local" || profile != "local" {
 		t.Errorf("config.toml selects %q, the shell is on %q", def, profile)
 	}
-	if !strings.Contains(text, "work · claude-opus-5") {
+	if text := status(); strings.Contains(text, "local ·") || !strings.Contains(text, "qwen3:8b") {
 		t.Errorf("status %q", text)
 	}
 }

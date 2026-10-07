@@ -58,8 +58,16 @@ func Project(cfg Config, cwd string) (Config, string, error) {
 	if path == "" {
 		return cfg, "", nil
 	}
-	var pr project
 	data, err := os.ReadFile(path)
+	// The contents read once: trusted are the very bytes laid over.
+	return layProject(cfg, path, data, err, func() bool { return trusted(path, data) })
+}
+
+// layProject is Project of data, what reading path gave, with readErr;
+// trust tells whether its keys that run code hold.
+func layProject(cfg Config, path string, data []byte, readErr error, trust func() bool) (Config, string, error) {
+	var pr project
+	err := readErr
 	var md toml.MetaData
 	if err == nil {
 		md, err = toml.Decode(string(data), &pr)
@@ -102,12 +110,11 @@ func Project(cfg Config, cwd string) (Config, string, error) {
 			WriteOutsideHome: stricter(cfg.Policy.WriteOutsideHome, pr.Policy.WriteOutsideHome),
 		}
 	}
-	// The contents read once: trusted are the very bytes laid over.
-	trust := trusted(path, data)
+	codeOn := trust()
 	for _, k := range pr.code(&cfg) {
 		switch {
 		case k.value == nil:
-		case trust:
+		case codeOn:
 			*k.dst = addDir(*k.dst, *k.value, dir)
 		default:
 			cfg.Untrusted = append(cfg.Untrusted, k.name)

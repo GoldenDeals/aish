@@ -57,6 +57,11 @@ func trustCmd(cfg config.Config, args []string) int {
 	if err := config.Trust(path); err != nil {
 		return fail(err)
 	}
+	// This shell's aish goes by the file as it read it, which an edit
+	// since does not match: the trust is in the contents.
+	if os.Getenv("AISH_SOCK") != "" {
+		defer fmt.Println("\x1b[2mif it changed since this shell's aish read it, aish apply-config puts it in force here\x1b[0m")
+	}
 	if len(keys) == 0 {
 		fmt.Printf("%s is trusted; it sets nothing that runs code\n", home(path))
 		return 0

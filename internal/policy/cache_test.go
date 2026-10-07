@@ -35,33 +35,57 @@ func TestCache(t *testing.T) {
 		future := time.Now().Add(time.Duration(len(src)) * time.Second)
 		os.Chtimes(file, future, future)
 	}
+	if dirs, keys := c.Changed(); len(dirs)+len(keys) > 0 {
+		t.Errorf("nothing changed, yet %q %q", dirs, keys)
+	}
+
+	// A new file is not in force until the cache is reset: the config is
+	// applied by the user, all at once.
 	write("permit(principal, action, resource);\n@reason(\"no\") forbid(principal, action, resource) when { context.tool == \"bash\" };\n")
-	second, err := c.Engine(ctx, dir, Rules{})
+	if again, _ := c.Engine(ctx, dir, Rules{}); again != first {
+		t.Fatal("a new file was compiled before the reset")
+	}
+	dirs, keys := c.Changed()
+	if len(dirs) != 1 || dirs[0] != dir || len(keys) != 1 {
+		t.Fatalf("changed %q %q", dirs, keys)
+	}
+	fresh := new(Cache)
+	second, err := fresh.Engine(ctx, dir, Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second == first {
-		t.Fatal("a new file did not recompile")
+	c.Reset(fresh)
+	if again, _ := c.Engine(ctx, dir, Rules{}); again != second {
+		t.Fatal("the policies compiled for the reset are not those in force")
 	}
 	if d, _ := second.Check(ctx, ls); d.Action != Deny {
 		t.Errorf("new policy not in force: %+v", d)
 	}
+	if dirs, _ := c.Changed(); len(dirs) > 0 {
+		t.Errorf("changed after the reset: %q", dirs)
+	}
 
+	// Each edit has a key of its own.
 	write("permit(principal, action, resource);\n@ask(\"sure?\") forbid(principal, action, resource) when { context.tool == \"bash\" };\n")
-	third, err := c.Engine(ctx, dir, Rules{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d, _ := third.Check(ctx, ls); d.Action != Ask {
-		t.Errorf("edited policy not in force: %+v", d)
+	_, edited := c.Changed()
+	write("permit(principal, action, resource);\n@ask(\"really sure?\") forbid(principal, action, resource) when { context.tool == \"bash\" };\n")
+	if _, again := c.Changed(); len(again) != 1 || again[0] == edited[0] {
+		t.Errorf("two edits, keys %q and %q", edited, again)
 	}
 
+	// A broken policy keeps nothing: tried again on the next call, it
+	// compiles once mended.
 	write("permit(principal, action, resource\n")
-	if _, err := c.Engine(ctx, dir, Rules{}); err == nil {
+	var broken Cache
+	if _, err := broken.Engine(ctx, dir, Rules{}); err == nil {
 		t.Error("a broken policy compiled")
 	}
-	if _, err := c.Engine(ctx, dir, Rules{}); err == nil {
+	if _, err := broken.Engine(ctx, dir, Rules{}); err == nil {
 		t.Error("a broken policy is not tried again")
+	}
+	write("permit(principal, action, resource);\n")
+	if _, err := broken.Engine(ctx, dir, Rules{}); err != nil {
+		t.Errorf("mended: %v", err)
 	}
 }
 

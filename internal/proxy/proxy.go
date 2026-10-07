@@ -60,7 +60,7 @@ type Fold = rpc.Fold
 // Proxy owns the session, the output recorder and the agent.
 type Proxy struct {
 	sess         *session.Session
-	foldLines    int
+	foldLines    int // the request's fold_lines, the project's included; before one, config.toml's
 	maxOutput    int
 	overhead     int // the agent's Overhead after the last request, under p.mu
 	promptStatus bool
@@ -129,6 +129,16 @@ type Proxy struct {
 	agentProv    llm.Provider
 	agentProvKey string
 	newProvider  func(config.Config) (llm.Provider, error) // nil: llm.New; tests set it
+
+	// The config files as read at the start or by `aish apply-config`,
+	// under p.mu, see applyconfig.go. started is the config Run got,
+	// mcpSum the sha256 of its mcp_config then: what only a restart
+	// applies is told by them. confSaid are the edits on disk, not applied
+	// yet, that tellChanged told of.
+	conf     *config.Snapshot
+	started  *config.Config
+	mcpSum   string
+	confSaid map[string]bool
 }
 
 func New(sess *session.Session) *Proxy {
@@ -142,12 +152,14 @@ func New(sess *session.Session) *Proxy {
 }
 
 // Run starts bash and blocks until it exits, returning its exit code.
-func (p *Proxy) Run(cfg config.Config) (int, error) {
-	p.foldLines = cfg.FoldLines
-	p.maxOutput = cfg.MaxOutputBytes
-	p.promptStatus = cfg.PromptStatus
-	p.compactAt = cfg.CompactAt
-	p.ignore, p.stateIgnore = cfg.JournalIgnore, cfg.StateIgnore
+// conf is the config files as aish read them as it started, cfg what they
+// select for its environment: requests go by conf until `aish
+// apply-config` reads them anew.
+func (p *Proxy) Run(conf *config.Snapshot, cfg config.Config) (int, error) {
+	p.mu.Lock()
+	p.conf, p.started, p.mcpSum = conf, &cfg, fileSum(cfg.MCPConfig)
+	p.applyFields(cfg)
+	p.mu.Unlock()
 	p.fixedWindow = cfg.ContextWindow > 0
 	if prov, err := p.listProvider(cfg); err == nil {
 		p.prov = prov
@@ -724,6 +736,12 @@ func (p *Proxy) handle(ctx context.Context, method string, params json.RawMessag
 			return nil, fg
 		}
 		return p.switchModel(mp)
+	case rpc.MethodApplyConfig:
+		var ap rpc.AgentParams
+		if err := json.Unmarshal(params, &ap); err != nil {
+			return nil, err
+		}
+		return p.applyConfig(ctx, ap)
 	case rpc.MethodStatus:
 		p.mu.Lock()
 		defer p.mu.Unlock()

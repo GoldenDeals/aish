@@ -78,6 +78,7 @@ func TestGoneDefaultUnusable(t *testing.T) {
 	}
 	toml := strings.Replace(profilesTOML, `provider = "anthropic"`, `provider = "nosuch"`, 1)
 	rewrite(t, strings.Replace(toml, "[profiles.local]", "[profiles.lan]", 1))
+	apply(t, p, nil)
 	ask(t, p, nil)
 	p.mu.Lock()
 	profile, model := p.profile, p.model

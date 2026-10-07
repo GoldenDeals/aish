@@ -48,6 +48,11 @@ const (
 	MethodMCPStatus   = "mcp_status"
 )
 
+// MethodApplyConfig reads the config files anew and puts them in force:
+// AgentParams with the shell's cwd and environment, for the project file
+// and the profile they select; Applied back.
+const MethodApplyConfig = "apply_config"
+
 // Fold is an output hidden from the terminal, shown again with Ctrl+O.
 type Fold struct {
 	Title string `json:"title"`
@@ -98,6 +103,21 @@ type ModelParams struct {
 	Model   string `json:"model"`
 	Effort  string `json:"effort,omitempty"`
 	Window  int    `json:"window"` // 0: the proxy finds out
+}
+
+// Applied is what `aish apply-config` put in force: Keys of config.toml
+// whose values changed (profiles.work.model), Files read anew that changed
+// (a project file, a directory of policies), and Info, the shell's profile,
+// model and effort, which may have followed the edit. Restart names the
+// keys (and the MCP config file) changed since aish started that only a
+// restart applies: the proxy takes them as it starts the shell.
+type Applied struct {
+	Keys    []string `json:"keys,omitempty"`
+	Files   []string `json:"files,omitempty"`
+	Restart []string `json:"restart,omitempty"`
+	Info    Info     `json:"info"`
+	// Switched is whether Info differs from what the shell had before.
+	Switched bool `json:"switched,omitempty"`
 }
 
 // Status is what `aish status` shows of the session, counted by the proxy,

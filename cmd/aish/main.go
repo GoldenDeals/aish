@@ -22,6 +22,7 @@
 //	aish status                  the context, the model and the settings
 //	aish model [PROFILE] [NAME] [EFFORT]
 //	                             list the models, switch this shell's profile, model or effort
+//	aish apply-config            put the config files as they are now in force for this shell
 //	aish expand                  print the outputs folded during the last request (Ctrl+O)
 //	aish agent start -- TEXT     (internal) hand a request to the agent in the proxy
 //	aish agent resume ID RC      (internal) continue it after a bash command
@@ -78,6 +79,9 @@ var usage = `usage:
                              list the profiles and the models, or switch the
                              profile of config.toml, the model and/or the
                              effort (low … max, default) for this shell
+  aish apply-config          put config.toml, .aish.toml and the policies, as they
+                             are now, in force for this shell: aish reads them
+                             as it starts and with this command only
   aish expand                print outputs folded during the last request (Ctrl+O)
 
 In the shell: commands run as usual; text that is not a command goes to the
@@ -89,13 +93,21 @@ func main() {
 }
 
 func run(args []string) int {
-	cfg, err := config.Load()
+	// Not with config.toml as read here: the proxy reads it and tells what
+	// is wrong with it, and that nothing was applied.
+	if len(args) > 0 && args[0] == "apply-config" {
+		return applyConfigCmd(args[1:])
+	}
+	// One reading of config.toml: the proxy keeps it, cfg is what it
+	// selects here.
+	conf := config.NewSnapshot()
+	cfg, err := conf.LoadEnv(os.Getenv)
 	if err != nil {
 		// LoadProfile("") fails on all Load does but a profile the profile
 		// key or $AISH_PROFILE names and config.toml has not, a table
 		// renamed, say: on the top level every command still works,
 		// `aish model root` too.
-		top, topErr := config.LoadProfile("")
+		top, topErr := conf.LoadProfile("")
 		if topErr != nil {
 			return fail(err)
 		}
@@ -107,7 +119,7 @@ func run(args []string) int {
 		cfg = top
 	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return shell(cfg, args)
+		return shell(conf, cfg, args)
 	}
 	switch args[0] {
 	case "init":
@@ -129,7 +141,7 @@ func run(args []string) int {
 	case "model":
 		return modelCmd(cfg, args[1:])
 	case "resume":
-		return resumeCmd(cfg, args[1:])
+		return resumeCmd(conf, cfg, args[1:])
 	case "clear":
 		return clearCmd(args[1:])
 	case "new":
@@ -158,7 +170,7 @@ func run(args []string) int {
 	return 2
 }
 
-func shell(cfg config.Config, args []string) int {
+func shell(conf *config.Snapshot, cfg config.Config, args []string) int {
 	resume := false
 	for _, a := range args {
 		switch a {
@@ -186,7 +198,7 @@ func shell(cfg config.Config, args []string) int {
 		return fail(err)
 	}
 	// Latest starts a new session when there is nothing to continue.
-	return startShell(cfg, sess, resume && sess.Len() > 0)
+	return startShell(conf, cfg, sess, resume && sess.Len() > 0)
 }
 
 // shellConfig is cfg with the profile, the model and the effort this shell

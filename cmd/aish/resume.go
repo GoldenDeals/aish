@@ -16,8 +16,8 @@ import (
 )
 
 // resumeCmd brings a session back: inside aish this shell switches to it,
-// outside a new aish starts with it.
-func resumeCmd(cfg config.Config, args []string) int {
+// outside a new aish starts with it, with conf, cfg's config files.
+func resumeCmd(conf *config.Snapshot, cfg config.Config, args []string) int {
 	if len(args) > 1 || len(args) == 1 && strings.HasPrefix(args[0], "-") {
 		return fail(errors.New("usage: aish resume [ID|NAME]"))
 	}
@@ -84,12 +84,12 @@ func resumeCmd(cfg config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	return startShell(cfg, sess, true)
+	return startShell(conf, cfg, sess, true)
 }
 
 // startShell runs bash under aish with sess, brought back as it was left
-// if resume.
-func startShell(cfg config.Config, sess *session.Session, resume bool) int {
+// if resume. conf is the config files cfg is of: the proxy goes by them.
+func startShell(conf *config.Snapshot, cfg config.Config, sess *session.Session, resume bool) int {
 	p := proxy.New(sess)
 	if resume {
 		saved, err := session.LoadState(cfg.SessionsDir, sess.ID)
@@ -105,7 +105,7 @@ func startShell(cfg config.Config, sess *session.Session, resume bool) int {
 			}
 		}
 	}
-	code, err := p.Run(cfg)
+	code, err := p.Run(conf, cfg)
 	if err != nil {
 		return fail(err)
 	}
