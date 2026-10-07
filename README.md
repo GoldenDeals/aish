@@ -664,7 +664,10 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 `ssh`/`scp`/`sftp -o ProxyCommand=`, `LocalCommand=`, `KnownHostsCommand=`, `scp -S`, `rsync -e`, `tar --to-command`,
 `-I`, `-F` и `--checkpoint-action=exec=`, `man -P`, переменные git с кодом (`core.sshCommand`, `core.pager`,
 `core.editor`, `credential.helper`, `diff.*.textconv`, `filter.*.smudge`, `pager.КОМАНДА`…) в `git -c`, `git clone -c`
-и `git config`, `git clone --upload-pack`, опции `tmux set` с командой (`default-command`, `default-shell`,
+и `git config`, `git clone --upload-pack`, код подкоманд git: `rebase -x`, `submodule foreach`, `bisect run`,
+фильтры `filter-branch`, `difftool -x`, `grep -O`, `--upload-pack` у `fetch`/`pull`/`ls-remote`, `--receive-pack` у
+`push`, `archive --exec`, `send-email --to-cmd`/`--cc-cmd`/`--sendmail-cmd` (и через алиас `git -c alias.ИМЯ=…`),
+опции `tmux set` с командой (`default-command`, `default-shell`,
 `lock-command`…) и переменные `tmux setenv` и `new-window -e`. И код строк, которые bash вычисляет сам: индексов в именах-строках (`let 'a[$(…)]=1'`, `unset`,
 `test -v`, `[[ -v ]]`, `declare -n`, `read`, `printf -v`), в значениях присваиваний (`x='a[$(…)]'` выполнит
 `(( x ))`; так же `for x in …`, `${x:=…}` и `NAME=VALUE` у `env`, `sudo` и других обёрток:
@@ -682,8 +685,10 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 `printf -v "$v"`, `declare -n r="$v"`), код, которого в строке нет (макрос `bind`, команды истории
 `fc`, кроме `fc -l`, клавиши `send-keys`, которые правят строку, — `Tab`, `BSpace`, стрелки, — команды
 tmux в строке `if-shell`, Perl в `{= =}` у `parallel`, конфиг `ssh -F`, `git -c include.path=`, `core.hooksPath=`,
-`protocol.allow=`), `{}` в кавычках у `parallel`, слово из подстановки, которое может стать опцией `tar`, `rsync`,
-`scp`, `man` или командой `find` (`find "$d" sudo ls \;`), файл редиректа,
+`protocol.allow=`, файл инструмента `difftool`/`mergetool -t` с `/`), `{}` в кавычках у `parallel`, слово из
+подстановки, которое может стать опцией `tar`, `rsync`, `scp`, `man`, подкоманды git с кодом (`git clone "$u"`,
+`git push origin "$b"`) или командой `find` (`find "$d" sudo ls \;`), в том числе слово, которое `xargs`
+дописывает к ним (`ls | xargs git`), файл редиректа,
 неизвестный до исполнения (`> "$f"`, относительный путь в строке с `cd` или с кодом, который идёт в
 другом каталоге: у `tmux`, `screen -X`, алиаса git, `parallel --workdir`), или путь операнда, неизвестный до исполнения: относительный там,
 куда строка увела shell, а политика за ней не проследила (`cd -`, `cd "$d"`, `popd`, `cd` в цикле или

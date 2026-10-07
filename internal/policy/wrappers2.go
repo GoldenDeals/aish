@@ -536,6 +536,7 @@ func (p *parser) appended(argv []string, static, split []bool) {
 	for argv != nil {
 		_, _, local := q.handed(argv, static, nil)
 		q.shellC(argv[:local], static[:local])
+		q.runs(argv, static, split, local, nil)
 		q.program(argv, static, nil)
 		argv, static, split = q.next(argv, static, split)
 	}
