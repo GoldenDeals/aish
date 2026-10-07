@@ -53,13 +53,16 @@ var (
 
 // bind returns the commands of bind -x, which bash runs when the key is
 // pressed, and marks a key bound to a macro: text typed for the user, a
-// newline in it runs a command.
+// newline in it runs a command; bind -f reads bindings of both from a file.
 func (p *parser) bind(args []string, static []bool) []string {
 	if slices.Contains(static, false) {
 		p.mark(dynComputed)
 		return nil
 	}
 	opts, ops := bindOpts.read(args)
+	if has(opts, "f") {
+		p.mark(dynComputed) // an inputrc: macros and commands of a file
+	}
 	var code []string
 	for _, x := range values(opts, "x") {
 		cmds := bindCommands(x.text)

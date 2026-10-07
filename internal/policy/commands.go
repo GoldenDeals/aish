@@ -20,10 +20,11 @@ type Script struct {
 	// pipelines, $(...), subshells, behind wrappers, and in the code the
 	// line hands to eval, bash -c, a shell's here-string or here-document,
 	// env -S, alias, trap, bind -x, complete -C, compgen -C, mapfile -C,
-	// su -c, runuser -c, flock -c, script -c, watch, sudo -s and -i and, on
-	// another machine, ssh HOST CMD or the here-string of ssh HOST. Words
-	// that are not static (expansions, substitutions) are kept in their
-	// source form, e.g. "$HOME".
+	// su -c, runuser -c, flock -c, script -c, watch, sudo -s and -i, in the
+	// value of PAGER and the other commandVars and, on another machine, ssh
+	// HOST CMD or the here-string of ssh HOST. Words that are not static
+	// (expansions, substitutions) are kept in their source form, e.g.
+	// "$HOME".
 	Commands [][]string
 	// Remote holds the indexes in Commands of the commands that run on
 	// another machine, in the command of ssh: their words name no files
@@ -60,7 +61,8 @@ const (
 	// =, by declare and its kin, or by a builtin such as read and printf -v.
 	dynPrompt = "prompt"
 	// dynRebind makes a name of a command run another program or code:
-	// hash -p, enable, an assignment to PATH (see rebindVars).
+	// hash -p, enable, an assignment to PATH (see rebindVars) or to a
+	// variable that has programs load code, LD_PRELOAD (see loaderVars).
 	dynRebind = "rebind"
 	// dynDepth is code nested deeper than maxDepth, left unparsed.
 	dynDepth = "depth"
@@ -121,6 +123,9 @@ type parser struct {
 	// remotes are the indexes in out of the commands that run there.
 	remote  bool
 	remotes []int
+	// varCode is the code of the variables of commandVars the walk of a
+	// line assigns: it is parsed after the walk, as that of bash -c is.
+	varCode []snippet
 }
 
 // snippet is code a line hands to a shell, here or on another machine.
@@ -158,6 +163,10 @@ func (p *parser) parse(src string, depth int, remote bool) error {
 			}
 		case *syntax.DeclClause:
 			p.decl(n)
+		case *syntax.WordIter:
+			p.iter(n)
+		case *syntax.ParamExp:
+			p.defaulted(n)
 		case *syntax.Redirect:
 			// Of any statement: { …; } > f and done > f write too.
 			p.redirect(n)
@@ -167,6 +176,7 @@ func (p *parser) parse(src string, depth int, remote bool) error {
 	for _, s := range stmts {
 		syntax.Walk(s, visit)
 	}
+	nested, p.varCode = append(nested, p.varCode...), nil
 	if len(nested) > 0 && depth >= maxDepth {
 		// What is not parsed must not pass for checked.
 		p.mark(dynDepth)
@@ -517,7 +527,11 @@ func (p *parser) unwrap(w wrapper, argv []string, static, split []bool) (int, []
 func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*syntax.Redirect) []string {
 	opts, cmd := w.read(args)
 	for i, a := range args[:cmd] {
-		if name, _, ok := strings.Cut(a, "="); ok && !valued(opts, args, i) {
+		switch name, value, ok := strings.Cut(a, "="); {
+		case !ok || valued(opts, args, i):
+		case static[i]:
+			p.assignedTo(name, value)
+		default:
 			p.assigned(name)
 		}
 	}
@@ -1148,13 +1162,16 @@ var rebindVars = map[string]bool{
 	"PATH": true, "EXECIGNORE": true, "BASH_CMDS": true, "BASH_ALIASES": true,
 }
 
-// assigned marks an assignment to the variable name.
+// assigned marks an assignment to the variable name of a value not known
+// before the line runs: one of commandVars runs code made at run time.
 func (p *parser) assigned(name string) {
 	switch {
 	case promptVars[name]:
 		p.mark(dynPrompt)
-	case rebindVars[name]:
+	case rebindVars[name], loads(name):
 		p.mark(dynRebind)
+	case commandVars[name]:
+		p.mark(dynComputed)
 	}
 }
 
@@ -1170,7 +1187,7 @@ func (p *parser) named(s string) {
 
 func (p *parser) assign(a *syntax.Assign) {
 	if a.Name != nil && !a.Naked {
-		p.assigned(a.Name.Value)
+		p.assignment(a)
 	}
 }
 
@@ -1214,7 +1231,7 @@ func (p *parser) declWord(v string, export bool, nameref *bool) {
 	if !ok {
 		return
 	}
-	p.named(strings.TrimSuffix(name, "+"))
+	p.declared(name, value)
 	if *nameref {
 		p.named(value)
 	}

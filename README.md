@@ -594,6 +594,10 @@ write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
 `export PATH=…:$PATH`), `EXECIGNORE`, `BASH_CMDS`, `BASH_ALIASES`, `unset PATH`, `hash -p`, `enable`
 (кроме `-n`, `-d` и списка), `depth` — вложенность глубже четырёх уровней. Пример спрашивает о любой
 пометке; отпустить `source` — `unless { context has dynamic && context.dynamic == ["source"] }`.
+Переменная, из которой программы берут команду (`GIT_SSH_COMMAND`, `PAGER`, `EDITOR`, `LESSOPEN`…),
+где бы строка её ни присвоила (`X=… cmd`, `export`, `env`, `sudo`, `for`, `${X:=…}`), разбирается как
+`bash -c`, из подстановок — `computed`; загрузчики (`LD_PRELOAD`, `PYTHONPATH`, `NODE_OPTIONS`,
+`GIT_CONFIG_*`…) — `rebind`, `bind -f` — `computed`.
 `paths` — операнды,
 похожие на пути, уже абсолютные и с раскрытыми симлинками: `rm -rf ~/`, `rm -rf "$HOME"` и
 `rm -rf /home/me/../me/` дают один и тот же `context.home`, и правило одно; `$PWD` раскрывается в

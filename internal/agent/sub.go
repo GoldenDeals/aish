@@ -619,7 +619,10 @@ func (b subBash) Title(args map[string]any) string { return tools.Title(b.Tool, 
 // time cannot be checked, so it does not run; nor does a line that sets a
 // variable which may change what they run (setsVariable), or makes a name
 // of a command run another program: Dynamic "prompt" and "rebind" are
-// refused last, for a reason that names what the line sets.
+// refused last, for a reason that names what the line sets. The variable
+// is named before the commands the policy finds in its value too,
+// GIT_SSH_COMMAND='sudo ls', and, when the line assigns it by its syntax,
+// before a value made at run time, PAGER="$p"; env "$v"=x stays computed.
 func refused(s *bashScope, cmd, cwd string, env []string) string {
 	if s == nil {
 		return ""
@@ -634,7 +637,8 @@ func refused(s *bashScope, cmd, cwd string, env []string) string {
 	switch {
 	case in.ParseError != "":
 		return "cannot parse the command: " + in.ParseError
-	case slices.ContainsFunc(in.Dynamic, func(k string) bool { return k != "prompt" && k != "rebind" }):
+	case slices.ContainsFunc(in.Dynamic, func(k string) bool { return k != "prompt" && k != "rebind" }) &&
+		setsVariable(cmd, nil) == "":
 		return made
 	}
 	// A line without commands may still write: > file.
@@ -649,6 +653,9 @@ func refused(s *bashScope, cmd, cwd string, env []string) string {
 			}
 			reads = true
 		default:
+			if why := setsVariable(cmd, in.Commands); why != "" {
+				return why
+			}
 			return fmt.Sprintf("%s is not among the commands this subagent may run: %s", argv[0], s)
 		}
 	}
