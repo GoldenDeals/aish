@@ -157,6 +157,9 @@ type parser struct {
 	modes [numModes]mode
 	// prompts follows ${x@P} through the line (see prompt).
 	prompts prompts
+	// subval follows the values a line gives its variables, for a
+	// subscript read as arithmetic later (see subval).
+	subval subval
 }
 
 // snippet is code a line hands to a shell, here or on another machine.

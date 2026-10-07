@@ -112,14 +112,21 @@ func (p *parser) envFunction(value string) {
 // assignedTo is, its subscripts when read as arithmetic and all of it in
 // ${name@P}. Which parts of the word were $'…' is not known here, so the
 // text is taken both as it is and with the escapes decoded: the \x24( of
-// env $'x=a[\x24(id)]' is $( to bash, but the \x5c of '…' in
-// env 'x=a[\x5c$(id)]'"$y" stays four characters, and the $( after it runs.
+// env $'x=a[\x24(id)]' is $( to bash, but the \x5c of a single-quoted part
+// stays four characters. Where one part is $'…' and another is not, a \x24
+// that is $ and a \x5c that stays as written make a $( that neither form
+// shows, so a third form decodes the $ and backtick escapes alone (see
+// dollarEscapes).
 func (p *parser) assignedText(name, value string) {
 	p.assigned(name)
 	for _, v := range []string{value, ansiC(value)} {
 		p.subscript(v)
 		p.shown(name, v)
 	}
+	p.subscript(dollarEscapes(value))
+	// A subscript that reads a variable the line sets runs the code of its
+	// value: env "x=a[$y]" with y='$(id)' runs id.
+	p.subIndex(value)
 }
 
 // varCode is the code programs run from value, that of the variable name

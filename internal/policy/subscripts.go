@@ -39,7 +39,11 @@ func (p *parser) evaluates(n syntax.Node) {
 		}
 		if e := n.Exp; e != nil && e.Word != nil && (e.Op == syntax.AssignUnset || e.Op == syntax.AssignUnsetOrNull) {
 			// ${x:=a[\$(id)]} assigns as x=… does.
-			p.value(e.Word)
+			name := ""
+			if !n.Excl && n.Param != nil {
+				name = n.Param.Value
+			}
+			p.value(name, e.Word)
 		}
 	case *syntax.DblQuoted:
 		p.defaults(n.Parts)
@@ -52,12 +56,12 @@ func (p *parser) evaluates(n syntax.Node) {
 		p.quoted(n.Index)
 		// Without a name it is a word of declare: see declWord.
 		if n.Name != nil && n.Value != nil {
-			p.value(n.Value)
+			p.value(n.Name.Value, n.Value)
 		}
 	case *syntax.ArrayElem:
 		p.quoted(n.Index)
 		if n.Value != nil {
-			p.value(n.Value)
+			p.value("", n.Value)
 		}
 	case *syntax.DeclClause:
 		for _, a := range n.Args {
@@ -84,12 +88,16 @@ func (p *parser) evaluates(n syntax.Node) {
 	}
 }
 
-// value looks at the value of an assignment, which bash reads as
-// arithmetic when the variable is an integer or is read in arithmetic:
-// the code of its subscripts runs then. Of a value with expansions, that
-// of the text written out in it: x="a[\$(id)]$y"; ((x)) runs id.
-func (p *parser) value(w *syntax.Word) {
+// value looks at the value a line gives the variable name in an
+// assignment, which bash reads as arithmetic when the variable is an
+// integer or is read in arithmetic: the code of its subscripts runs then.
+// Of a value with expansions, that of the text written out in it
+// (x="a[\$(id)]$y"; ((x)) runs id) and, for a subscript that reads a
+// variable the line sets, that of its value (see indexValue). name is ""
+// where no scalar variable takes the value.
+func (p *parser) value(name string, w *syntax.Word) {
 	p.subscript(written(w))
+	p.indexValue(name, w)
 }
 
 // testWord looks at an operand of [[ ]] that bash takes for a name or
@@ -97,16 +105,19 @@ func (p *parser) value(w *syntax.Word) {
 // again.
 func (p *parser) testWord(x syntax.TestExpr) {
 	if w, ok := x.(*syntax.Word); ok {
-		p.value(w)
+		p.value("", w)
+		p.arithRead(w)
 	}
 }
 
 // quoted keeps the code of what single quotes hold in arithmetic, which
 // bash expands as in double quotes, $'…' decoded first. The code of $(…)
-// has quotes of its own.
+// has quotes of its own. A name read as arithmetic is followed too (see
+// arithRead).
 func (p *parser) quoted(x syntax.ArithmExpr) {
 	if x != nil {
 		p.sglQuoted(x)
+		p.arithRead(x)
 	}
 }
 
@@ -274,6 +285,10 @@ func braced(w *syntax.Word) bool {
 func (p *parser) let(args []string, static []bool) []string {
 	for i, a := range args {
 		p.evaluated(a, static[i])
+		if static[i] && p.subval.risky[a] {
+			// let x reads the value of x as arithmetic (see arithRead).
+			p.mark(dynComputed)
+		}
 	}
 	return nil
 }
