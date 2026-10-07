@@ -60,7 +60,8 @@ func TestParseShellString(t *testing.T) {
 		{`su root -- -c 'sudo ls'`, [][]string{sudoLs}, nil},
 		{`sudo su -c 'sudo ls'`, [][]string{sudoLs}, nil},
 		{`su -c "$x"`, nil, []string{"computed"}},
-		{`su $x`, nil, []string{"computed"}},
+		// $x may be the user, whose shell then reads stdin.
+		{`su $x`, nil, []string{"computed", "stdin"}},
 
 		{`flock /tmp/l -c 'rm -rf /'`, [][]string{{"rm", "-rf", "/"}}, nil},
 		{`flock -w 5 -E 3 /tmp/l -c 'sudo ls'`, [][]string{sudoLs}, nil},
@@ -100,14 +101,13 @@ func TestParseShellString(t *testing.T) {
 }
 
 // Without a command ssh -n or -N hands no stdin to a shell there, as ssh
-// box does, and su, flock, script and watch with no string of theirs run
-// none: nothing is added.
+// box does, and flock and watch with no string of theirs run none: nothing
+// is added. su and script with none run a shell that reads stdin: see
+// TestParseBareShells.
 func TestParseShellStringNone(t *testing.T) {
 	for _, src := range []string{
 		`ssh -n box`, `ssh -N -p 22 box`, `ssh -Q cipher`, `ssh -V`,
-		`su`, `su - root`, `su -s /bin/zsh root`,
 		`flock 3`, `flock -w 5 /tmp/l`,
-		`script`, `script -q out.log`,
 		`watch`, `echo ssh`, `which su flock`,
 	} {
 		s, err := Parse(src, "", "")

@@ -20,11 +20,11 @@ type Script struct {
 	// pipelines, $(...), subshells, behind wrappers, and in the code the
 	// line hands to eval, bash -c, a shell's here-string or here-document,
 	// env -S, alias, trap, bind -x, complete -C, compgen -C, mapfile -C,
-	// su -c, runuser -c, flock -c, script -c, watch, sudo -s and -i, in the
-	// value of PAGER and the other commandVars and, on another machine, ssh
-	// HOST CMD or the here-string of ssh HOST. Words that are not static
-	// (expansions, substitutions) are kept in their source form, e.g.
-	// "$HOME".
+	// su -c, runuser -c, sg, flock -c, script -c, watch, sudo -s and -i,
+	// run0 -i, strace -o '|CMD', fakeroot -l, in the value of PAGER and the
+	// other commandVars and, on another machine, ssh HOST CMD or the
+	// here-string of ssh HOST. Words that are not static (expansions,
+	// substitutions) are kept in their source form, e.g. "$HOME".
 	Commands [][]string
 	// Remote holds the indexes in Commands of the commands that run on
 	// another machine, in the command of ssh: their words name no files
@@ -353,8 +353,12 @@ func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect
 		case file >= 0 && !st[file]:
 			p.mark(dynComputed)
 		}
-	case wrappers[name].env || wrappers[name].shell != nil:
+	case wrappers[name].hands():
 		return p.wrapped(wrappers[name], args, st, redirs)
+	case logins[name] != nil:
+		if logins[name](args) {
+			return p.stdin(redirs)
+		}
 	case name == "alias":
 		var code []string
 		for i, a := range args {
@@ -412,17 +416,24 @@ func (p *parser) next(argv []string, static, split []bool) ([]string, []bool, []
 	if cmd == 0 {
 		return nil, nil, nil
 	}
-	return argv[cmd:], static[cmd:], split[cmd:]
+	argv, static, split = argv[cmd:], static[cmd:], split[cmd:]
+	if w.fills != nil {
+		static, split = slices.Clone(static), slices.Clone(split)
+		w.fills(p, opts, argv, static, split)
+	}
+	return argv, static, split
 }
 
 // wrappers run a command made of their words, after options read as their
 // getopt calls read them in coreutils 9.11, util-linux 2.42, procps-ng 4,
 // findutils 4.11, GNU time 1.9, sudo 1.9, OpenDoas and bash 5: a value of
 // an option is no command. Options of other builds are in too (sudo -c,
-// -r): a build that does not know one fails on it.
+// -r, xargs -J of BSD): a build that does not know one fails on it. Those
+// of other packages are in moreWrappers.
 var wrappers = map[string]wrapper{
 	"builtin": {opts: getopt{short: "+"}},
-	"chroot":  {opts: getopt{short: "+", long: "groups: userspec: skip-chdir help version"}, operands: 1},
+	// chroot DIR with no command runs "$SHELL" -i.
+	"chroot":  {opts: getopt{short: "+", long: "groups: userspec: skip-chdir help version"}, operands: 1, bare: true},
 	"command": {opts: getopt{short: "+pVv"}, none: []string{"v", "V"}},
 	"doas":    {opts: getopt{short: "+C:Lnsu:"}, none: []string{"C"}, shell: []string{"s"}},
 	"env": {
@@ -450,7 +461,8 @@ var wrappers = map[string]wrapper{
 	"timeout": {opts: getopt{short: "+fk:ps:v", long: "foreground kill-after: preserve-status signal: verbose help version"}, operands: 1},
 	// watch without -x joins its words for sh -c: strung reads them.
 	"watch": {opts: watchOpts, only: []string{"x", "exec"}},
-	"xargs": {opts: getopt{short: "+0a:E:e::i::I:l::L:n:prs:txP:d:o", long: "null arg-file: delimiter: eof:: replace:: max-lines:: max-args: max-procs: open-tty interactive no-run-if-empty max-chars: verbose show-limits exit process-slot-var: help version"}},
+	// xargs fills in its command: see xargsFills, set by init.
+	"xargs": {opts: getopt{short: "+0a:E:e::i::I:J:l::L:n:prR:s:S:txP:d:o", long: "null arg-file: delimiter: eof:: replace:: max-lines:: max-args: max-procs: open-tty interactive no-run-if-empty max-chars: verbose show-limits exit process-slot-var: help version"}},
 }
 
 // wrapper is how a wrapper reads its words up to the command it runs.
@@ -471,11 +483,36 @@ type wrapper struct {
 	// shell those that run a shell instead, which takes the words of the
 	// command for its -c and, with none, its commands from stdin.
 	chdir, shell []string
+	// stays lists the options that keep the command in this directory when
+	// without them the wrapper runs it in another: pkexec in the home of
+	// the user, systemd-run a service in that of its manager.
+	stays []string
+	// joins tells that the shell of shell gets the words joined with
+	// spaces, as ssh joins them (run0 --via-shell), not escaped.
+	joins bool
+	// bare tells that with no command the wrapper runs a shell, which reads
+	// its commands from stdin: chroot DIR, unshare, pkexec.
+	bare bool
+	// reads reads the words in place of opts when getopt alone does not
+	// tell where the command is: the priority of chrt is one only when it
+	// is a number, the architecture of setarch comes before its options.
+	reads func(args []string) (opts []option, cmd int)
+	// check looks at the values of the options for the code the wrapper
+	// runs besides the command, which it returns, and the variables it
+	// sets: strace -o '|CMD', systemd-run -p ExecStartPre=…, -E PATH=….
+	check func(p *parser, opts []option, args []string, static []bool, cmd int) []string
+	// fills marks the words of the command the wrapper fills in when it
+	// runs (with the replace string of xargs -I, the $NAME systemd-run
+	// expands) as made at run time, and what xargs appends to them.
+	fills func(p *parser, opts []option, argv []string, static, split []bool)
 }
 
 // read reads args as the wrapper does: its options, and the index in args
 // of the command, len(args) for none.
 func (w wrapper) read(args []string) (opts []option, cmd int) {
+	if w.reads != nil {
+		return w.reads(args)
+	}
 	for {
 		o, ops := w.opts.read(args[cmd:])
 		for _, x := range o {
@@ -549,9 +586,11 @@ func (p *parser) unwrap(w wrapper, argv []string, static, split []bool) (int, []
 }
 
 // wrapped looks at what a wrapper hands the command it runs besides its
-// words: the environment of env and sudo, and the shell of sudo -s, -i and
-// doas -s, which gets those words for its -c as escaped puts them and,
-// with none of them, reads its commands from stdin.
+// words: the environment of env and sudo, the code in the values of its
+// options (check), and the shell of sudo -s, -i and doas -s, which gets
+// those words for its -c as escaped puts them (or joined, run0 -i) and,
+// with none of them, reads its commands from stdin, as the shell of a
+// bare wrapper with no command does.
 func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*syntax.Redirect) []string {
 	opts, cmd := w.read(args)
 	for i, a := range args[:cmd] {
@@ -563,18 +602,25 @@ func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*synt
 			p.assigned(name)
 		}
 	}
-	if !has(opts, w.shell...) || has(opts, w.none...) {
-		return nil
+	var code []string
+	if w.check != nil {
+		code = w.check(p, opts, args, static, cmd)
 	}
+	shell := has(opts, w.shell...)
 	switch {
+	case has(opts, w.none...), !shell && (!w.bare || cmd < len(args)):
+		return code
 	case cmd == len(args):
-		return p.stdin(redirs)
-	case !static[cmd]:
-		// The other words, escaped, are its arguments whatever they hold.
+		return append(code, p.stdin(redirs)...)
+	case w.joins && slices.Contains(static[cmd:], false), !w.joins && !static[cmd]:
+		// Joined, a word made at run time may be any code; escaped, the
+		// other words are its arguments whatever they hold.
 		p.mark(dynComputed)
-		return nil
+		return code
+	case w.joins:
+		return append(code, strings.Join(args[cmd:], " "))
 	}
-	return []string{escaped(args[cmd:])}
+	return append(code, escaped(args[cmd:]))
 }
 
 // escaped joins words with spaces as sudo and sudo-rs do for the -c of the
@@ -689,6 +735,7 @@ var strung = map[string]struct {
 }{
 	"ssh":     {sshCommand, true},
 	"su":      {suCommand, false},
+	"sg":      {sgCommand, false},
 	"runuser": {runuserCommand, false},
 	"flock":   {flockCommand, false},
 	"script":  {scriptCommand, false},
@@ -1030,8 +1077,8 @@ var chdirs = map[string]bool{"cd": true, "pushd": true, "popd": true, "chroot": 
 
 // moves tells whether argv runs what follows it, or the command it runs,
 // in another directory: as chdirs do, a wrapper with an option of chdir
-// (env -C, sudo -D, sudo -i), and su or runuser starting a login shell,
-// which starts in the home of the user.
+// (env -C, sudo -D, sudo -i) or without one of stays (pkexec), and su or
+// runuser starting a login shell, which starts in the home of the user.
 func moves(argv []string) bool {
 	name := filepath.Base(argv[0])
 	switch {
@@ -1046,7 +1093,7 @@ func moves(argv []string) bool {
 		return false
 	}
 	opts, _ := w.read(argv[1:])
-	return has(opts, w.chdir...)
+	return has(opts, w.chdir...) || w.stays != nil && !has(opts, w.stays...)
 }
 
 // redirect records the file a redirection writes. Reading, a copy of a

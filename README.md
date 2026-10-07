@@ -576,7 +576,12 @@ write_outside_home = "deny"      # "allow" | "ask" | "deny"; нет — allow
 | вызов сабагента — любой из перечисленных | то же | то же | то же и `agent` — имя сабагента; у вызовов основного агента `agent` нет |
 
 Команды bash-строки разбираются все: конвейеры, `$(...)`, `bash -c '...'` и обёртки — `sudo rm x`
-даёт запросы и для `sudo`, и для `rm`; вердикт вызова — худший из них. Так же разбирается код,
+даёт запросы и для `sudo`, и для `rm`; вердикт вызова — худший из них. Обёртки читают свои опции,
+как сама программа (значение опции — не команда): `sudo`, `doas`, `run0`, `pkexec`, `su`, `runuser`, `sg`,
+`env`, `nice`, `ionice`, `nohup`, `setsid`, `stdbuf`, `time`, `timeout`, `watch`, `flock`, `xargs`, `chroot`,
+`unshare`, `nsenter`, `setpriv`, `taskset`, `chrt`, `prlimit`, `setarch`, `systemd-run`, `systemd-inhibit`,
+`strace`, `ltrace`, `valgrind`, `gdb`, `firejail`, `fakeroot`, `proxychains4`, `torsocks`, `unbuffer`,
+`numactl`, `cgexec`, `chpst`, `caffeinate` и другие. Так же разбирается код,
 который строка отдаёт shell: `eval` со статичными аргументами, here-string и here-document для
 `bash`/`sh`, `env -S`, значение `alias`, команда `trap`, `bind -x`, `complete -C`, `compgen -C` и
 `mapfile -C`, строки `su -c`, `flock ФАЙЛ -c`, `script -c`
