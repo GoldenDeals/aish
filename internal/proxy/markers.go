@@ -99,107 +99,160 @@ func parseMarker(b []byte) Marker {
 	return Marker{Kind: string(kind), Payload: string(payload)}
 }
 
+// marker takes a marker of the shell's, the output before it already
+// recorded (Filter.Feed): the recorder starts and ends the segment the
+// output goes to next. The payloads are as the header of init.bash has
+// them.
 func (p *Proxy) marker(m Marker) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	switch m.Kind {
 	case "cmd-start":
-		p.dropLine()
-		p.user = &segment{cmd: m.Payload, buf: capture.NewBuffer(headCap, tailCap)}
+		p.cmdStart(m.Payload)
 	case "ask-start":
-		p.dropLine()
-		p.asking = true
-		p.folds = nil
-		// A command that asks (an alias of __aish_ask) is the request's:
-		// in the journal it would hold the whole reply as its output.
-		p.user = nil
+		p.askStart()
 	case "cmd-end":
-		defer p.drawStatus() // once the command is in the journal
-		p.earlyPrompt()
-		p.at = nil
-		p.asking = false
-		p.handed = "" // cut short by Ctrl+C or return, or never run
-		if p.tool != nil {
-			p.finishFold(p.tool, 130)
-			p.tool = nil
-		}
-		// Back at the prompt: an agent command interrupted with Ctrl+C never
-		// sent agent-end. Keep what it printed for the next `agent start`.
-		for id, seg := range p.agent {
-			out, tui := render(seg.buf)
-			p.finish(id, rpc.Output{Output: out, Exit: 130, TUI: tui})
-			if seg.fold != nil {
-				p.finishFold(seg.fold, 130)
-			} else if seg.last.text {
-				p.emit([]byte("\r\n"))
-			}
-		}
-		clear(p.agent)
-		if p.waits {
-			// The agent's line of calls waited for a command cut short, or
-			// never run: no agent goes on with it now, the prompt would.
-			p.emit([]byte("  " + dim + "(interrupted)" + reset + "\r\n"))
-		}
-		p.hide, p.waits = false, false
-		p.stopSpin()
-		p.stopWatch()
-		rc, cwd, _ := strings.Cut(m.Payload, ";")
-		defer p.saveState(cwd) // with the command that changed it in the journal
-		seg := p.user
-		p.user = nil
-		if p.switched {
-			p.switched = false
-			return // `aish resume` belongs to neither session
-		}
-		if seg == nil || strings.TrimSpace(seg.cmd) == "" {
-			return
-		}
-		exit, _ := strconv.Atoi(rc)
-		out, tui := render(seg.buf)
-		if seg.cleared && strings.TrimSpace(out) == "" {
-			return // `clear` itself: nothing left on the screen
-		}
-		if ignoredCommand(seg.cmd, p.ignore) {
-			out = session.NotRecorded
-		}
-		_ = p.sess.Append(session.Entry{Kind: session.KindShell, Cmd: seg.cmd, Output: out, Exit: exit, Cwd: cwd, TUI: tui})
+		p.cmdEnd(m.Payload)
 	case "agent-start":
-		id, cmd, _ := strings.Cut(m.Payload, ";")
-		seg := &segment{cmd: cmd, buf: capture.NewBuffer(headCap, tailCap)}
-		if p.hide {
-			seg.fold = newQuiet("❯ " + cmd)
-			if p.spin != nil {
-				p.spin.fold = seg.fold
-			}
-		} else if p.foldLines >= 0 {
-			seg.fold = newFold("❯ "+cmd, p.foldLines)
-			if p.foldLines == 0 {
-				seg.fold.at = p.at
-			}
-			p.watchFold(seg.fold) // it may wait for input, see foldprompt.go
-		}
-		p.at, p.hide = nil, false
-		p.agent[id] = seg
+		p.agentCmdStart(m.Payload)
 	case "agent-end":
-		p.stopSpin() // the agent goes on with its line
-		p.stopWatch()
-		f := strings.SplitN(m.Payload, ";", 3)
-		if len(f) < 3 {
-			return
-		}
-		id := f[0]
-		seg, ok := p.agent[id]
-		if !ok {
-			return
-		}
-		delete(p.agent, id)
-		exit, _ := strconv.Atoi(f[1])
+		p.agentCmdEnd(m.Payload)
+	}
+}
+
+// cmdStart begins the command line cmd the user typed. Called under p.mu.
+func (p *Proxy) cmdStart(cmd string) {
+	p.dropLine()
+	p.user = &segment{cmd: cmd, buf: capture.NewBuffer(headCap, tailCap)}
+}
+
+// askStart begins a request. Called under p.mu.
+func (p *Proxy) askStart() {
+	p.dropLine()
+	p.asking = true
+	p.folds = nil
+	// A command that asks (an alias of __aish_ask) is the request's:
+	// in the journal it would hold the whole reply as its output.
+	p.user = nil
+}
+
+// cmdEnd is the shell back at its prompt, payload "rc;cwd": what the
+// command line left open ends, the user's command goes to the journal,
+// then the shell's state, which __aish_precmd has just dumped, is saved
+// with it, and the status is drawn. Called under p.mu.
+func (p *Proxy) cmdEnd(payload string) {
+	p.earlyPrompt()
+	p.at = nil
+	p.asking = false
+	p.handed = "" // cut short by Ctrl+C or return, or never run
+	p.closeTool()
+	p.closeInterrupted()
+	rc, cwd, _ := strings.Cut(payload, ";")
+	p.recordUser(rc, cwd)
+	p.saveState(cwd) // with the command that changed it in the journal
+	p.drawStatus()   // once the command is in the journal
+}
+
+// closeTool ends the live output of an external tool the prompt cut short.
+// Called under p.mu.
+func (p *Proxy) closeTool() {
+	if p.tool != nil {
+		p.finishFold(p.tool, 130)
+		p.tool = nil
+	}
+}
+
+// closeInterrupted ends the agent's commands the prompt cut short: one
+// interrupted with Ctrl+C never sent agent-end. What it printed is kept
+// for the next `agent start`, which closes its call. Called under p.mu.
+func (p *Proxy) closeInterrupted() {
+	for id, seg := range p.agent {
+		out, tui := render(seg.buf)
+		p.finish(id, rpc.Output{Output: out, Exit: 130, TUI: tui})
 		if seg.fold != nil {
-			p.finishFold(seg.fold, exit)
+			p.finishFold(seg.fold, 130)
 		} else if seg.last.text {
 			p.emit([]byte("\r\n"))
 		}
-		out, tui := render(seg.buf)
-		p.finish(id, rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui})
 	}
+	clear(p.agent)
+	if p.waits {
+		// The agent's line of calls waited for a command cut short, or
+		// never run: no agent goes on with it now, the prompt would.
+		p.emit([]byte("  " + dim + "(interrupted)" + reset + "\r\n"))
+	}
+	p.hide, p.waits = false, false
+	p.stopSpin()
+	p.stopWatch()
+}
+
+// recordUser puts the command the user typed in the journal, with its
+// output, its exit code rc and cwd, the directory it left the shell in.
+// Called under p.mu.
+func (p *Proxy) recordUser(rc, cwd string) {
+	seg := p.user
+	p.user = nil
+	if p.switched {
+		p.switched = false
+		return // `aish resume` belongs to neither session
+	}
+	if seg == nil || strings.TrimSpace(seg.cmd) == "" {
+		return
+	}
+	exit, _ := strconv.Atoi(rc)
+	out, tui := render(seg.buf)
+	if seg.cleared && strings.TrimSpace(out) == "" {
+		return // `clear` itself: nothing left on the screen
+	}
+	if ignoredCommand(seg.cmd, p.ignore) {
+		out = session.NotRecorded
+	}
+	_ = p.sess.Append(session.Entry{Kind: session.KindShell, Cmd: seg.cmd, Output: out, Exit: exit, Cwd: cwd, TUI: tui})
+}
+
+// agentCmdStart begins the agent's command the shell runs, payload
+// "id;cmd": its output is folded as the agent left it to be. Called under
+// p.mu.
+func (p *Proxy) agentCmdStart(payload string) {
+	id, cmd, _ := strings.Cut(payload, ";")
+	seg := &segment{cmd: cmd, buf: capture.NewBuffer(headCap, tailCap)}
+	if p.hide {
+		seg.fold = newQuiet("❯ " + cmd)
+		if p.spin != nil {
+			p.spin.fold = seg.fold
+		}
+	} else if p.foldLines >= 0 {
+		seg.fold = newFold("❯ "+cmd, p.foldLines)
+		if p.foldLines == 0 {
+			seg.fold.at = p.at
+		}
+		p.watchFold(seg.fold) // it may wait for input, see foldprompt.go
+	}
+	p.at, p.hide = nil, false
+	p.agent[id] = seg
+}
+
+// agentCmdEnd ends the agent's command, payload "id;rc;cwd", and gives
+// its output to the agent waiting for it. Called under p.mu.
+func (p *Proxy) agentCmdEnd(payload string) {
+	p.stopSpin() // the agent goes on with its line
+	p.stopWatch()
+	f := strings.SplitN(payload, ";", 3)
+	if len(f) < 3 {
+		return
+	}
+	id := f[0]
+	seg, ok := p.agent[id]
+	if !ok {
+		return
+	}
+	delete(p.agent, id)
+	exit, _ := strconv.Atoi(f[1])
+	if seg.fold != nil {
+		p.finishFold(seg.fold, exit)
+	} else if seg.last.text {
+		p.emit([]byte("\r\n"))
+	}
+	out, tui := render(seg.buf)
+	p.finish(id, rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui})
 }
