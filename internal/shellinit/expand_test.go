@@ -8,7 +8,8 @@ import (
 
 // TestExpand checks the text a request reaches the model with: $VAR,
 // ${...} and $(...) expanded by the shell, as typed after the ? prefix or
-// with expand off. Quotes and backticks stay text, a backslash keeps one
+// with expand off. Double quotes and backticks stay text, single quotes
+// keep what is in them (TestExpandSingleQuotes), a backslash keeps one
 // dollar, text that does not parse is kept as typed, and nothing of the
 // expansion stays in the shell. A line for bash is bash's to expand.
 func TestExpand(t *testing.T) {
