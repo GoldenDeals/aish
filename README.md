@@ -645,8 +645,13 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 контейнера, пода или машины — `docker`/`podman` `exec`, `run` и `create` (и `--entrypoint`, `--health-cmd`), `kubectl exec`,
 `lxc`/`incus` `exec`, `machinectl shell` — для политик команда этой машины, а не удалённая, как у `ssh`: тома делят
 с ней файлы, и её пути и редиректы проверяются как здешние; без команды `docker run -i`, `lxc shell`,
-`machinectl shell` и `distrobox enter` запускают shell на stdin. Под другим корнем (`bwrap`, `systemd-nspawn`,
-`capsh --chroot`, `podman run --rootfs`, `-p RootDirectory=` и `RootImage=` у `systemd-run` и `run0`) пути —
+`machinectl shell` и `distrobox enter` запускают shell на stdin. Так же `nerdctl`, `exec` и `run` у `docker compose`,
+`docker-compose`, `podman compose` и `nerdctl compose`, `kubectl`/`oc` `run` и `debug`, `oc rsh`, `distrobox ephemeral`
+(и строка `distrobox-create`, которую он собирает из своих слов и исполняет `eval`); stdin контейнеру отдают `attach` и
+`start -i` у `docker`/`podman`/`nerdctl`, `kubectl attach -i`, `toolbox enter`, `compose run` без команды, `oc rsh` и
+`oc debug` без команды. Compose и `kubectl`/`oc` — `source`: файл compose и kubeconfig (его `exec`) задают, что
+запустится; так же `ip -batch ФАЙЛ`, а `ip -batch -` — `stdin`. Под другим корнем (`bwrap`, `systemd-nspawn`,
+`capsh --chroot`, `podman run --rootfs`, `nerdctl run --rootfs`, `-p RootDirectory=` и `RootImage=` у `systemd-run` и `run0`) пути —
 `computed`, как под `chroot`. Так же разбирается код,
 который строка отдаёт shell: `eval` со статичными аргументами, here-string и here-document для
 `bash`/`sh`, `env -S`, значение `alias`, команда `trap`, `bind -x`, `complete -C`, `compgen -C` и
@@ -698,7 +703,8 @@ tmux в строке `if-shell`, Perl в `{= =}` у `parallel`, конфиг `ss
 Переменная, из которой программы берут команду (`GIT_SSH_COMMAND`, `PAGER`, `EDITOR`, `LESSOPEN`…),
 где бы строка её ни присвоила (`X=… cmd`, `export`, `env`, `sudo`, `for`, `${X:=…}`), разбирается как
 `bash -c`, из подстановок — `computed`; загрузчики (`LD_PRELOAD`, `PYTHONPATH`, `NODE_OPTIONS`,
-`GIT_CONFIG_*`…) — `rebind`, `bind -f` — `computed`. Функция из окружения — `BASH_FUNC_ИМЯ%%='() { …; }'`
+`GIT_CONFIG_*`, `KUBECONFIG`, `DOCKER_CONFIG`…) и чужой конфиг клиента (`--kubeconfig`, `--kuberc`, `docker --config`) —
+`rebind`, `bind -f` — `computed`. Функция из окружения — `BASH_FUNC_ИМЯ%%='() { …; }'`
 (и `BASH_FUNC_ИМЯ()`), из которой любой запущенный bash определит функцию `ИМЯ`, где бы строка её ни задала (`env`,
 `export`, `strace -E`, `systemd-run -E`, `firejail --env`…), — `rebind`, а тело разбирается как код `eval`; из
 подстановок или не разобранная — ещё и `computed`.

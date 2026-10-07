@@ -132,7 +132,7 @@ func TestParseBoxWrapperMarks(t *testing.T) {
 		{`echo id | machinectl shell`, []string{"stdin"}},
 		{`echo id | distrobox enter x`, []string{"stdin"}},
 		{`docker exec -i c bash`, []string{"stdin"}},
-		{`kubectl exec -i POD -- bash`, []string{"stdin"}},
+		{`kubectl exec -i POD -- bash`, []string{"source", "stdin"}},
 		{`ssh-agent bash`, []string{"stdin"}},
 
 		{`docker run IMG`, nil},
@@ -165,8 +165,8 @@ func TestParseBoxWrapperMarks(t *testing.T) {
 		{`docker run --entrypoint sudo "$img" ls`, []string{"computed"}},
 		{`docker run --entrypoint "$e" IMG ls`, []string{"computed"}},
 		{`docker run --newflag x IMG ls`, []string{"computed"}},
-		{`kubectl --newflag exec POD -- ls`, []string{"computed"}},
-		{`kubectl exec POD nice -c x sudo ls`, []string{"computed"}},
+		{`kubectl --newflag exec POD -- ls`, []string{"computed", "source"}},
+		{`kubectl exec POD nice -c x sudo ls`, []string{"computed", "source"}},
 		{`lxc exec C nice --cwd /tmp sudo ls`, []string{"computed"}},
 		{`docker exec "$c" ls`, []string{"computed"}},
 		{`docker run -v $PWD:/x IMG ls`, []string{"computed"}},
@@ -175,8 +175,8 @@ func TestParseBoxWrapperMarks(t *testing.T) {
 
 		{`docker run --rm -v "$PWD:/x" -w /x IMG make`, nil},
 		{`docker run --runtime nvidia IMG ls`, nil},
-		{`kubectl -n "$ns" exec POD -- ls`, nil},
-		{`kubectl --insecure-skip-tls-verify exec POD -- ls`, nil},
+		{`kubectl -n "$ns" exec POD -- ls`, []string{"source"}},
+		{`kubectl --insecure-skip-tls-verify exec POD -- ls`, []string{"source"}},
 		{`docker run --health-cmd 'curl -f localhost' IMG`, nil},
 	} {
 		s, err := Parse(c.src, "", "")
@@ -196,7 +196,7 @@ func TestParseBoxWrappersNone(t *testing.T) {
 	for _, src := range []string{
 		`ip addr`, `ip -4 -o addr show`, `ip netns list`, `ip netns exec`, `ip route get 1.1.1.1`,
 		`docker ps`, `docker images -a`, `docker logs -f c`, `docker build -t x .`, `docker run IMG`,
-		`podman ps -a`, `kubectl get pods`, `kubectl exec POD`, `kubectl -n ns describe pod x`,
+		`podman ps -a`, `kubectl`, `kubectl --help`, `kubectl completion bash`,
 		`lxc list`, `incus info C`, `bwrap --help`, `bwrap --version`, `systemd-nspawn --help`,
 		`capsh --print`, `capsh --help`, `ssh-agent -k`, `ssh-agent`, `eatmydata`, `dbus-run-session --version`,
 		`toolbox list`, `distrobox list`, `distrobox enter --dry-run x -- ls`, `machinectl list`,
@@ -224,7 +224,7 @@ func TestParseBoxWrapperPaths(t *testing.T) {
 		dynamic []string
 	}{
 		{`docker exec c sh -c 'echo x > /etc/x'`, []string{"/etc/x"}, nil},
-		{`kubectl exec POD -- sh -c 'echo x > out'`, []string{"/w/out"}, nil},
+		{`kubectl exec POD -- sh -c 'echo x > out'`, []string{"/w/out"}, []string{"source"}},
 		{`docker run IMG sh -c 'cd /etc; echo x > passwd'`, nil, []string{"computed"}},
 		{`docker exec c rm /etc/x`, nil, nil},
 		{`bwrap --ro-bind / / ls`, nil, []string{"computed"}},
@@ -283,7 +283,8 @@ func TestParseRebindWrappers(t *testing.T) {
 }
 
 // With deny = ["sudo *"] the sudo behind every box wrapper is denied, and so
-// it is by Cedar; what runs no sudo passes.
+// it is by Cedar; what runs no sudo passes, but kubectl, whose kubeconfig
+// may run any program, asks.
 func TestBoxWrappersPolicy(t *testing.T) {
 	ctx := context.Background()
 	rules, err := Load(ctx, t.TempDir(), Rules{Deny: []string{"sudo *"}})
@@ -303,10 +304,10 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 	for _, c := range []struct{ cmd, want string }{
 		{`ip addr`, Allow},
 		{`docker ps`, Allow},
-		{`kubectl get pods`, Allow},
+		{`kubectl get pods`, Ask},
 		{`bwrap --help`, Allow},
 		{`docker exec c ls`, Allow},
-		{`kubectl exec POD -- ls`, Allow},
+		{`kubectl exec POD -- ls`, Ask},
 		{`capsh --`, Ask},
 		{`bwrap --bind / / bash`, Ask},
 		{`echo id | docker run -i IMG`, Ask},

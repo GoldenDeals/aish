@@ -17,10 +17,11 @@ func init() {
 // words as their sources do: libcap 2.78 (capsh), iproute2 7.1 (ip),
 // bubblewrap 0.11, systemd 261 (systemd-nspawn, machinectl), dbus 1.16,
 // OpenSSH 10 (ssh-agent), libeatmydata, flatpak-xdg-utils (flatpak-spawn),
-// toolbox, distrobox 1.8, Docker CLI 29, Podman 6, kubectl 1.36, LXD 6 (lxc)
-// and Incus 7. The command of a container is a command of this machine to
-// the policies, not one of Remote: its words name files of this one, which
-// its volumes share, and its redirections write here.
+// toolbox, distrobox 1.8, Docker CLI 29, Docker Compose 5, nerdctl 2, Podman 6,
+// kubectl 1.36, oc of OpenShift 4, LXD 6 (lxc) and Incus 7. The command of a
+// container is a command of this machine to the policies, not one of
+// Remote: its words name files of this one, which its volumes share, and
+// its redirections write here.
 var boxWrappers = map[string]wrapper{
 	// bwrap runs its command under a root of its own (see reroots).
 	"bwrap": {reads: bwrapArgs, chdir: []string{"chdir"}, check: bwrapCheck},
@@ -29,33 +30,45 @@ var boxWrappers = map[string]wrapper{
 		opts: getopt{short: "+h?", long: "help version config-file: dbus-daemon:"},
 		none: []string{"h", "?", "help", "version"}, check: dbusCheck,
 	},
-	// distrobox enter with no command runs a login shell in the container.
+	// distrobox enter with no command runs a login shell in the container,
+	// and so does distrobox ephemeral (see ephemeralArgs).
 	"distrobox": {
 		reads: func(args []string) ([]option, int) {
-			if len(args) == 0 || args[0] != "enter" {
+			switch {
+			case len(args) > 0 && args[0] == "ephemeral":
+				return ephemeralArgs(args, 1)
+			case len(args) == 0 || args[0] != "enter":
 				return nil, len(args)
 			}
 			opts, cmd := distroboxEnter(args, 1)
 			return append(opts, option{name: "enter"}), cmd
 		},
-		none: distroboxNone, bare: true, attach: []string{"enter"},
-		chdir: []string{"nw", "no-workdir"}, check: distroboxCheck,
+		none: distroboxNone, bare: true, attach: []string{"enter", "ephemeral"},
+		chdir: []string{"nw", "no-workdir"}, check: ephemeralCheck(1),
 	},
 	"distrobox-enter": {
 		reads: func(args []string) ([]option, int) { return distroboxEnter(args, 0) },
 		none:  distroboxNone, bare: true, chdir: []string{"nw", "no-workdir"}, check: distroboxCheck,
 	},
-	"docker":        dockerCLI.wrapper(),
-	"eatmydata":     {reads: eatmydataArgs},
-	"flatpak-spawn": {reads: flatpakSpawnArgs, none: []string{"h", "?", "help", "help-all"}, chdir: []string{"directory"}, check: flatpakSpawnCheck},
-	"incus":         lxcWrapper,
-	"ip":            {reads: ipArgs},
-	"kubectl":       {opts: kubectlOpts, reads: kubectlArgs, check: kubectlCheck},
-	"lxc":           lxcWrapper,
+	"distrobox-ephemeral": {
+		reads: func(args []string) ([]option, int) { return ephemeralArgs(args, 0) },
+		none:  distroboxNone, bare: true, attach: []string{"ephemeral"}, check: ephemeralCheck(0),
+	},
+	"docker":         dockerCLI.wrapper(),
+	"docker-compose": composeWrapper,
+	"eatmydata":      {reads: eatmydataArgs},
+	"flatpak-spawn":  {reads: flatpakSpawnArgs, none: []string{"h", "?", "help", "help-all"}, chdir: []string{"directory"}, check: flatpakSpawnCheck},
+	"incus":          lxcWrapper,
+	"ip":             {reads: ipArgs, check: ipCheck},
+	"kubectl":        kubeWrapper(false),
+	"lxc":            lxcWrapper,
 	// machinectl shell with no program runs the login shell of the user.
-	"machinectl": {opts: machinectlOpts, reads: machinectlArgs, none: []string{"h", "help", "version"}, bare: true, attach: []string{"shell"}, check: envCheck("E", "setenv")},
-	"podman":     podmanCLI.wrapper(),
-	"ssh-agent":  {opts: getopt{short: "+cDdksTuUVE:a:O:P:t:"}, none: []string{"c", "D", "d", "k", "s", "u", "V"}},
+	"machinectl":     {opts: machinectlOpts, reads: machinectlArgs, none: []string{"h", "help", "version"}, bare: true, attach: []string{"shell"}, check: envCheck("E", "setenv")},
+	"nerdctl":        nerdctlCLI.wrapper(),
+	"oc":             kubeWrapper(true),
+	"podman":         podmanCLI.wrapper(),
+	"podman-compose": composeWrapper,
+	"ssh-agent":      {opts: getopt{short: "+cDdksTuUVE:a:O:P:t:"}, none: []string{"c", "D", "d", "k", "s", "u", "V"}},
 	// systemd-nspawn runs its command under the root of the container (see
 	// reroots), in its / unless --chdir, and a shell with none; with -b
 	// its words are those of the init it boots.
@@ -63,15 +76,18 @@ var boxWrappers = map[string]wrapper{
 		opts: nspawnOpts, none: []string{"h", "help", "version", "b", "boot"}, bare: true,
 		chdir: []string{"chdir"}, stays: []string{}, check: envCheck("E", "setenv"),
 	},
-	"toolbox": {opts: toolboxOpts, reads: toolboxArgs, none: []string{"h", "help", "version"}},
+	// toolbox enter runs a shell in the container.
+	"toolbox": {opts: toolboxOpts, reads: toolboxArgs, none: []string{"h", "help", "version"}, bare: true, attach: []string{"enter"}},
 }
 
 // reroots tell whether a wrapper runs its command under another root, by
 // options rooted cannot name: bwrap builds one of its options, the
-// container of systemd-nspawn is one, podman --rootfs takes a directory for
-// it, and so do the properties RootDirectory= and RootImage= of a unit.
+// container of systemd-nspawn is one, podman --rootfs and nerdctl --rootfs
+// take a directory for it, and so do the properties RootDirectory= and
+// RootImage= of a unit.
 var reroots = map[string]func(opts []option) bool{
 	"bwrap":          func(opts []option) bool { return !has(opts, "help", "version") },
+	"nerdctl":        func(opts []option) bool { return has(opts, "rootfs") },
 	"podman":         func(opts []option) bool { return has(opts, "rootfs") },
 	"run0":           unitRooted,
 	"systemd-nspawn": func(opts []option) bool { return !has(opts, "h", "help", "version") },
@@ -468,9 +484,15 @@ var (
 
 // toolboxArgs reads toolbox [OPTIONS] run [OPTIONS] COMMAND: run is found
 // as cobra finds a subcommand, and its options and those of toolbox end at
-// the first word that is no option.
+// the first word that is no option. toolbox enter [CONTAINER] takes no
+// command: it is marked as an option, for attach.
 func toolboxArgs(args []string) ([]option, int) {
-	s := cobraSub(args, toolboxBools, "run")
+	s := cobraSub(args, toolboxBools, "run", "enter")
+	if s < len(args) && args[s] == "enter" {
+		opts, _ := toolboxOpts.read(args[:s])
+		more, _, _ := readAll(toolboxOpts, args, s+1)
+		return append(append(opts, more...), option{name: "enter", word: s}), len(args)
+	}
 	if s == len(args) || args[s] != "run" {
 		return nil, len(args)
 	}
@@ -557,9 +579,10 @@ var (
 
 // kubectlArgs reads kubectl [OPTIONS] exec [OPTIONS] POD -- COMMAND, with
 // the options among the operands: the command is the words after "--", or,
-// as kubectl before 1.31 had it, the operands after the pod.
+// as kubectl before 1.31 had it, the operands after the pod. The other
+// subcommands that run one are read by kube.
 func kubectlArgs(args []string) ([]option, int) {
-	s := cobraSub(args, kubectlBools, "exec")
+	s := cobraSub(args, kubectlBools, kubeSubs...)
 	if s == len(args) || args[s] != "exec" {
 		return nil, len(args)
 	}
@@ -577,14 +600,13 @@ func kubectlArgs(args []string) ([]option, int) {
 	return opts, ops[1]
 }
 
-// kubectlCheck marks an option kubectl does not know, and one among the
-// words of the command, which kubectl takes out of them.
-func kubectlCheck(p *parser, opts []option, _ []string, _ []bool, cmd int) []string {
-	p.strange(kubectlOpts, opts)
+// kubectlCheck marks an option of table kubectl does not know, and one among
+// the words of the command, which kubectl takes out of them.
+func kubectlCheck(p *parser, table getopt, opts []option, cmd int) {
+	p.strange(table, opts)
 	if slices.ContainsFunc(opts, func(o option) bool { return o.word > cmd }) {
 		p.mark(dynComputed)
 	}
-	return nil
 }
 
 // lxcOpts are the options of lxc exec and incus exec and those of lxc and
@@ -625,10 +647,13 @@ var lxcWrapper = wrapper{
 	},
 }
 
-// boxCLI is how docker or podman reads its words up to the command of a
-// container: its own options, the subcommand (exec, run or create, alone
-// or after container), the options of that, then the container of exec or
-// the image of run and create, and the command after it.
+// boxCLI is how docker, podman or nerdctl reads its words up to the command
+// of a container: its own options, the subcommand (exec, run or create,
+// alone or after container), the options of that, then the container of
+// exec or the image of run and create, and the command after it. attach,
+// and start with -i, hand stdin to the process of the container, which may
+// be a shell: attach is marked as -i. compose reads the rest (see
+// composeRead).
 type boxCLI struct {
 	// global are the options of the program. With cobra they are found as
 	// cobra's Traverse finds them (see cobraSub), bools taking no value, and
@@ -637,13 +662,17 @@ type boxCLI struct {
 	global getopt
 	cobra  bool
 	bools  []string
-	// exec and run are the options of exec and of run and create.
-	exec, run getopt
-	// json tells that an --entrypoint of a JSON array is its words.
-	json bool
+	// exec and run are the options of exec and of run and create, attach
+	// and start those of attach and start.
+	exec, run, attach, start getopt
+	// json tells that an --entrypoint of a JSON array is its words, multi
+	// that the values of all the --entrypoint options are.
+	json, multi bool
 	// programs are the options whose value is a program the engine runs,
-	// opaque those whose files hold code or variables.
-	programs, opaque []string
+	// opaque those whose files hold code or variables, configs those that
+	// name the config of the client, which names programs it runs: the
+	// helpers of credsStore and credHelpers, the directories of plugins.
+	programs, opaque, configs []string
 }
 
 // boxRead is what boxCLI reads of a line: the options, the index of the
@@ -656,11 +685,14 @@ type boxRead struct {
 	entry []string
 }
 
+// boxSubs are the subcommands boxCLI reads further.
+var boxSubs = []string{"exec", "run", "create", "attach", "start", "compose"}
+
 func (c boxCLI) parse(args []string) boxRead {
 	r := boxRead{cmd: len(args), image: -1}
 	var i int
 	if c.cobra {
-		i = cobraSub(args, c.bools, "container", "exec", "run", "create")
+		i = cobraSub(args, c.bools, append([]string{"container"}, boxSubs...)...)
 		r.opts, _ = c.global.read(args[:i])
 	} else {
 		r.opts, i = readFrom(c.global, args, 0)
@@ -671,15 +703,29 @@ func (c boxCLI) parse(args []string) boxRead {
 	if i < len(args) && args[i] == "container" {
 		i++
 		if c.cobra {
-			s := i + cobraSub(args[i:], c.bools, "exec", "run", "create")
+			s := i + cobraSub(args[i:], c.bools, boxSubs...)
 			more, _, _ := readAll(c.global, args[:s], i)
 			r.opts, i = append(r.opts, more...), s
 		}
+	} else if i < len(args) && args[i] == "compose" {
+		cr := composeRead(args, i+1)
+		cr.opts = append(r.opts, cr.opts...)
+		return cr
 	}
 	if i == len(args) {
 		return r
 	}
 	switch args[i] {
+	case "attach":
+		more, _, _ := readAll(c.attach, args, i+1)
+		r.opts = append(r.opts, more...)
+		if !has(more, "no-stdin", "h", "help") {
+			r.opts = append(r.opts, option{name: "interactive", word: i})
+		}
+	case "start":
+		if more, _, _ := readAll(c.start, args, i+1); !has(more, "h", "help") {
+			r.opts = append(r.opts, more...)
+		}
 	case "exec":
 		more, ctr := readFrom(c.exec, args, i+1)
 		r.opts = append(r.opts, more...)
@@ -699,17 +745,31 @@ func (c boxCLI) parse(args []string) boxRead {
 			return r
 		}
 		r.image, r.cmd = img, img+1
-		for _, o := range slices.Backward(more) {
-			if o.name == "entrypoint" {
-				// It runs with the words after the image, in its place.
-				if r.entry = c.entrypoint(o.value); r.entry != nil {
-					r.cmd = img
-				}
-				break
-			}
+		if r.entry, _ = c.entry(more, nil); r.entry != nil {
+			// It runs with the words after the image, in its place.
+			r.cmd = img
 		}
 	}
 	return r
+}
+
+// entry is what the --entrypoint options among opts run in place of the
+// image, nil for the entrypoint of the image, and whether it is static by
+// static, nil for none.
+func (c boxCLI) entry(opts []option, static []bool) ([]string, bool) {
+	var words []string
+	st := true
+	for _, o := range slices.Backward(opts) {
+		if o.name != "entrypoint" {
+			continue
+		}
+		st = st && static != nil && static[o.word]
+		if !c.multi {
+			return c.entrypoint(o.value), st
+		}
+		words = append([]string{o.value}, words...)
+	}
+	return words, st
 }
 
 // entrypoint is the program and arguments of --entrypoint VALUE, nil for
@@ -731,7 +791,10 @@ func (c boxCLI) entrypoint(v string) []string {
 // tables are all the options of c, for fixed and strange: a letter means
 // in the first table that has it what it means to run and create.
 func (c boxCLI) tables() getopt {
-	return getopt{short: c.run.short + c.exec.short + c.global.short, long: c.run.long + " " + c.exec.long + " " + c.global.long}
+	return getopt{
+		short: c.run.short + c.exec.short + c.attach.short + c.start.short + c.global.short,
+		long:  c.run.long + " " + c.exec.long + " " + c.attach.long + " " + c.start.long + " " + c.global.long,
+	}
 }
 
 func (c boxCLI) wrapper() wrapper {
@@ -742,12 +805,10 @@ func (c boxCLI) wrapper() wrapper {
 			return r.opts, r.cmd
 		},
 		prog: func(opts []option, static []bool) ([]string, bool) {
-			for _, o := range slices.Backward(opts) {
-				if o.name == "entrypoint" {
-					return c.entrypoint(o.value), static[o.word]
-				}
+			if k := slices.IndexFunc(opts, composed); k >= 0 {
+				return composeEntry(opts[k+1:], static)
 			}
-			return nil, false
+			return c.entry(opts, static)
 		},
 		bare: true, attach: []string{"i", "interactive"}, check: c.check,
 	}
@@ -755,14 +816,21 @@ func (c boxCLI) wrapper() wrapper {
 
 // check marks an option the tables do not hold, the variables of -e and
 // --env (and --env-merge of podman), those of --env-file and the files of
-// opaque, which may be any; it returns the program of programs and the
-// code of --health-cmd, which runs with sh -c in the container: one of
-// JSON or led by CMD or NONE, which podman runs otherwise, is marked. An
-// image made at run time may move the words after it.
+// opaque, which may be any, and a config of configs, which names programs;
+// it returns the program of programs and the code of --health-cmd, which
+// runs with sh -c in the container: one of JSON or led by CMD or NONE,
+// which podman runs otherwise, is marked, and so is a --log-driver of a
+// URI, a program nerdctl runs for the logs. An image made at run time may
+// move the words after it. The options after compose are its own (see
+// composeCheck).
 func (c boxCLI) check(p *parser, opts []option, args []string, static []bool, _ int) []string {
 	r := c.parse(args)
-	p.strange(c.tables(), opts)
 	var code []string
+	if k := slices.IndexFunc(opts, composed); k >= 0 {
+		code = composeCheck(p, opts[k:], args, static)
+		opts = opts[:k]
+	}
+	p.strange(c.tables(), opts)
 	for _, o := range opts {
 		switch o.name {
 		case "e", "env", "env-merge":
@@ -775,8 +843,14 @@ func (c boxCLI) check(p *parser, opts []option, args []string, static []bool, _ 
 			} else {
 				p.mark(dynComputed)
 			}
+		case "log-driver":
+			if strings.Contains(o.value, "://") || !static[o.word] {
+				p.mark(dynComputed)
+			}
 		}
 		switch {
+		case slices.Contains(c.configs, o.name):
+			p.mark(dynRebind)
 		case slices.Contains(c.opaque, o.name), slices.Contains(c.programs, o.name) && !static[o.word]:
 			p.mark(dynComputed)
 		case slices.Contains(c.programs, o.name):
@@ -804,8 +878,11 @@ func healthForm(v string) bool {
 // dockerCLI is docker: its own options come before the subcommand, as
 // pflag reads them; run and create share their options.
 var dockerCLI = boxCLI{
-	global: getopt{short: "+c:DH:l:hv", long: "config: context: debug host: log-level: tls tlscacert: tlscert: tlskey: tlsverify version help"},
-	exec:   getopt{short: "+de:ihtu:w:", long: "detach detach-keys: env: env-file: interactive privileged tty user: workdir: help"},
+	global:  getopt{short: "+c:DH:l:hv", long: "config: context: debug host: log-level: tls tlscacert: tlscert: tlskey: tlsverify version help"},
+	exec:    getopt{short: "+de:ihtu:w:", long: "detach detach-keys: env: env-file: interactive privileged tty user: workdir: help"},
+	attach:  getopt{short: "h", long: "detach-keys: no-stdin sig-proxy help"},
+	start:   getopt{short: "aih", long: "attach checkpoint: checkpoint-dir: detach-keys: interactive help"},
+	configs: []string{"config"},
 	run: getopt{
 		short: "+a:c:de:h:il:m:p:Pqtu:v:w:",
 		long:  "add-host: annotation: attach: blkio-weight: blkio-weight-device: cap-add: cap-drop: cgroup-parent: cgroupns: cidfile: cpu-count: cpu-percent: cpu-period: cpu-quota: cpu-rt-period: cpu-rt-runtime: cpu-shares: cpus: cpuset-cpus: cpuset-mems: detach detach-keys: device: device-cgroup-rule: device-read-bps: device-read-iops: device-write-bps: device-write-iops: disable-content-trust dns: dns-opt: dns-option: dns-search: domainname: entrypoint: env: env-file: expose: gpus: group-add: health-cmd: health-interval: health-retries: health-start-interval: health-start-period: health-timeout: help hostname: init interactive io-maxbandwidth: io-maxiops: ip: ip6: ipc: isolation: kernel-memory: label: label-file: link: link-local-ip: log-driver: log-opt: mac-address: memory: memory-reservation: memory-swap: memory-swappiness: mount: name: net: net-alias: network: network-alias: no-healthcheck oom-kill-disable oom-score-adj: pid: pids-limit: platform: privileged publish: publish-all pull: quiet read-only restart: rm runtime: security-opt: shm-size: sig-proxy stop-signal: stop-timeout: storage-opt: sysctl: tmpfs: tty ulimit: use-api-socket user: userns: uts: volume: volume-driver: volumes-from: workdir:",
@@ -815,7 +892,8 @@ var dockerCLI = boxCLI{
 // podmanGlobal are the options of podman that its subcommands read too,
 // podmanCLI is podman, which finds its subcommand as cobra does: its own
 // options run the OCI runtime and conmon of --runtime and --conmon, and
-// take hooks and settings from --hooks-dir and --module.
+// take hooks and settings from --hooks-dir, --cdi-spec-dir, whose specs hold
+// hooks too, and --module.
 var (
 	podmanGlobal = " cgroup-manager: cpu-profile: memory-profile: conmon: network-config-dir: default-mounts-file: events-backend: hooks-dir: cdi-spec-dir: max-workers: namespace: network-backend: root: registries-conf: runroot: imagestore: transient-store pull-option: runtime: storage-driver: tmpdir: trace volumepath: storage-opt: help log-level: runtime-flag: syslog"
 	podmanCLI    = boxCLI{
@@ -827,8 +905,11 @@ var (
 			short: "+a:c:de:h:il:m:p:Pqtu:v:w:",
 			long:  "add-host: annotation: arch: attach: authfile: blkio-weight: blkio-weight-device: cap-add: cap-drop: cert-dir: cgroup-conf: cgroup-parent: cgroupns: cgroups: chrootdirs: cidfile: conmon-pidfile: cpu-period: cpu-quota: cpu-rt-period: cpu-rt-runtime: cpu-shares: cpus: cpuset-cpus: cpuset-mems: creds: decryption-key: detach detach-keys: device: device-cgroup-rule: device-read-bps: device-read-iops: device-write-bps: device-write-iops: disable-content-trust dns: dns-opt: dns-option: dns-search: entrypoint: env: env-file: env-host env-merge: expose: gidmap: gpus: group-add: group-entry: health-cmd: health-interval: health-log-destination: health-max-log-count: health-max-log-size: health-on-failure: health-retries: health-start-period: health-startup-cmd: health-startup-interval: health-startup-retries: health-startup-success: health-startup-timeout: health-timeout: healthcheck-command: healthcheck-interval: healthcheck-retries: healthcheck-start-period: healthcheck-timeout: hostname: hosts-file: hostuser: http-proxy image-volume: init init-path: interactive ip: ip6: ipc: kernel-memory: label: label-file: log-driver: log-opt: mac-address: memory: memory-reservation: memory-swap: memory-swappiness: mount: name: net: network: network-alias: no-healthcheck no-hostname no-hosts oom-kill-disable oom-score-adj: os: override-arch: override-os: override-variant: passwd passwd-entry: personality: pid: pidfile: pids-limit: platform: pod: pod-id-file: preserve-fd: preserve-fds: privileged publish: publish-all pull: quiet rdt-class: read-only read-only-tmpfs replace requires: restart: retry: retry-delay: rm rmi rootfs sdnotify: seccomp-policy: secret: security-opt: shm-size: shm-size-systemd: sig-proxy signature-policy: stop-signal: stop-timeout: subgidname: subuidname: sysctl: systemd: timeout: tls-verify tmpfs: tty tz: uidmap: ulimit: umask: unsetenv: unsetenv-all user: userns: uts: variant: volume: volumes-from: workdir:" + podmanGlobal,
 		},
+		attach:   getopt{short: "hl", long: "detach-keys: no-stdin sig-proxy latest" + podmanGlobal},
+		start:    getopt{short: "af:hil", long: "all attach detach-keys: filter: interactive latest sig-proxy" + podmanGlobal},
 		json:     true,
 		programs: []string{"conmon", "runtime"},
-		opaque:   []string{"hooks-dir", "module"},
+		opaque:   []string{"hooks-dir", "module", "cdi-spec-dir"},
+		configs:  []string{"config"},
 	}
 )

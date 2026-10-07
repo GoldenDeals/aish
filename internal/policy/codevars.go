@@ -21,12 +21,15 @@ var commandVars = map[string]bool{
 // loaderVars have programs load code from where they say: a library into
 // every program (LD_PRELOAD), a module (PYTHONPATH, NODE_OPTIONS=--require),
 // key bindings (INPUTRC), the config of git, which runs commands of its own
-// (core.sshCommand, an alias with !). The code is in files, or in git's
+// (core.sshCommand, an alias with !), that of kubectl and its kin, whose
+// users run the programs of exec (KUBECONFIG, and the aliases of KUBERC),
+// and that of docker, which runs the helpers of credsStore and the plugins
+// of its directories (DOCKER_CONFIG). The code is in files, or in git's
 // syntax: whatever the value, they are rebind. So are GIT_CONFIG_KEY_n and
 // GIT_CONFIG_VALUE_n (see loads).
 var loaderVars = map[string]bool{
-	"GCONV_PATH": true, "GIT_CONFIG_COUNT": true, "GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_PARAMETERS": true,
-	"GIT_CONFIG_SYSTEM": true, "GIT_EXEC_PATH": true, "GIT_TEMPLATE_DIR": true, "INPUTRC": true,
+	"DOCKER_CONFIG": true, "GCONV_PATH": true, "GIT_CONFIG_COUNT": true, "GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_PARAMETERS": true,
+	"GIT_CONFIG_SYSTEM": true, "GIT_EXEC_PATH": true, "GIT_TEMPLATE_DIR": true, "INPUTRC": true, "KUBECONFIG": true, "KUBERC": true,
 	"LD_AUDIT": true, "LD_LIBRARY_PATH": true, "LD_PRELOAD": true, "NODE_OPTIONS": true, "NODE_PATH": true,
 	"PERL5DB": true, "PERL5LIB": true, "PERL5OPT": true, "PERLLIB": true, "PYTHONHOME": true,
 	"PYTHONPATH": true, "PYTHONSTARTUP": true, "RUBYLIB": true, "RUBYOPT": true,
