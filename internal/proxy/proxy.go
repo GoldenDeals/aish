@@ -400,7 +400,9 @@ func (p *Proxy) key(b []byte) []byte {
 		return p.earlyKey(b)
 	}
 	defer p.syncPaste() // the keys may have opened or closed a reader of them
-	return p.takeKeys(p.wholeKeys(b))
+	keys := p.takeKeys(p.wholeKeys(b))
+	p.typedHidden(keys) // a hidden command they go to, see hidework.go
+	return keys
 }
 
 // takeKeys is key for the keys wholeKeys gave whole. Called under p.mu.

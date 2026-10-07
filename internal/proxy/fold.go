@@ -46,6 +46,11 @@ type fold struct {
 	// quiet is set for a command hide_work sums up in the agent's line of
 	// calls: nothing of it is drawn, all of it is kept for Ctrl+O.
 	quiet bool
+	// For a quiet fold, whether its command waits for input (prompts):
+	// when its output came last, and whether the line it leaves open was
+	// gone over from its start, as a progress bar's is and a prompt's not.
+	lastOut time.Time
+	redrawn bool
 }
 
 // statusAt is where the call printed by the agent ends on the screen; col
@@ -67,7 +72,8 @@ func newFold(title string, limit int) *fold {
 // its output and status are not drawn, whatever fold_lines says, and it is
 // kept for Ctrl+O even without output. The line the agent left open, its
 // line of calls, waits for the agent to go on with it. Only a full-screen
-// program is shown, below that line: the user's screen comes first.
+// program, or a command that waits for input, is shown, below that line:
+// the user's screen, and what the user is asked, come first.
 func newQuiet(title string) *fold {
 	f := newFold(title, 0)
 	f.quiet = true
@@ -89,6 +95,14 @@ func (f *fold) write(b []byte) []byte {
 	f.last.feed(b)
 	if f.open {
 		return b
+	}
+	if f.quiet {
+		f.lastOut = time.Now()
+		line := b
+		if i := bytes.LastIndexByte(b, '\n'); i >= 0 {
+			line, f.redrawn = b[i+1:], false
+		}
+		f.redrawn = f.redrawn || bytes.IndexByte(line, '\r') >= 0
 	}
 	if hasAltScreen(b) {
 		// A full-screen program owns the terminal; folding would break it.
@@ -119,6 +133,18 @@ func (f *fold) write(b []byte) []byte {
 	}
 	f.status = time.Now()
 	return append(append([]byte{}, show...), f.statusExit(-1)...)
+}
+
+// promptWait is how long the output of a quiet fold stands still on a line
+// with text before the proxy takes that line for a prompt.
+const promptWait = time.Second
+
+// prompts reports whether the command of a quiet fold seems to wait for
+// input at now (see hidework.go): its output stopped promptWait ago on a
+// line with text. A line gone over from its start is a progress bar,
+// stalled, not a prompt.
+func (f *fold) prompts(now time.Time) bool {
+	return f.quiet && !f.open && f.last.text && !f.redrawn && now.Sub(f.lastOut) >= promptWait
 }
 
 // folded reports whether anything was hidden.
@@ -210,10 +236,12 @@ func (f *fold) expand() []byte {
 		return nil
 	}
 	f.open = true
+	if f.quiet {
+		// Below the agent's line of calls, which stays.
+		return append([]byte("\r\n"), f.tail(revealLines)...)
+	}
 	var b []byte
 	switch {
-	case f.quiet:
-		b = []byte("\r\n") // below the agent's line of calls, which stays
 	case f.at == nil:
 		b = []byte("\r\x1b[K")
 	case f.drawn:
@@ -222,12 +250,42 @@ func (f *fold) expand() []byte {
 		b = []byte("\r\n") // the output starts below the command
 	}
 	if !f.folded() {
-		if f.at == nil && !f.quiet {
+		if f.at == nil {
 			return nil
 		}
 		return b
 	}
 	return append(b, f.rest.Bytes()...)
+}
+
+// revealLines is how much of a quiet fold's output opening it shows: the
+// end, enough for a prompt and what it asks about (ssh's key fingerprint,
+// sudo's lecture), not all a long command printed before it.
+const revealLines = 10
+
+// tail is the end of the hidden output, its last n lines, the open one
+// included, after a line that tells how many came before them.
+func (f *fold) tail(n int) []byte {
+	b := f.rest.Bytes()
+	end := len(b)
+	if end > 0 && b[end-1] == '\n' {
+		end-- // the last line is ended, not followed by an empty one
+	}
+	for ; n > 0; n-- {
+		if end = bytes.LastIndexByte(b[:end], '\n'); end < 0 {
+			return b
+		}
+	}
+	b = b[end+1:]
+	left := f.hiddenLines - bytes.Count(b, []byte{'\n'})
+	if left <= 0 {
+		return b
+	}
+	word := "lines"
+	if left == 1 {
+		word = "line"
+	}
+	return append([]byte(fmt.Sprintf("%s… (+%d %s)%s\r\n", dim, left, word, reset)), b...)
 }
 
 // finish returns the final status line: always when nothing is shown,
