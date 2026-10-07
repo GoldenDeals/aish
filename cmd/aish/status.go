@@ -45,34 +45,6 @@ func statusCmd(cfg config.Config) int {
 	row := func(k, v string) { fmt.Printf("  \x1b[2m%-16s\x1b[0m %s\n", k, v) }
 	head := func(s string) { fmt.Printf("\x1b[1m%s\x1b[0m\n", s) }
 
-	head("context")
-	ctx := session.Short(st.Tokens) + " tokens"
-	if info.Window > 0 {
-		ctx = fmt.Sprintf("%s / %s (%d%%)", session.Short(st.Tokens), session.Short(info.Window), st.Tokens*100/info.Window)
-	}
-	if !st.Measured && st.Tokens > 0 {
-		ctx += ", estimated"
-	}
-	row("used", ctx)
-	// The window the agent takes, as Proxy.prepare does.
-	agentWindow := cfg.ContextWindow
-	if agentWindow <= 0 {
-		agentWindow = info.Window
-	}
-	row("compact_at", compactAt(cfg.CompactAt, agentWindow))
-	row("entries", fmt.Sprintf("%d commands, %d requests since the last compact", st.Commands, st.Requests))
-	row("session", fmt.Sprintf("%d tool calls, %d compacts, %s in (%s cached) / %s out tokens spent",
-		st.ToolCalls, st.Compacts, session.Short(st.InputTokens), session.Short(st.CachedTokens), session.Short(st.OutputTokens)))
-	dir := info.Dir
-	if dir == "" { // a proxy started by an older aish
-		dir = cfg.SessionsDir
-	}
-	journal := filepath.Join(dir, info.SessionID+".jsonl")
-	if !info.Saved {
-		journal = "not saved (aish clear save, aish new)"
-	}
-	row("journal", journal)
-
 	head("model")
 	if len(cfg.Profiles) > 0 || info.Profile != "" {
 		prof := profileName(info.Profile)

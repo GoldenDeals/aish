@@ -1,8 +1,10 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +86,32 @@ func TestTokens(t *testing.T) {
 	}
 	if c := Current(es); len(c) != 1 || c[0].Kind != KindSummary {
 		t.Errorf("current %+v", c)
+	}
+}
+
+func TestEntryBytes(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		e    Entry
+		want int
+	}{
+		// Shell output counts as far as the model is sent it.
+		{"long output", Entry{Kind: KindShell, Cmd: "cat big", Output: strings.Repeat("x", 5000)}, 7 + 1000 + 40},
+		// A full-screen program's output is a screen, not truncated.
+		{"tui", Entry{Kind: KindShell, Cmd: "top", Output: strings.Repeat("x", 5000), TUI: true}, 3 + 5000 + 40},
+		{"assistant", Entry{Kind: KindAssistant, Text: "let me look", ToolCalls: []ToolCall{
+			{ID: "1", Name: "bash", Args: json.RawMessage(`{"command":"ls"}`)},
+			{ID: "2", Name: "read_file", Args: json.RawMessage(`{"path":"a"}`)},
+		}}, 11 + 40 + 16 + 12},
+		// A tool's result is not shell output: whole.
+		{"tool result", Entry{Kind: KindToolResult, Output: strings.Repeat("x", 5000)}, 5000 + 40},
+	} {
+		if got := EntryBytes(c.e, 1000); got != c.want {
+			t.Errorf("%s: %d bytes, want %d", c.name, got, c.want)
+		}
+	}
+	if got := EntryBytes(Entry{Kind: KindShell, Output: strings.Repeat("x", 5000)}, 0); got != 5040 {
+		t.Errorf("without max_output: %d bytes", got)
 	}
 }
 

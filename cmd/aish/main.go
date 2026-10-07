@@ -19,7 +19,8 @@
 //	aish clear [save [NAME]]     start a new session; the current one is dropped unless saved
 //	aish new [NAME]              start a new session that is saved
 //	aish compact [FOCUS]         replace the session with a summary
-//	aish status                  the context, the model and the settings
+//	aish status                  the model and the settings
+//	aish context [--full]        how full the context is and with what; --full: the messages too
 //	aish model [PROFILE] [NAME] [EFFORT]
 //	                             list the models, switch this shell's profile, model or effort
 //	aish apply-config            put the config files as they are now in force for this shell
@@ -74,7 +75,10 @@ var usage = `usage:
                              saved, as NAME if given
   aish new [NAME]            start a new session that is saved, as NAME if given
   aish compact [FOCUS]       replace the session with its summary (FOCUS: what to keep)
-  aish status                show the context size, the model and the settings
+  aish status                show the model and the settings
+  aish context [--full]      show the context size and what fills it, by kind of
+                             entry and by tool; --full also prints the messages
+                             the model gets, as JSONL on stdout
   aish model [PROFILE] [NAME] [EFFORT]
                              list the profiles and the models, or switch the
                              profile of config.toml, the model and/or the
@@ -138,6 +142,8 @@ func run(args []string) int {
 		return compactCmd(args[1:])
 	case "status":
 		return statusCmd(cfg)
+	case "context":
+		return contextCmd(cfg, args[1:])
 	case "model":
 		return modelCmd(cfg, args[1:])
 	case "resume":

@@ -299,16 +299,24 @@ func Tokens(es []Entry, maxOutput int) int {
 	}
 	bytes := 0
 	for _, e := range es[from:] {
-		out := len(e.Output)
-		if e.Kind == KindShell && maxOutput > 0 && !e.TUI {
-			out = min(out, maxOutput)
-		}
-		bytes += len(e.Cmd) + len(e.Text) + out + 40
-		for _, c := range e.ToolCalls {
-			bytes += len(c.Args)
-		}
+		bytes += EntryBytes(e, maxOutput)
 	}
 	return n + bytes/4
+}
+
+// EntryBytes is what Tokens counts for e: its command, text and output,
+// shell output up to maxOutput bytes, the arguments of its tool calls, and
+// a little for the wrapping.
+func EntryBytes(e Entry, maxOutput int) int {
+	out := len(e.Output)
+	if e.Kind == KindShell && maxOutput > 0 && !e.TUI {
+		out = min(out, maxOutput)
+	}
+	n := len(e.Cmd) + len(e.Text) + out + 40
+	for _, c := range e.ToolCalls {
+		n += len(c.Args)
+	}
+	return n
 }
 
 func modTime(p string) time.Time {
