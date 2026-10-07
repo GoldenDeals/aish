@@ -10,7 +10,8 @@ import (
 // git runs GIT_SSH_COMMAND for ssh and PAGER for its output, git commit and
 // crontab -e run EDITOR, sudo -A runs SUDO_ASKPASS, kubectl edit and diff
 // KUBE_EDITOR and KUBECTL_EXTERNAL_DIFF, podman compose the program of
-// PODMAN_COMPOSE_PROVIDER with its words. A static value of theirs is
+// PODMAN_COMPOSE_PROVIDER with its words; so are those of dbxVars, whose
+// values distrobox runs or evals. A static value of theirs is
 // parsed as the code of bash -c is; one made at run time is computed.
 var commandVars = map[string]bool{
 	"BROWSER": true, "EDITOR": true, "FCEDIT": true, "GIT_ASKPASS": true, "GIT_EDITOR": true,
@@ -31,18 +32,27 @@ var commandVars = map[string]bool{
 // its directories (DOCKER_CONFIG), the files of compose, which hold the
 // commands of its services (COMPOSE_FILE, and COMPOSE_ENV_FILES, which may
 // name others), the arguments of rg, whose --pre runs a program
-// (RIPGREP_CONFIG_PATH), and the config of screen, whose shell and exec
-// run (SCREENRC). The code is in files, or in git's
+// (RIPGREP_CONFIG_PATH), the config of screen, whose shell and exec
+// run (SCREENRC), those of podman and its kin, which run the runtime,
+// conmon, hooks and mount program they name (CONTAINERS_CONF,
+// CONTAINERS_CONF_OVERRIDE, CONTAINERS_STORAGE_CONF), and their helpers from
+// CONTAINERS_HELPER_BINARY_DIR, that of nerdctl, which runs the CNI plugins
+// of its cni_path (NERDCTL_TOML), as the options --cni-path and
+// --cni-netconfpath do (CNI_PATH, NETCONFPATH), and the directory of the
+// configs of git, podman and distrobox, which sources its own as shell
+// code (XDG_CONFIG_HOME). The code is in files, or in git's
 // syntax: whatever the value, they are rebind. So are GIT_CONFIG_KEY_n and
 // GIT_CONFIG_VALUE_n (see loads).
 var loaderVars = map[string]bool{
-	"COMPOSE_ENV_FILES": true, "COMPOSE_FILE": true,
+	"CNI_PATH": true, "COMPOSE_ENV_FILES": true, "COMPOSE_FILE": true, "CONTAINERS_CONF": true, "CONTAINERS_CONF_OVERRIDE": true,
+	"CONTAINERS_HELPER_BINARY_DIR": true, "CONTAINERS_STORAGE_CONF": true,
 	"DOCKER_CONFIG": true, "GCONV_PATH": true, "GIT_CONFIG_COUNT": true, "GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_PARAMETERS": true,
 	"GIT_CONFIG_SYSTEM": true, "GIT_EXEC_PATH": true, "GIT_TEMPLATE_DIR": true, "INPUTRC": true, "KUBECONFIG": true, "KUBERC": true,
-	"LD_AUDIT": true, "LD_LIBRARY_PATH": true, "LD_PRELOAD": true, "NODE_OPTIONS": true, "NODE_PATH": true,
+	"LD_AUDIT": true, "LD_LIBRARY_PATH": true, "LD_PRELOAD": true, "NERDCTL_TOML": true, "NETCONFPATH": true,
+	"NODE_OPTIONS": true, "NODE_PATH": true,
 	"PERL5DB": true, "PERL5LIB": true, "PERL5OPT": true, "PERLLIB": true, "PYTHONHOME": true,
 	"PYTHONPATH": true, "PYTHONSTARTUP": true, "RIPGREP_CONFIG_PATH": true, "RUBYLIB": true, "RUBYOPT": true,
-	"SCREENRC": true, "TEXTDOMAIN": true, "TEXTDOMAINDIR": true,
+	"SCREENRC": true, "TEXTDOMAIN": true, "TEXTDOMAINDIR": true, "XDG_CONFIG_HOME": true,
 }
 
 // loads tells whether the variable name has programs load code: see
@@ -133,6 +143,9 @@ func (p *parser) assignedText(name, value string) {
 // of commandVars: BROWSER is a list of commands split at colons, LESSOPEN
 // starts with the | of a pipe and the - of a command that reads stdin too.
 func varCode(name, value string) []string {
+	if code, ok := dbxCode(name, value); ok {
+		return code
+	}
 	switch name {
 	case "BROWSER":
 		return strings.Split(value, ":")

@@ -649,8 +649,8 @@ forbid(principal, action == Action::"run", resource == Command::"sudo");
 `machinectl shell` и `distrobox enter` запускают shell на stdin. Так же `nerdctl`, `exec` и `run` у `docker compose`,
 `docker-compose`, `podman compose` и `nerdctl compose`, `kubectl`/`oc` `run` и `debug`, `oc rsh`, `distrobox ephemeral`
 (и строка `distrobox-create`, которую он собирает из своих слов и исполняет `eval`), хуки `distrobox create`
-(`--init-hooks`, `--pre-init-hooks`) и строка менеджера контейнеров, которую он собирает из своих опций и исполняет
-`eval`; stdin контейнеру отдают `attach` и
+(`--init-hooks`, `--pre-init-hooks`) и строка менеджера контейнеров, которую он собирает из своих опций и переменных
+`DBX_*` и исполняет `eval`; stdin контейнеру отдают `attach` и
 `start -i` у `docker`/`podman`/`nerdctl`, `kubectl attach -i`, `toolbox enter`, `compose run` без команды, `oc rsh` и
 `oc debug` без команды. Свой конфиг клиента — kubeconfig и kuberc пользователя (их `exec` и алиасы),
 `~/.docker/config.json`, файл compose (`compose.yaml`, `docker-compose.yml`…) и `.env` в каталоге запуска,
@@ -718,10 +718,12 @@ here-string), `prompt` — присваивание
 разбирается), `git --exec-path=`, опция `tmux set` с командой, `screen -X shell`/`defshell` и `blankerprg`,
 `depth` — вложенность глубже четырёх уровней. Пример спрашивает о любой
 пометке; отпустить `source` — `unless { context has dynamic && context.dynamic == ["source"] }`.
-Переменная, из которой программы берут команду (`GIT_SSH_COMMAND`, `PAGER`, `EDITOR`, `LESSOPEN`, `KUBE_EDITOR`…),
+Переменная, из которой программы берут команду (`GIT_SSH_COMMAND`, `PAGER`, `EDITOR`, `LESSOPEN`, `KUBE_EDITOR`…,
+а `DBX_CONTAINER_NAME`, `DBX_CONTAINER_IMAGE` и другие `DBX_*` с кодом — как их подставляет `distrobox create`),
 где бы строка её ни присвоила (`X=… cmd`, `export`, `env`, `sudo`, `for`, `${X:=…}`), разбирается как
 `bash -c`, из подстановок — `computed`; загрузчики (`LD_PRELOAD`, `PYTHONPATH`, `NODE_OPTIONS`,
-`GIT_CONFIG_*`, `KUBECONFIG`, `DOCKER_CONFIG`, `COMPOSE_FILE`, `RIPGREP_CONFIG_PATH`, `SCREENRC`…) и чужой конфиг
+`GIT_CONFIG_*`, `KUBECONFIG`, `DOCKER_CONFIG`, `COMPOSE_FILE`, `RIPGREP_CONFIG_PATH`, `SCREENRC`,
+`CONTAINERS_CONF` и другие конфиги podman, `NERDCTL_TOML` и `CNI_PATH` у nerdctl, `XDG_CONFIG_HOME`…) и чужой конфиг
 клиента (`--kubeconfig`, `--kuberc`, `docker --config`) —
 `rebind`, `bind -f` — `computed`. Функция из окружения — `BASH_FUNC_ИМЯ%%='() { …; }'`
 (и `BASH_FUNC_ИМЯ()`), из которой любой запущенный bash определит функцию `ИМЯ`, где бы строка её ни задала (`env`,

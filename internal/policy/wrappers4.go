@@ -619,7 +619,9 @@ func createCheck(p *parser, opts []option, args []string, static []bool, cmd int
 // platform, the volumes and the flags of -a bare, the name, the hostname,
 // the home, the pre-init hooks and the packages in double quotes and the
 // init hooks in single quotes; and the hooks, which the container evals as
-// it starts. A value made at run time may be any code in that line.
+// it starts. A value made at run time may be any code in that line. The
+// DBX_ variables it takes in place of options are parsed where the line
+// assigns them, as their code is in that line (see dbxVars).
 func createCode(p *parser, opts []option, static []bool) []string {
 	line := ":"
 	var code []string
