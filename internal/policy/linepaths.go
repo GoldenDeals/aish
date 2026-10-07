@@ -827,22 +827,20 @@ func spreadsOf(call *syntax.CallExpr, chain [][]string) []map[int]spread {
 // false when it makes w alone, and for a word of other expansions, as
 // "$d"/*: a policy cannot know it either way, and has it as spelled.
 func spreadOf(w *syntax.Word) (spread, bool) {
-	globbed := false
 	for _, part := range w.Parts {
-		switch part := part.(type) {
-		case *syntax.Lit:
-			globbed = globbed || expands(part.Value)
-		case *syntax.ExtGlob:
+		if _, ok := part.(*syntax.ExtGlob); ok {
 			return spread{opaque: true}, true
 		}
 	}
-	// Braces may have quoted text between them, {'/etc',x}, and a } bash
-	// does not end them at (see braceExpansion).
-	braced, odd := braceExpansion(unquoted(w))
+	// Braces and brackets may have quoted text between them, {'/etc',x}
+	// and pass['w']d, and braces a } bash does not end them at (see
+	// braceExpansion).
+	s := unquoted(w)
+	braced, odd := braceExpansion(s)
 	if odd {
 		return spread{opaque: true}, true
 	}
-	if !globbed && !braced {
+	if !braced && !expands(s) {
 		return spread{}, false
 	}
 	b := &syntax.Word{Parts: slices.Clone(w.Parts)}
@@ -906,11 +904,12 @@ func patternOf(w *syntax.Word) (string, bool) {
 }
 
 // quotedPattern escapes text the shell took in quotes for a pattern: its
-// glob characters, and ~ and $, which would make a prefix of it.
+// glob characters, ~ and $, which would make a prefix of it, and !, ^ and
+// -, which in a bracket expression, pass['!w']d, bash takes as themselves.
 func quotedPattern(s string) string {
 	var b strings.Builder
 	for _, r := range s {
-		if strings.ContainsRune(`*?[]\~$`, r) {
+		if strings.ContainsRune(`*?[]\~$!^-`, r) {
 			b.WriteByte('\\')
 		}
 		b.WriteRune(r)
