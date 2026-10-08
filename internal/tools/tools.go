@@ -216,6 +216,11 @@ type Exec struct {
 	// Shell names the shell the commands handed off run in, "bash" or
 	// "zsh": the policy reads them as it does. "" is bash.
 	Shell string
+	// GlobalAliases are the names of the global aliases (alias -g) of a
+	// zsh the commands handed off run in, as its last prompt had them; nil
+	// when not known. zsh puts their values in place of a word of a line,
+	// which the policy marks (see policy.Input.GlobalAliases).
+	GlobalAliases []string
 }
 
 // Getenv is the value of name in Env, or in the process's environment when

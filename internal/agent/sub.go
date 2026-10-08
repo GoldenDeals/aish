@@ -370,8 +370,8 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
 	ex := s.ex
 	if ex.Shell != "" && ex.Shell != "bash" {
 		// Its commands run in a bash of their own (runCommand), not in the
-		// user's shell, whose options are no bash's.
-		ex.Shell, ex.Opts = "bash", nil
+		// user's shell, whose options and aliases are no bash's.
+		ex.Shell, ex.Opts, ex.GlobalAliases = "bash", nil, nil
 	}
 	err := child.Start(ctx, s.prompt, ex)
 	for err == nil {

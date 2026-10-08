@@ -164,6 +164,7 @@ func (a *Agent) preTool(ctx context.Context, t tools.Tool, c session.ToolCall, i
 		}
 		if r.Reply.Args != nil {
 			cur = policy.NewInputIn(a.exec.Shell, in.Tool, r.Reply.Args, a.exec.Dir, a.exec.Env, a.exec.Opts...)
+			cur.GlobalAliases(a.exec.GlobalAliases)
 			if ho, ok := t.(tools.HandsOff); ok {
 				if line, ok := ho.Command(r.Reply.Args); ok {
 					cur.HandOff(line)

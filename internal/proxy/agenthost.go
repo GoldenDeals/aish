@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync"
 
 	"github.com/GoldenDeals/aish/internal/agent"
@@ -209,18 +210,35 @@ func (p *Proxy) compact(ctx context.Context, ap rpc.AgentParams) error {
 
 func execOf(ap rpc.AgentParams) tools.Exec { return tools.Exec{Dir: ap.Cwd, Env: ap.Env} }
 
-// shellExec is execOf with the shell's name and the options it had on at
-// its last prompt, as saveState read them: the policy reads the agent's
-// commands as that shell does, in the modes it runs them in, set -k from
-// ~/.bashrc included. A command of the request that turns one on is ahead
-// of them until the next prompt; the policy marks such a line itself.
+// shellExec is execOf with the shell's name and the options and global
+// aliases it had at its last prompt, as saveState read them: the policy
+// reads the agent's commands as that shell does, in the modes it runs them
+// in, set -k from ~/.bashrc included. A command of the request that turns
+// one on is ahead of them until the next prompt; the policy marks such a
+// line itself.
 func (p *Proxy) shellExec(ap rpc.AgentParams) tools.Exec {
 	ex := execOf(ap)
 	ex.Shell = p.shell.Name()
 	p.mu.Lock()
-	ex.Opts = p.shellOpts()
+	ex.Opts, ex.GlobalAliases = p.shellOpts(), p.globalAliases()
 	p.mu.Unlock()
 	return ex
+}
+
+// globalAliases are the names of the global aliases (alias -g) the shell
+// had at its last prompt, which the state of a zsh names "-g NAME"; nil
+// before the first. Called under p.mu.
+func (s *shellState) globalAliases() []string {
+	if s.cur == nil {
+		return nil
+	}
+	var names []string
+	for key := range s.cur.Aliases {
+		if name, ok := strings.CutPrefix(key, "-g "); ok {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // cancelRequest stops the request in progress, if any, and those waiting

@@ -451,6 +451,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	}
 
 	in := policy.NewInputIn(a.exec.Shell, t.Name(), args, a.exec.Dir, a.exec.Env, a.exec.Opts...)
+	in.GlobalAliases(a.exec.GlobalAliases)
 	if h, ok := t.(tools.HandsOff); ok {
 		if line, ok := h.Command(args); ok {
 			in.HandOff(line)

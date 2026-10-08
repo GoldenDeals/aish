@@ -821,6 +821,12 @@ zsh — тот же режим, что `cdable_vars`; `set -k` у zsh нет, а
 (`zsh5`, `zsh-5.9` — тоже zsh), `su -s /bin/zsh -c`, а если `$SHELL` — zsh, то и код, который через него запускают
 `sudo -s`/`-i`, `su`, `script`, `flock -c`, `tmux`, `screen`, `ssh -o ProxyCommand=`, — с опциями такого zsh,
 считающимися включёнными (его rc-файлы политика не читает); присваивание `SHELL` и `ZDOTDIR` — `rebind`.
+Код `-c` и stdin `ksh`, `mksh`, `pdksh`, `oksh`, `yash`, `ash`, `posh` и bash с версией в имени (`ksh93`, `mksh-R59`,
+`bash5.2`) разбирается как bash (их опция, которой нет в общем наборе, — `computed`); язык `fish`, `tcsh`/`csh`, `rc`,
+`es`, `xonsh`, `elvish`, `nu`, `pwsh` политика не знает — их код `computed` и всё равно разбирается как bash
+(`fish -c 'rm -rf x'` попадает под `rm *`); `su`, `runuser`, `sudo -i` и `run0` исполняют код login shell'ом целевого
+пользователя из `/etc/passwd` (вдобавок к `$SHELL`; пользователя там нет — `computed`); при `shell = "zsh"` слово
+строки, совпадающее с именем глобального алиаса (`alias -g` с последнего приглашения), — `computed`.
 `paths` — операнды,
 похожие на пути, уже абсолютные и с раскрытыми симлинками: `rm -rf ~/`, `rm -rf "$HOME"` и
 `rm -rf /home/me/../me/` дают один и тот же `context.home`, и правило одно; `$PWD` раскрывается в

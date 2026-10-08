@@ -39,11 +39,13 @@ func NewInputIn(shell, tool string, args map[string]any, cwd string, env []strin
 }
 
 // zshShell is the zsh a line is handed to: its options on, by zsh's names
-// (cdablevars, extendedglob), nil when not known, and what of its
-// environment says where a name it takes for a directory is.
+// (cdablevars, extendedglob), nil when not known, what of its environment
+// says where a name it takes for a directory is, and the names of its
+// global aliases, as far as they are known (see Input.GlobalAliases).
 type zshShell struct {
 	opts                    []string
 	pwd, home, cdpath, path string
+	aliases                 []string
 }
 
 // on tells whether the shell may have option name on: it does, or its
@@ -138,6 +140,9 @@ func (z *zshShell) misreads(src string) string {
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
 	if err != nil {
 		// zsh's own syntax: always { }, foreach, ${(e)x}, =(cmd), x &|.
+		return dynComputed
+	}
+	if z.aliased(f) {
 		return dynComputed
 	}
 	kind := ""
@@ -531,23 +536,25 @@ func (z *zshShell) maybeDir(name string) bool {
 }
 
 // A line the shell runs as bash may hand code to a zsh all the same: one
-// it starts by name (zsh -c, the stdin of zsh, su -s /bin/zsh -c) or the
+// it starts by name (zsh -c, the stdin of zsh, su -s /bin/zsh -c), the
 // shell of SHELL when that names a zsh, which sudo -s, su, script, flock
-// -c, the windows of tmux and screen and the like run their code with.
+// -c, the windows of tmux and screen and the like run their code with,
+// or the login shell of the user su, sudo -i and run0 run it as (ranAs).
 // That code, and the code it hands on in turn, is read as a zsh may read
 // it too, as a line of a zsh the shell is: the parser keeps its text and
 // parses it with the misreads of a zsh whose options, those of its rc
 // files, are not known (see zshShell.on). A zsh started so by a zsh the
 // shell is has the options of its rc files too, not those of the shell.
-// SHELL unset or naming another shell is taken for bash, as before.
+// SHELL unset or naming another shell is taken for bash, as before, but
+// for a shell of another language (see shellKind).
 
 // zshes are the zshes a line starts.
 type zshes struct {
 	// child is a zsh the line starts, in the shell's directory and with
 	// its HOME, CDPATH and PATH.
 	child zshShell
-	// login tells that SHELL names a zsh.
-	login bool
+	// login is SHELL.
+	login string
 	// code holds the code they run, by its text.
 	code map[string]bool
 }
@@ -555,7 +562,7 @@ type zshes struct {
 func newZshes(sh shell) zshes {
 	return zshes{
 		child: zshShell{pwd: sh.pwd, home: sh.home, cdpath: sh.cdpath, path: sh.path},
-		login: isZsh(sh.login),
+		login: sh.login,
 	}
 }
 
@@ -576,10 +583,16 @@ func (p *parser) zshFor(src string, cur *zshShell) *zshShell {
 }
 
 // ranBy returns code, which the shell prog runs: of a zsh, it is read as
-// one the line starts reads it.
+// one the line starts reads it; of a shell of another language (see
+// shellKind) it is computed.
 func (p *parser) ranBy(prog string, code ...string) []string {
-	if isZsh(prog) {
+	switch shellKind(prog) {
+	case zshKind:
 		p.zshRuns(code)
+	case foreignShell:
+		if len(code) > 0 {
+			p.mark(dynComputed)
+		}
 	}
 	return code
 }
@@ -587,10 +600,7 @@ func (p *parser) ranBy(prog string, code ...string) []string {
 // ranByLogin returns code, which the shell of SHELL runs, read as ranBy
 // reads it.
 func (p *parser) ranByLogin(code ...string) []string {
-	if p.zshes.login {
-		p.zshRuns(code)
-	}
-	return code
+	return p.ranBy(p.zshes.login, code...)
 }
 
 func (p *parser) zshRuns(code []string) {
@@ -605,16 +615,17 @@ func (p *parser) zshRuns(code []string) {
 // startedBy returns code, which the command name of strung or logins runs
 // with a shell of its own, read as ranBy reads it: su and runuser run it
 // with the shell of -s, else with the login shell of the user they run
-// it as, which the policy takes for SHELL; flock -c, script, sg and
-// newgrp with SHELL too; watch with sh.
-func (p *parser) startedBy(name string, args []string, code ...string) []string {
+// it as (see ranAs); flock -c, script, sg and newgrp with SHELL; watch
+// with sh. args are the words after name, static tells which of them are.
+func (p *parser) startedBy(name string, args []string, static []bool, code ...string) []string {
 	switch name {
 	case "su", "runuser":
 		opts, _ := suOpts.read(args)
 		if sh := values(opts, "s", "shell"); len(sh) > 0 {
 			return p.ranBy(sh[len(sh)-1].text, code...)
 		}
-		return p.ranByLogin(code...)
+		user, known := suUser(args, static)
+		return p.ranAs(user, known, code...)
 	case "flock", "script", "sg", "newgrp":
 		return p.ranByLogin(code...)
 	}

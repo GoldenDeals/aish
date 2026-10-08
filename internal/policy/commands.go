@@ -389,10 +389,10 @@ func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect
 			p.mark(dynComputed)
 		}
 	case wrappers[name].hands():
-		return p.wrapped(wrappers[name], args, st, redirs)
+		return p.wrapped(name, wrappers[name], args, st, redirs)
 	case logins[name] != nil:
 		if logins[name](args) {
-			return p.startedBy(name, args, p.stdin(redirs)...)
+			return p.startedBy(name, args, st, p.stdin(redirs)...)
 		}
 	case name == "alias":
 		var code []string
@@ -639,8 +639,9 @@ func (p *parser) unwrap(w wrapper, argv []string, static, split []bool) (int, []
 // options (check), and the shell of sudo -s, -i and doas -s, which gets
 // those words for its -c as escaped puts them (or joined, run0 -i) and,
 // with none of them, reads its commands from stdin, as the shell of a
-// bare wrapper with no command does.
-func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*syntax.Redirect) []string {
+// bare wrapper with no command does. name is the wrapper's: the shell of
+// sudo -i and run0 is the login shell of the user (see loginOf).
+func (p *parser) wrapped(name string, w wrapper, args []string, static []bool, redirs []*syntax.Redirect) []string {
 	opts, cmd := w.read(args)
 	for i, a := range args[:cmd] {
 		switch name, value, ok := strings.Cut(a, "="); {
@@ -657,20 +658,24 @@ func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*synt
 	}
 	shell := has(opts, w.shell...)
 	bare := w.bare && (w.attach == nil || has(opts, w.attach...))
+	run := p.ranByLogin
+	if user, known, ok := loginOf(name, opts, static); ok {
+		run = func(code ...string) []string { return p.ranAs(user, known, code...) }
+	}
 	switch {
 	case has(opts, w.none...), !shell && (!bare || cmd < len(args)):
 		return code
 	case cmd == len(args):
-		return append(code, p.ranByLogin(p.stdin(redirs)...)...)
+		return append(code, run(p.stdin(redirs)...)...)
 	case w.joins && slices.Contains(static[cmd:], false), !w.joins && !static[cmd]:
 		// Joined, a word made at run time may be any code; escaped, the
 		// other words are its arguments whatever they hold.
 		p.mark(dynComputed)
 		return code
 	case w.joins:
-		return append(code, p.ranByLogin(strings.Join(args[cmd:], " "))...)
+		return append(code, run(strings.Join(args[cmd:], " "))...)
 	}
-	return append(code, p.ranByLogin(escaped(args[cmd:]))...)
+	return append(code, run(escaped(args[cmd:]))...)
 }
 
 // escaped joins words with spaces as sudo and sudo-rs do for the -c of the
@@ -706,12 +711,10 @@ func has(opts []option, names ...string) bool {
 	return slices.ContainsFunc(opts, func(o option) bool { return slices.Contains(names, o.name) })
 }
 
-// shells take their commands from -c, a file or stdin.
-var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true}
-
-// isShell tells whether prog is one of shells, or a zsh by another name
-// (see isZsh).
-func isShell(prog string) bool { return shells[filepath.Base(prog)] || isZsh(prog) }
+// isShell tells whether prog is a shell, which takes its commands from
+// -c, a file or stdin: one of shellNames, by a versioned name too, or a
+// zsh by another name (see shellKind).
+func isShell(prog string) bool { return shellKind(prog) != notShell }
 
 // shellC returns the scripts of `bash -c SCRIPT`, `sh -c`, … wherever a
 // shell is in argv: behind sudo or env, and as an argument of find -exec
@@ -721,10 +724,14 @@ func isShell(prog string) bool { return shells[filepath.Base(prog)] || isZsh(pro
 func (p *parser) shellC(argv []string, static []bool) []string {
 	var code []string
 	for i, a := range argv {
-		if !isShell(a) {
+		kind := shellKind(a)
+		if !shellWord(kind, a, i == 0) {
 			continue
 		}
 		p.started(argv[i+1:], static[i+1:])
+		if strangeOpts(kind, argv[i+1:], static[i+1:]) {
+			p.mark(dynComputed)
+		}
 		script, _, _ := shellArgs(argv[i+1:])
 		switch j := i + 1 + script; {
 		case script < 0:
@@ -834,7 +841,7 @@ func (p *parser) handed(argv []string, static []bool, redirs []*syntax.Redirect)
 			case s.remote:
 				there = append(there, pc.text)
 			default:
-				here = append(here, p.startedBy(filepath.Base(a), argv[i+1:], pc.text)...)
+				here = append(here, p.startedBy(filepath.Base(a), argv[i+1:], st, pc.text)...)
 			}
 		}
 		if i == 0 && s.remote && known {
