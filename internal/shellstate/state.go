@@ -1,9 +1,10 @@
 // Package shellstate is what a session keeps of the shell itself: variables,
 // functions, aliases, options and the working directory. The integration
-// script of the shell (init.bash) dumps them at every prompt; a session
-// saves only what changed since the shell started, and resuming it replays
-// that change in another shell of the same kind as a script the shell
-// sources at its next prompt.
+// script of the shell (init.bash, init.zsh) dumps them at every prompt; a
+// session saves only what changed since the shell started, and resuming it
+// replays that change in another shell of the same kind as a script the
+// shell sources at its next prompt. Each kind has a dump and a script of
+// its own: Parse and bash's here, ParseZsh and zsh's in zsh.go.
 package shellstate
 
 import (
@@ -19,9 +20,9 @@ import (
 // value means the name is gone. The values are code of the shell's kind.
 type State struct {
 	// Kind is the shell the state is of: "" for bash, as every state saved
-	// before there was another.
+	// before there was another, or Zsh.
 	Kind    string            `json:"kind,omitempty"`
-	Vars    map[string]string `json:"vars,omitempty"`    // name → its `declare -p` line
+	Vars    map[string]string `json:"vars,omitempty"`    // name → its `declare -p` line; zsh's: see Zsh
 	Funcs   map[string]string `json:"funcs,omitempty"`   // name → its `declare -f` text
 	Aliases map[string]string `json:"aliases,omitempty"` // name → value
 	Opts    map[string]string `json:"opts,omitempty"`    // name → `set -o x`, `shopt -s x`, `setopt x`...
@@ -227,9 +228,13 @@ func apply(base, d map[string]string) map[string]string {
 	return m
 }
 
-// Script is bash that makes the change d in the shell that sources it. It
-// is sourced from a function, so variables are declared global.
+// Script is code of d's kind that makes the change d in the shell that
+// sources it, bash's here. It is sourced from a function, so variables are
+// declared global.
 func Script(d State) string {
+	if d.Kind == Zsh {
+		return zshScript(d)
+	}
 	var b strings.Builder
 	// Aliases expand while a script is read: a function body that uses one
 	// would get it expanded a second time. Under set -k the NAME=VALUE of

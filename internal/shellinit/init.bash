@@ -17,6 +17,10 @@
 # The agent itself runs in the proxy: `aish agent start|resume` only carry
 # the request there and wait. The proxy folds long agent output; Ctrl+O
 # (handled by the proxy) shows it.
+#
+# These markers, the files of $AISH_RUN (nonce, route, next.cmd, next.id,
+# state.base, state, restore.bash) and the calls of `aish agent` are the
+# contract between the proxy and any shell: init.zsh keeps it too.
 
 [[ $- == *i* ]] || return 0
 [[ -n ${__aish_loaded-} ]] && return 0

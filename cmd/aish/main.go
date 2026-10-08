@@ -1,6 +1,6 @@
-// Command aish runs your bash with an LLM agent built in.
+// Command aish runs your shell, bash or zsh, with an LLM agent built in.
 //
-//	aish [--resume]              start bash under aish (a new or the latest session)
+//	aish [--resume]              start the shell under aish (a new or the latest session)
 //	aish resume [ID|NAME]        bring a session back, shell state included; pick one or rename
 //	aish mcp                     the MCP servers and how they are doing
 //	aish skills                  the skills that apply here and their problems
@@ -10,7 +10,7 @@
 //	aish policy [--agent NAME] [TOOL ARGS...]
 //	                             check the policies, or ask them about one call (of subagent NAME)
 //	aish trust [--revoke|--list] let the .aish.toml here run the repository's hooks and tools
-//	aish init bash               print the bash integration script
+//	aish init bash|zsh           print the integration script of bash or zsh
 //	aish tool [NAME ARGS...]     list tools or run one
 //	aish session show            print the current session
 //	aish session rm ID|NAME...   remove saved sessions
@@ -49,7 +49,7 @@ import (
 )
 
 var usage = `usage:
-  aish [--resume]            start bash with aish (--resume continues the latest session)
+  aish [--resume]            start the shell with aish (--resume: the latest session)
   aish resume [ID|NAME]      continue a session: its history, env, functions, aliases
                              and cwd; without an argument choose one (r renames it)
   aish mcp                   show the MCP servers: state, tools, errors
@@ -64,7 +64,7 @@ var usage = `usage:
   aish trust [--revoke|--list]
                              let the .aish.toml here run hooks and tools from the
                              repository, as it is now; or take that back; or list
-  aish init bash             print the bash integration script
+  aish init bash|zsh         print the integration script of bash or zsh
   aish tool [NAME ARGS...]   list tools, or run one
   aish session show          print the current session
   aish session rm ID|NAME... remove saved sessions, not the one of this shell
@@ -89,7 +89,7 @@ var usage = `usage:
   aish expand                print outputs folded during the last request (Ctrl+O)
 
 In the shell: commands run as usual; text that is not a command goes to the
-assistant. Prefix with ? to force the assistant, with ! to force bash.
+assistant. Prefix with ? to force the assistant, with ! to force the shell.
 `
 
 func main() {
@@ -130,10 +130,14 @@ func run(args []string) int {
 	}
 	switch args[0] {
 	case "init":
-		if len(args) < 2 || args[1] != "bash" {
-			return fail(errors.New("usage: aish init bash"))
+		switch {
+		case len(args) == 2 && args[1] == "bash":
+			fmt.Print(shellinit.Bash)
+		case len(args) == 2 && args[1] == "zsh":
+			fmt.Print(shellinit.Zsh)
+		default:
+			return fail(errors.New("usage: aish init bash|zsh"))
 		}
-		fmt.Print(shellinit.Bash)
 		return 0
 	case "agent":
 		return agentCmd(args[1:])

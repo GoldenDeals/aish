@@ -92,7 +92,7 @@ func resumeCmd(conf *config.Snapshot, cfg config.Config, args []string) int {
 	return startShell(conf, cfg, sess, true)
 }
 
-// startShell runs bash under aish with sess, brought back as it was left
+// startShell runs the shell under aish with sess, brought back as it was left
 // if resume. conf is the config files cfg is of: the proxy goes by them.
 func startShell(conf *config.Snapshot, cfg config.Config, sess *session.Session, resume bool) int {
 	p := proxy.New(sess)

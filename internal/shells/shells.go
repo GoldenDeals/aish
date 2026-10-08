@@ -18,7 +18,7 @@ import (
 // Shell is one kind of shell.
 type Shell interface {
 	// Name is what the config, the system prompt and the policy call the
-	// shell: "bash".
+	// shell: "bash" or "zsh".
 	Name() string
 	// Files are what the shell reads as it starts, by their path in
 	// $AISH_RUN.
@@ -36,11 +36,16 @@ type Shell interface {
 }
 
 // For is the shell configured, shell in config.toml: a name or a path of
-// a bash, or "" for the bash of SHELL or of PATH. A name of another shell
-// is an error.
+// a zsh (its file named zsh, zsh5, zsh-5.9...), of a bash, or "" for the
+// bash of SHELL or of PATH. A shell aish has no integration for is an
+// error; any other name a bash, as before there was another.
 func For(configured string) (Shell, error) {
-	if base := filepath.Base(configured); strings.HasPrefix(base, "fish") {
-		return nil, fmt.Errorf("shell in config: %s is not supported, only bash", configured)
+	switch base := filepath.Base(configured); {
+	case configured == "":
+	case strings.HasPrefix(base, "zsh"):
+		return Zsh{Path: configured}, nil
+	case strings.HasPrefix(base, "fish"):
+		return nil, fmt.Errorf("shell in config: %s is not supported, only bash and zsh", configured)
 	}
 	return Bash{Path: configured}, nil
 }

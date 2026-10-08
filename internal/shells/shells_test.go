@@ -15,6 +15,9 @@ func TestFor(t *testing.T) {
 		{"", "bash"},
 		{"bash", "bash"},
 		{"/opt/bash/bin/bash", "bash"},
+		{"zsh", "zsh"},
+		{"/usr/local/bin/zsh-5.9", "zsh"},
+		{"mybash", "bash"}, // any other name, as before there was zsh
 	} {
 		sh, err := For(tc.configured)
 		if err != nil || sh.Name() != tc.want {
@@ -34,9 +37,39 @@ func TestFor(t *testing.T) {
 // TestRestoreOtherKind: the state of another shell is code this one does
 // not read; only its directory comes back.
 func TestRestoreOtherKind(t *testing.T) {
-	d := shellstate.State{Kind: "other", Vars: map[string]string{"X": "X=1"}, Cwd: "/srv"}
-	got := Bash{}.RestoreScript(d)
-	if strings.Contains(got, "X=1") || !strings.Contains(got, "/srv") {
-		t.Errorf("script:\n%s", got)
+	bash := shellstate.State{Vars: map[string]string{"X": `declare -- X="1"`}, Cwd: "/srv"}
+	zsh := shellstate.State{Kind: shellstate.Zsh, Vars: map[string]string{"X": "typeset -g X=1"}, Cwd: "/srv"}
+	for name, got := range map[string]string{"bash in zsh": Zsh{}.RestoreScript(bash), "zsh in bash": Bash{}.RestoreScript(zsh)} {
+		if strings.Contains(got, "X=") || !strings.Contains(got, "/srv") {
+			t.Errorf("%s:\n%s", name, got)
+		}
+	}
+	if got := (Zsh{}).RestoreScript(zsh); !strings.Contains(got, "typeset -g X=1") {
+		t.Errorf("zsh in zsh:\n%s", got)
+	}
+}
+
+// TestZshCommand: zsh starts with aish's ZDOTDIR, the user's in
+// AISH_ZDOTDIR for .zshenv there to put back, and only when there was one.
+func TestZshCommand(t *testing.T) {
+	sh := Zsh{Path: "/bin/sh"} // any program: Command does not run it
+	for _, tc := range []struct {
+		env  []string
+		want []string
+	}{
+		{[]string{"A=1", "ZDOTDIR=/home/u/.config/zsh"}, []string{"A=1", "AISH_ZDOTDIR=/home/u/.config/zsh", "ZDOTDIR=/run/a/zsh"}},
+		{[]string{"A=1", "AISH_ZDOTDIR=/stale"}, []string{"A=1", "ZDOTDIR=/run/a/zsh"}},
+	} {
+		cmd, err := sh.Command("/run/a", tc.env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(cmd.Env, " ") != strings.Join(tc.want, " ") || cmd.Args[len(cmd.Args)-1] != "-i" {
+			t.Errorf("%v: %v %v", tc.env, cmd.Args, cmd.Env)
+		}
+	}
+	files := Zsh{}.Files()
+	if files["zsh/.zshenv"] == "" || !strings.Contains(files["zsh/.zshrc"], "__aish_route") {
+		t.Errorf("files %v", files)
 	}
 }

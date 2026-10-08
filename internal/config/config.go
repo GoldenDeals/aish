@@ -105,8 +105,10 @@ type Config struct {
 	SessionsTTL string `toml:"sessions_ttl"`
 	// MCPConfig lists MCP servers (YAML).
 	MCPConfig string `toml:"mcp_config"`
-	// Shell is the bash to run. Empty: $SHELL if it is a bash, else the
-	// first bash in PATH.
+	// Shell is the shell to run, a name or a path: one whose file is named
+	// zsh (zsh, /usr/bin/zsh, zsh-5.9) is a zsh, fish is an error, any
+	// other a bash. Empty: $SHELL if it is a bash, else the first bash in
+	// PATH; a zsh only by name.
 	Shell string `toml:"shell"`
 	// Route decides which lines typed at the prompt are requests.
 	Route Route `toml:"route"`
