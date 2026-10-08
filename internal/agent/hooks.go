@@ -163,7 +163,7 @@ func (a *Agent) preTool(ctx context.Context, t tools.Tool, c session.ToolCall, i
 			return verdict{Decision: policy.Decision{Action: policy.Deny, Reason: fmt.Sprintf("hook failed: %v", r.Err)}, by: by, args: cur.Args}, nil
 		}
 		if r.Reply.Args != nil {
-			cur = policy.NewInput(in.Tool, r.Reply.Args, a.exec.Dir, a.exec.Env, a.exec.Opts...)
+			cur = policy.NewInputIn(a.exec.Shell, in.Tool, r.Reply.Args, a.exec.Dir, a.exec.Env, a.exec.Opts...)
 			if ho, ok := t.(tools.HandsOff); ok {
 				if line, ok := ho.Command(r.Reply.Args); ok {
 					cur.HandOff(line)

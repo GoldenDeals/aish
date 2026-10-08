@@ -209,9 +209,13 @@ type Exec struct {
 	Dir string
 	Env []string
 	// Opts are the options of set -o and shopt the shell has on, by name,
-	// as its last prompt had them; nil when not known. The policy reads
-	// the commands handed to the shell as it runs them in these.
+	// as its last prompt had them (zsh's by zsh's names); nil when not
+	// known. The policy reads the commands handed to the shell as it runs
+	// them in these.
 	Opts []string
+	// Shell names the shell the commands handed off run in, "bash" or
+	// "zsh": the policy reads them as it does. "" is bash.
+	Shell string
 }
 
 // Getenv is the value of name in Env, or in the process's environment when

@@ -420,7 +420,7 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 	if a.env == "" {
 		// From a.entries, not entries: Compact adds its prompt as a request
 		// and must send the system prompt the previous turns were cached with.
-		a.env = environment(requestCwd(a.entries, a.exec.Dir))
+		a.env = environment(requestCwd(a.entries, a.exec.Dir), a.exec.Shell)
 	}
 	if key := fmt.Sprint(a.Cfg.MaskDefaults, a.Cfg.Mask); a.mask == nil || key != a.maskKey {
 		m, err := NewMasker(a.Cfg.MaskDefaults, a.Cfg.Mask)
@@ -450,7 +450,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		return false, a.append(toolResult(c, err.Error(), true))
 	}
 
-	in := policy.NewInput(t.Name(), args, a.exec.Dir, a.exec.Env, a.exec.Opts...)
+	in := policy.NewInputIn(a.exec.Shell, t.Name(), args, a.exec.Dir, a.exec.Env, a.exec.Opts...)
 	if h, ok := t.(tools.HandsOff); ok {
 		if line, ok := h.Command(args); ok {
 			in.HandOff(line)

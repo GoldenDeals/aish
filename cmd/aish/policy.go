@@ -10,6 +10,7 @@ import (
 	"github.com/GoldenDeals/aish/internal/config"
 	"github.com/GoldenDeals/aish/internal/policy"
 	"github.com/GoldenDeals/aish/internal/rpc"
+	"github.com/GoldenDeals/aish/internal/shells"
 	"github.com/GoldenDeals/aish/internal/tools"
 )
 
@@ -87,7 +88,8 @@ func askPolicies(cfg config.Config, pp rpc.PolicyParams) (policy.Decision, error
 	if err != nil {
 		return policy.Decision{}, err
 	}
-	in := policy.NewInput(pp.Tool, pp.Args, pp.Cwd, pp.Env)
+	// The shell config.toml starts, with its options not known.
+	in := policy.NewInputIn(shells.Kind(cfg.Shell), pp.Tool, pp.Args, pp.Cwd, pp.Env)
 	if pp.HandOff {
 		in.HandOff(pp.Line)
 	}

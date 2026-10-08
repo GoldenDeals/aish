@@ -33,12 +33,13 @@ func system(env, extra string) string {
 	return b.String()
 }
 
-// environment describes the machine the agent runs on. It goes into the
-// system prompt, the first thing the provider caches, so it holds nothing
-// that changes within a request: the cwd is in every user message instead,
-// and the git root is taken for dir, where the request was made, not for
-// wherever its commands have cd'ed since.
-func environment(dir string) string {
+// environment describes the machine the agent runs on and shell, the one
+// its bash tool runs in ("" for bash). It goes into the system prompt, the
+// first thing the provider caches, so it holds nothing that changes within
+// a request: the cwd is in every user message instead, and the git root is
+// taken for dir, where the request was made, not for wherever its commands
+// have cd'ed since.
+func environment(dir, shell string) string {
 	var b strings.Builder
 	host, _ := os.Hostname()
 	repo := "no"
@@ -51,7 +52,11 @@ func environment(dir string) string {
 		osName = strings.TrimSpace(string(out))
 	}
 	fmt.Fprintf(&b, "- OS: %s (%s), host %s, user %s\n", osName, runtime.GOARCH, host, os.Getenv("USER"))
-	b.WriteString("- Shell: bash (interactive, the user's own ~/.bashrc)\n")
+	if shell == "zsh" {
+		b.WriteString("- Shell: zsh (interactive, the user's own ~/.zshrc). Your bash tool runs its commands in this zsh: write them for zsh, quote what zsh would glob, and keep to what zsh and bash read alike\n")
+	} else {
+		b.WriteString("- Shell: bash (interactive, the user's own ~/.bashrc)\n")
+	}
 	fmt.Fprintf(&b, "- Today's date: %s", time.Now().Format("2006-01-02"))
 	return b.String()
 }

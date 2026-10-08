@@ -100,7 +100,7 @@ func Parse(src, cwd, home string) (Script, error) {
 // in.
 func parseIn(src string, sh shell) (Script, error) {
 	cwd := sh.pwd
-	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: sh.home, modes: inShell(sh)}
+	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: sh.home, modes: inShell(sh), zsh: sh.zsh}
 	if cwd != "" {
 		p.line = &lines{sh: sh, at: map[*syntax.CallExpr]where{}}
 	}
@@ -163,6 +163,9 @@ type parser struct {
 	// subval follows the values a line gives its variables, for a
 	// subscript read as arithmetic later (see subval).
 	subval subval
+	// zsh is the zsh that runs the line, nil for bash: each piece of code
+	// parse reads, it reads as zsh may too (see zshShell).
+	zsh *zshShell
 }
 
 // snippet is code a line hands to a shell, here or on another machine.
@@ -181,6 +184,11 @@ type write struct {
 func (p *parser) mark(kind string) { p.kinds[kind] = true }
 
 func (p *parser) parse(src string, depth int, remote bool) error {
+	if p.zsh != nil {
+		if kind := p.zsh.misreads(src); kind != "" {
+			p.mark(kind)
+		}
+	}
 	stmts, err := p.statements(src)
 	p.remote = remote
 	p.modesOf(src, stmts, depth)

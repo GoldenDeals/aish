@@ -45,11 +45,11 @@ func For(configured string) (Shell, error) {
 	return Bash{Path: configured}, nil
 }
 
-// Kind is the name of the shell configured, as For would pick it; "bash"
-// for one it would not.
+// Kind is the name of the shell configured, as For picks it; "" for one
+// it does not.
 func Kind(configured string) string {
 	if sh, err := For(configured); err == nil {
 		return sh.Name()
 	}
-	return "bash"
+	return ""
 }

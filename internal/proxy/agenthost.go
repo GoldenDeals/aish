@@ -199,19 +199,24 @@ func (p *Proxy) compact(ctx context.Context, ap rpc.AgentParams) error {
 		return err
 	}
 	return p.request(ctx, execOf(ap), true, func(ctx context.Context, a *agent.Agent) error {
-		return a.Compact(ctx, ap.Text, execOf(ap))
+		// The shell's name: the system prompt holds it, and the summary
+		// is asked with the one the turns before it were cached with.
+		ex := execOf(ap)
+		ex.Shell = p.shell.Name()
+		return a.Compact(ctx, ap.Text, ex)
 	})
 }
 
 func execOf(ap rpc.AgentParams) tools.Exec { return tools.Exec{Dir: ap.Cwd, Env: ap.Env} }
 
-// shellExec is execOf with the options of set -o and shopt the shell had on
-// at its last prompt, as saveState read them: the policy reads the agent's
-// commands in the modes the shell runs them in, set -k from ~/.bashrc
-// included. A command of the request that turns one on is ahead of them
-// until the next prompt; the policy marks such a line itself.
+// shellExec is execOf with the shell's name and the options it had on at
+// its last prompt, as saveState read them: the policy reads the agent's
+// commands as that shell does, in the modes it runs them in, set -k from
+// ~/.bashrc included. A command of the request that turns one on is ahead
+// of them until the next prompt; the policy marks such a line itself.
 func (p *Proxy) shellExec(ap rpc.AgentParams) tools.Exec {
 	ex := execOf(ap)
+	ex.Shell = p.shell.Name()
 	p.mu.Lock()
 	ex.Opts = p.shellOpts()
 	p.mu.Unlock()

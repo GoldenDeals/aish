@@ -24,6 +24,7 @@ import (
 	"github.com/GoldenDeals/aish/internal/policy"
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/shells"
 	"github.com/GoldenDeals/aish/internal/skills"
 	"github.com/GoldenDeals/aish/internal/subagent"
 	"github.com/GoldenDeals/aish/internal/tools"
@@ -367,6 +368,11 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
 	sh := &subShell{}
 	child := &Agent{Cfg: s.cfg, Provider: s.prov, Tools: s.reg, Policy: s.pol, Journal: j, Shell: sh, UI: subUI{out}, name: s.def.Name}
 	ex := s.ex
+	if ex.Shell != "" && ex.Shell != "bash" {
+		// Its commands run in a bash of their own (runCommand), not in the
+		// user's shell, whose options are no bash's.
+		ex.Shell, ex.Opts = "bash", nil
+	}
 	err := child.Start(ctx, s.prompt, ex)
 	for err == nil {
 		id, cmd, ok := sh.take()
@@ -396,11 +402,12 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
 
 // runCommand runs a subagent's command in a bash of its own, in the
 // shell's directory and environment, showing its output on out as it
-// comes. Its process group goes when ctx does, so that what it started
-// does not outlive the request.
+// comes: the configured shell when it is a bash, as the policy reads the
+// command as bash does. Its process group goes when ctx does, so that what
+// it started does not outlive the request.
 func (a *Agent) runCommand(ctx context.Context, cmd string, ex tools.Exec, out io.Writer) rpc.Output {
 	shell := a.Cfg.Shell
-	if shell == "" {
+	if shell == "" || shells.Kind(shell) != "bash" {
 		shell = "bash"
 	}
 	buf := capture.NewBuffer(subCapture, subCapture)

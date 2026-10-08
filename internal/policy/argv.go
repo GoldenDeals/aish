@@ -45,6 +45,8 @@ type shell struct {
 	// env tells that the fields above are the shell's, from NewInput: an
 	// Input made otherwise is in Cwd, with Home for HOME.
 	env bool
+	// zsh is the zsh the line runs in (NewInputIn); nil for bash.
+	zsh *zshShell
 }
 
 // Analyze derives the facts of argv as run from cwd by a user whose home
