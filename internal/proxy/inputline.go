@@ -25,7 +25,10 @@ import (
 // next prompt.
 type inputLine struct {
 	cols, rows  int
-	s           int // the status's first cell; it ends at cols-2
+	s           int // the status's first cell at the right edge; it ends at cols-2
+	w           int // its width
+	at          int // its first cell where it is drawn: s, or left of the text at the right (inputright.go)
+	right, left int // that text's first column on the status's line, 0 for none, and the end of the text before it
 	text, color string
 
 	row, col int
@@ -43,10 +46,13 @@ type inputLine struct {
 }
 
 func newInputLine(cols, rows int, text, color string) *inputLine {
+	w := runewidth.StringWidth(text)
 	return &inputLine{
 		cols:  cols,
 		rows:  rows,
-		s:     cols - runewidth.StringWidth(text) - 1,
+		s:     cols - w - 1,
+		w:     w,
+		at:    cols - w - 1,
 		text:  text,
 		color: color,
 		ends:  map[int]int{},
@@ -128,10 +134,11 @@ func (l *inputLine) feed(b []byte) []byte {
 			}
 			n, o = len(data)-i, op{kind: opLost}
 		}
-		if l.shown && l.touches(o) {
+		if l.shown && l.hits(o) {
 			out = l.erase(out)
 		}
 		out = append(out, data[i:i+n]...)
+		l.noteRight(o)
 		l.apply(o)
 		i += n
 		if l.row >= l.rows || l.row <= -l.rows {
@@ -142,15 +149,21 @@ func (l *inputLine) feed(b []byte) []byte {
 }
 
 // settle draws or erases the status as the line is empty or not, once the
-// output is between sequences and characters. Not while a character waits
-// in the last column to wrap: \e8 may cancel that.
+// output is between sequences and characters, and moves it where the line
+// has room for it (place). Not while a character waits in the last column
+// to wrap: \e8 may cancel that.
 func (l *inputLine) settle(out []byte) []byte {
 	if l.lost || l.str || len(l.seq) > 0 || l.wrap {
 		return out
 	}
-	want := !l.held && l.ends[0] < l.s && l.empty()
+	at := l.place()
+	want := !l.held && at >= 0 && l.empty()
+	if want && l.shown && at != l.at {
+		out = l.erase(out)
+	}
 	switch {
 	case want && !l.shown:
+		l.at = at
 		out = l.paint(out)
 	case !want && l.shown:
 		out = l.erase(out)
@@ -159,12 +172,14 @@ func (l *inputLine) settle(out []byte) []byte {
 }
 
 // empty reports whether nothing is printed past the end of the prompt, on
-// its line or below. Before the first key the line is the prompt's.
+// its line or below, the text at its right aside. Before the first key the
+// line is the prompt's.
 func (l *inputLine) empty() bool {
 	if !l.keyed {
 		return true
 	}
-	for r, e := range l.ends {
+	for r := range l.ends {
+		e := l.lineEnd(r)
 		if r == l.prompt[0] && e > l.prompt[1] || r > l.prompt[0] && e > 0 {
 			return false
 		}
@@ -184,7 +199,7 @@ func (l *inputLine) paint(out []byte) []byte {
 
 func (l *inputLine) erase(out []byte) []byte {
 	l.shown = false
-	return append(l.toStatus(out), "\x1b[K\x1b8"...)
+	return append(l.clear(l.toStatus(out)), "\x1b8"...)
 }
 
 func (l *inputLine) toStatus(out []byte) []byte {
@@ -196,7 +211,7 @@ func (l *inputLine) toStatus(out []byte) []byte {
 	case d < 0:
 		out = fmt.Appendf(out, "\x1b[%dB", -d)
 	}
-	return fmt.Appendf(out, "\x1b[%dG", l.s+1)
+	return fmt.Appendf(out, "\x1b[%dG", l.at+1)
 }
 
 // dropLine stops following the input line; what it held back of a
