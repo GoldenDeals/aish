@@ -53,6 +53,7 @@ typeset -g __aish_raw=     # 1: the text goes as typed (the ? prefix)
 typeset -g __aish_req=     # the text __aish_ask "$__aish_req" sends
 typeset -g __aish_typed=   # what was typed, for history
 typeset -g __aish_redraw=  # 1: __aish_ask replaces the line on the screen
+typeset -g __aish_intr=    # Ctrl+C cut the expansion short: its code, till the prompt
 typeset -g __aish_hint= __aish_hinted= __aish_rc=0 __aish_based= __aish_autocd=off
 
 # Every function but those that run the user's code (__aish_ask, the
@@ -211,34 +212,252 @@ if [[ $__aish_route_not_found != true ]]; then
 	}
 fi
 
+# __aish_split sets p, an array of __aish_body, to $1 cut before every ',
+# $(, ${, $[ and $\<newline>: __aish_body walks the pieces, not the
+# characters. The cut is a byte the text lacks, left in d, a local of
+# __aish_body; with none left it fails, and the text stays as typed. Bytes:
+# a pattern costs more on a multibyte string.
+__aish_split() {
+	emulate -L zsh +o multibyte
+	local c s
+	for d in $'\x1f' $'\x1e' $'\x1d' $'\x1c' ''; do
+		[[ $1 != *$d* ]] && break
+	done
+	[[ -n $d ]] || return 1
+	c=$1
+	for s in \' '$(' '${' '$[' $'$\\\n'; do
+		c=${c//$s/$d$s}
+	done
+	p=("${(@ps:$d:)c}")
+}
+
+# __aish_body sets __aish_b, a local of __aish_expand, to $1 made ready for
+# ${(e)...}, which reads it as zsh reads a string in double quotes. In a
+# single quote of the top level a backslash goes before every \, $ and `;
+# elsewhere a backtick is escaped and the backslashes before it doubled, and
+# at the top level the other backslashes are doubled too, but for the last
+# of an odd run before a $: the text keeps them as typed, a
+# backslash-newline joins no lines, and \$ is a dollar. A run before a $
+# keeps its parity, so what is expanded stays the same. In $(...) and ${...}
+# backslashes are shell syntax and stay. This is init.bash's __aish_body,
+# with zsh's reading for bash's.
+#
+# The quote is kept only where zsh, reading the text as typed, is at the
+# top level at both its ends, so nothing runs that did not: the walk follows
+# zsh through $(...), ${...} and the quotes in them, a stack of what closes
+# each (^ is the top level). What it cannot follow for sure, or where bash
+# reads the text otherwise, ends it: a comment, case, a here-document or
+# (( in $(...), a line continuation there or after $, $'...', $[...],
+# $((...)) (whose quotes are text to zsh), $$ before a quote or a
+# substitution; in ${...} \", a {, and a quote but one that hides nothing
+# from either; and $( itself when an alias may leave something open. Then
+# the text is expanded as before: as typed when it has a backslash or a
+# single quote that starts a word, else all of it as in double quotes. So
+# it is, too, when the walk ends inside something, which zsh would fail to
+# read.
+__aish_body() {
+	emulate -L zsh -o extendedglob
+	local -a p g
+	local -A v # for a piece that ends at the top level, its rest from where the top level starts
+	local d c a h s k y n u
+	integer i j o z
+	k=^
+	if [[ $1 == *[\'\\]* ]]; then
+		__aish_split "$1" || return 1
+		# An alias is code zsh reads in $(...) too, a global one anywhere:
+		# one that leaves a quote, a parenthesis or case open, or starts a
+		# comment or a here-document, would have the walk follow other code
+		# than zsh does.
+		if [[ $1 == *\$\(* ]]; then
+			for s in "${(@v)aliases}" "${(@v)galiases}" "${(@v)saliases}"; do
+				[[ $s == *(\\|case|esac|\<\<|\#)* ]] && u=1
+				a=${s//[^\']} c=${s//[^\"]} h=${s//[^\`]}
+				(($#a % 2 || $#c % 2 || $#h % 2)) && u=1
+				a=${s//[^\(]} c=${s//[^\)]}
+				(($#a != $#c)) && u=1
+			done
+		fi
+	else
+		p=("$1")
+	fi
+	v[1]=$p[1]
+	for ((i = 2; i <= $#p; i++)); do
+		c=$p[i]
+		# y is the piece with the open quote, if any.
+		if [[ -n $y && $c == \'* && $c[2] != [[:alnum:]] ]]; then
+			if [[ $k == '^' ]]; then
+				for ((j = y; j < i; j++)); do
+					s=${p[j]//\\/\\\\}
+					s=${s//\$/\\\$}
+					p[j]=${s//\`/\\\`}
+				done
+				g+=($y $i)
+				y= v[$i]=$c
+				continue
+			fi
+			y=
+		fi
+		o=2 # where the rest of the piece to walk starts
+		case $k[-1]$c[1] in
+		(\'\') k=${k%?} ;;
+		(\'?) continue ;;
+		(\^\')
+			[[ -z $y && ${p[i-1][-1]} != [[:alnum:]\\] ]] && y=$i
+			v[$i]=$c
+			continue
+			;;
+		(*)
+			[[ $c == \$[\[\\]* ]] && break
+			# An odd run of backslashes before it makes its first
+			# character text.
+			a=${(M)p[i-1]%%\\#}
+			if (($#a % 2 == 0)); then
+				[[ $p[i-1] == *\$ && $k[-1]$c[1] != \"\' ]] && break
+				case $k[-1]$c[1,3] in
+				(?\$\(\() break ;;
+				(\)\'*)
+					k+=\'
+					continue
+					;;
+				(\}\'*)
+					# In ${...} of a command a quote is one; of a string in
+					# double quotes, text, which bash reads as a quote: only
+					# one with no } " \ { or substitution in it is the same
+					# to both, and z is the piece that closes it.
+					n=${k%%\}##}
+					if [[ $n[-1] == \) ]]; then
+						k+=\'
+						continue
+					fi
+					if ((z != i)); then
+						[[ $c[2,-1] != *[\}\"\\\{]* && $p[i+1] == \'* ]] || break
+						z=$((i + 1))
+					fi
+					;;
+				(?\$\(*)
+					[[ -n $u ]] && break
+					k+=\) o=3
+					;;
+				(?\$\{*) k+=\} o=3 ;;
+				esac
+			fi
+			;;
+		esac
+		if [[ $k == *[\^\'] ]]; then
+			[[ $k == '^' ]] && v[$i]=$c
+			continue
+		fi
+		h=$c[o,-1]
+		while :; do
+			case $k[-1] in
+			(\))
+				s=${h%%[\\\"\(\)]*}
+				[[ $s == *[\#]* || $s == *\<\<* || $s == *case* ]] && break 2
+				;;
+			(\}) s=${h%%[\\\"\{\}]*} ;;
+			(\") s=${h%%[\\\"]*} ;;
+			(*) break ;;
+			esac
+			[[ $s == "$h" ]] && break
+			h=$h[$#s+1,-1]
+			case $k[-1]$h[1,2] in
+			(\)\\$'\n' | \}\\\") break 2 ;;
+			(?\\*) h=$h[2,-1] ;;
+			(\)\(\(*) break 2 ;;
+			(\)\"* | \}\"*) k+=\" ;;
+			(\)\(*) k+=\) ;;
+			(\)\)* | \}\}* | \"\"*) k=${k%?} ;;
+			(\}\{*) break 2 ;;
+			esac
+			h=$h[2,-1]
+		done
+		[[ $k == '^' ]] && v[$i]=$h
+	done
+	if ((i <= $#p)) || [[ $k != '^' ]]; then
+		[[ $1 == *\\* || $1 == \'* || $1 == *[^[:alnum:]]\'* ]] && return 1
+		__aish_b=${1//\`/\\\`}
+		return 0
+	fi
+	# Backticks and backslashes out of the kept quotes: g holds where each
+	# starts and where its closing piece is. Bytes, as in __aish_split.
+	if [[ $1 == *[\`\\]* ]]; then
+		setopt nomultibyte
+		g+=($(($#p + 1)) 0)
+		i=1
+		for ((j = 1; j <= $#g; j += 2)); do
+			for (( ; i < g[j]; i++)); do
+				h=$p[i] a= c=
+				[[ $h == *[\`\\]* ]] || continue
+				if ((${+v[$i]})); then
+					# The top level of the piece: the backslashes doubled, but
+					# for the last of an odd run before a $, the pairs first,
+					# as zsh reads them, to d. A piece ends where the next
+					# starts with ' or $: the $ is put back for the
+					# backslashes before it.
+					c=$v[$i] n=
+					h=$h[1,$#h-$#c]
+					[[ $p[i+1] == \$* ]] && n=\$
+					c+=$n
+					if [[ $c == *\\* ]]; then
+						c=${c//\\\\/$d}
+						c=${c//\\/\\\\}
+						c=${c//\\\\\$/\\\$}
+						c=${c//$d/\\\\\\\\}
+					fi
+					c=${c//\`/\\\`}
+					[[ -n $n ]] && c=${c%\$}
+				fi
+				while [[ $h == *\`* ]]; do
+					s=${h%%\`*}
+					# Doubled, a backslash before the backtick cannot take
+					# the one that escapes it.
+					a+=$s${(M)s%%\\#}\\\`
+					h=${h#*\`}
+				done
+				p[i]=$a$h$c
+			done
+			i=$g[j+1]
+		done
+	fi
+	__aish_b=${(j::)p}
+}
+
 # __aish_expanding sets __aish_t to its text expanded: $VAR, ${...}, $(...)
-# and $((...)), as in double quotes, so that the screen, the journal and the
-# model get the same text, and history what was typed. It runs with the
-# user's options, as the text would. A text it cannot follow stays as typed:
-# one with a backslash, or a single quote that starts a word (a quote in
-# one, "doesn't", is text); a backtick is text, escaped. A $(...) may take
-# long: Ctrl+C ends it with the line, as at any prompt.
+# and $((...)) as in double quotes, but in single quotes, so that the
+# screen, the journal and the model get the same text, and history what was
+# typed (__aish_body). It runs with the user's options, as the text would.
+# A $(...) may take long: "expanding…" stands below the line meanwhile, and
+# Ctrl+C ends only the substitution. Untrapped, it would end the widget and
+# throw the line away. __aish_intr keeps the code, 130 or that of the signal
+# that killed the substitution, for __aish_ask to return unasked; the
+# user's trap is back when this returns (localtraps). It returns 0 under
+# the user's err_return too.
 __aish_expanding() {
+	setopt localoptions localtraps
 	local __aish_x __aish_s
-	[[ $__aish_t == *\\* ]] && return
-	[[ $__aish_t == \'* || $__aish_t == *[^[:alnum:]]\'* ]] && return
-	[[ $__aish_t == *'$('* ]] && zle -R 'expanding…'
+	if [[ $__aish_t == *'$('* ]]; then
+		trap 'typeset -g __aish_intr=130' INT
+		zle -R 'expanding…'
+	fi
 	__aish_x=$(__aish_expand </dev/null 2>/dev/null)
 	__aish_s=$?
 	[[ $__aish_t == *'$('* ]] && zle -R ''
-	((__aish_s == 0)) && [[ $__aish_x == *. ]] && typeset -g __aish_t=${__aish_x%.}
+	((__aish_s > 128)) && typeset -g __aish_intr=$__aish_s
+	[[ -z $__aish_intr ]] && ((__aish_s == 0)) && [[ $__aish_x == *. ]] && typeset -g __aish_t=${__aish_x%.}
 	return 0
 }
 
 # __aish_expand prints __aish_t expanded and a dot after it: the command
 # substitution takes the newlines at the end, not the dot. $? in the text is
-# the code of the user's last command; $1 is no word of it.
+# the code of the user's last command; $1 is no word of it. It fails when
+# the text stays as typed. In a list, a code other than 0 neither returns
+# under err_return nor exits under err_exit.
 __aish_expand() {
-	local __aish_e
-	__aish_e=${__aish_t//\`/\\\`}
+	local __aish_b
+	__aish_body "$__aish_t" || return 1
 	set --
-	__aish_status "$__aish_rc"
-	print -rn -- "${(e)__aish_e}."
+	__aish_status "$__aish_rc" && :
+	print -rn -- "${(e)__aish_b}."
 }
 
 __aish_status() { return $1; }
@@ -330,17 +549,18 @@ __aish_precmd() {
 		__aish_dump >|"$AISH_RUN/state"
 	fi
 	printf '\e]6973;%s;cmd-end;%s;%s\a' "$__aish_nonce" "$__aish_rc" "${PWD//[$'\a\e']/}"
-	typeset -g __aish_ps0=
+	typeset -g __aish_ps0= __aish_intr=
 	return 0
 }
 
 # __aish_unecho replaces the `__aish_ask "$__aish_req"` line zle has left on
 # the screen with the request, the prompt's % (or #, $, ❯, >) turned into
 # ?: "host? text". The prompt is expanded with the user's options, %? the
-# code of the user's last command.
+# code of the user's last command: in a list, a code other than 0 neither
+# returns under err_return nor exits under err_exit.
 __aish_unecho() {
 	local __aish_p
-	__aish_status "$__aish_rc"
+	__aish_status "$__aish_rc" && :
 	__aish_p=${(%%)PS1}
 	__aish_unecho_draw "$1" "$__aish_p"
 }
@@ -357,8 +577,9 @@ __aish_unecho_draw() {
 	((cols > 0)) || cols=80
 	line='__aish_ask "$__aish_req"'
 	w=$((${(m)#vis} + ${#line}))
-	rows=$(((w - 1) / cols + 1))
-	((rows > 0)) || rows=1
+	# zle takes the cursor to the next row after a full one, and Enter one
+	# row down from there: a line just the terminal's width takes two.
+	rows=$((w / cols + 1))
 	# The echo's first row is erased by itself: erase below from the
 	# top-left corner is a clear screen to tmux, which keeps the screen, the
 	# echo with it, in its history.
@@ -385,6 +606,12 @@ __aish_ask() {
 	typeset -g __aish_req=
 	print -rs -- "${__aish_typed:-$__aish_q}"
 	typeset -g __aish_typed=
+	# Ctrl+C cut its expansion short: on the screen and in history, unsent.
+	if [[ -n $__aish_intr ]]; then
+		__aish_rc=$__aish_intr
+		typeset -g __aish_intr=
+		return $__aish_rc
+	fi
 
 	printf '\e]6973;%s;ask-start\a' "$__aish_nonce"
 	"$AISH_BIN" agent start -- "$__aish_q" || return
@@ -394,10 +621,69 @@ __aish_ask() {
 		: >|"$AISH_RUN/next.cmd"
 		__aish_rc=${__aish_cmd//[$'\a\e']/}
 		printf '\e]6973;%s;agent-start;%s;%s\a' "$__aish_nonce" "$__aish_id" "${__aish_rc:0:1000}"
-		eval "$__aish_cmd" </dev/null
+		# In a list, its failure neither returns under the user's
+		# err_return before agent-end nor exits under err_exit.
+		eval "$__aish_cmd" </dev/null && :
 		__aish_rc=$?
 		printf '\e]6973;%s;agent-end;%s;%s;%s\a' "$__aish_nonce" "$__aish_id" "$__aish_rc" "${PWD//[$'\a\e']/}"
 		"$AISH_BIN" agent resume "$__aish_id" "$__aish_rc" || break
+	done
+}
+
+# Ctrl+V (or Ctrl+Q) before a paste, a habit where the terminal pastes with
+# Ctrl+Shift+V: quoted-insert would take the paste's ESC for the character
+# and the rest as typed: the line would be ^[[200~text~, and a newline in
+# the text would run it. __aish_quote is quoted-insert (vi-quoted-insert for
+# __aish_vi_quote) that takes a bracketed paste after it as a paste: it
+# waits for the key as long as it takes, the paste may come a second after
+# Ctrl+V, and the rest of a paste's sequence comes at once after its ESC.
+# Tab, Esc or another key is the character still, and what came after an
+# ESC goes on as typed.
+__aish_quote() {
+	emulate -L zsh
+	local k s w
+	w=quoted-insert
+	[[ $WIDGET == __aish_vi_quote ]] && w=vi-quoted-insert
+	read -k 1 k || return 1
+	if [[ $k == $'\e' ]]; then
+		s=$k
+		while [[ $s != $'\e[200~' && $'\e[200~' == "$s"* ]] && read -k 1 -t 0.1 k; do
+			s+=$k
+		done
+		if [[ $s == $'\e[200~' ]]; then
+			zle bracketed-paste
+			return
+		fi
+		zle -U -- "${s[2,-1]}"
+		k=$'\e'
+	fi
+	# quoted-insert reads the key from what -U pushed.
+	zle -U -- "$k"
+	zle .$w
+}
+zle -N __aish_quote
+zle -N __aish_vi_quote __aish_quote
+
+# The keys go to it in emacs and viins where they are quoted-insert's or
+# vi-quoted-insert's, zsh's own, and the paste's sequence is bracketed-paste:
+# a key the user bound to something else, bound sequences under, or whose
+# widget he redefined stays his. Once, at load: $(...) forks.
+() {
+	local km k w
+	for km in emacs viins; do
+		w=$(bindkey -M $km '^[[200~')
+		[[ ${w##* } == bracketed-paste ]] || continue
+		for k in '^V' '^Q'; do
+			w=$(bindkey -M $km $k)
+			w=${w##* }
+			[[ $w == (vi-|)quoted-insert && $widgets[$w] == builtin ]] || continue
+			[[ -z $(bindkey -M $km -p $k) ]] || continue
+			if [[ $w == vi-* ]]; then
+				bindkey -M $km $k __aish_vi_quote
+			else
+				bindkey -M $km $k __aish_quote
+			fi
+		done
 	done
 }
 

@@ -211,16 +211,37 @@ func TestZshAsk(t *testing.T) {
 	}
 }
 
+// zshExpandLine routes a line as Enter does, expansion and all, after the
+// user's last command left the code $1: __aish_testx CODE LINE. zle -R has
+// no zle to show its message in.
+const zshExpandLine = "__aish_testx() { __aish_test_rc=$1; shift; BUFFER=$1; PREBUFFER=; __aish_route; __aish_rc=$__aish_test_rc; if [[ -n $__aish_t && -z $__aish_raw && $__aish_t == *'$'* ]]; then __aish_expanding; fi; if [[ -n $__aish_t || -n $__aish_raw ]]; then __aish_request; fi; __aish_t= __aish_raw=; print -rn -- \"__aish_ask ${(q)__aish_req}\"$'\\x1f'; }\nzle() { :; }\n"
+
+// TestZshAskErrReturn: a command of the agent's that fails under the
+// user's err_return still ends with agent-end and `aish agent resume`.
+func TestZshAskErrReturn(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "aish")
+	script := "#!/bin/sh\necho \"$*\" >>\"$AISH_RUN/called\"\n[ \"$2\" = start ] && echo id1 >\"$AISH_RUN/next.id\" && printf false >\"$AISH_RUN/next.cmd\"\nexit 0\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, run := zshRun(t, "", "setopt errreturn", "precmd_functions=()\n__aish_ask 'What fails'\n", "AISH_BIN="+stub)
+	b, _ := os.ReadFile(filepath.Join(run, "called"))
+	if want := "agent start -- What fails\nagent resume id1 1\n"; string(b) != want {
+		t.Errorf("called %q, want %q", b, want)
+	}
+}
+
 // TestZshExpand: a request is expanded as in double quotes, $? being the
-// code of the user's last command; a text with a quote that starts a word
-// or a backslash stays as typed, a backtick is text, and ? keeps it all.
+// code of the user's last command; single quotes keep what is in them, \$
+// is a dollar, a backtick is text, and ? keeps it all.
 func TestZshExpand(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Look at $X please", `__aish_ask Look\ at\ world\ please`},
 		{"Is $(echo sub) here", `__aish_ask Is\ sub\ here`},
 		{"Why doesn't $X work", `__aish_ask Why\ doesn\'t\ world\ work`},
 		{"Say 'literal $X' now", `__aish_ask Say\ \'literal\ \$X\'\ now`},
-		{`Why \$X here`, `__aish_ask Why\ \\\$X\ here`},
+		{`Why \$X here`, `__aish_ask Why\ \$X\ here`},
 		{"Run `ls` in $X", "__aish_ask Run\\ \\`ls\\`\\ in\\ world"},
 		{"Code was $?", `__aish_ask Code\ was\ 3`},
 		{"?Raw $X", `__aish_ask Raw\ \$X`},
@@ -228,7 +249,7 @@ func TestZshExpand(t *testing.T) {
 		{"Empty $NONE", `__aish_ask Empty`},
 	}
 	var script strings.Builder
-	script.WriteString(zshLine + "__aish_testx() { __aish_test_rc=$1; shift; BUFFER=$1; PREBUFFER=; __aish_route; __aish_rc=$__aish_test_rc; if [[ -n $__aish_t && -z $__aish_raw && $__aish_t == *'$'* ]]; then __aish_expanding; fi; if [[ -n $__aish_t || -n $__aish_raw ]]; then __aish_request; fi; __aish_t= __aish_raw=; print -rn -- \"__aish_ask ${(q)__aish_req}\"$'\\x1f'; }\nX=world\nzle() { :; }\n")
+	script.WriteString(zshLine + zshExpandLine + "X=world\n")
 	for _, c := range cases {
 		script.WriteString("__aish_testx 3 " + quote(c.in) + "\n")
 	}
