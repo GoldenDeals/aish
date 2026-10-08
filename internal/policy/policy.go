@@ -141,6 +141,8 @@ func NewInput(tool string, args map[string]any, cwd string, env []string, opts .
 		pwd:    logical(cwd, getenv(env, "PWD"), in.Cwd),
 		home:   getenv(env, "HOME"),
 		cdpath: getenv(env, "CDPATH"),
+		path:   getenv(env, "PATH"),
+		login:  getenv(env, "SHELL"),
 		modes:  shellModes(env, opts),
 		env:    true,
 	}

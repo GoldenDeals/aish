@@ -35,6 +35,9 @@ type shell struct {
 	// cdpath is CDPATH, the directories cd looks a relative name up in
 	// before pwd.
 	cdpath string
+	// path is PATH, login SHELL: where a zsh the line starts looks its
+	// commands up, and the shell sudo -s, su and the like run (see zshes).
+	path, login string
 	// quoted tells that the line may hold a ~ or $ at the start of a word
 	// that quotes keep from expanding (see quotedPrefix).
 	quoted bool

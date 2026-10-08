@@ -817,7 +817,10 @@ here-string), `prompt` — присваивание
 `commands`, `aliases`, `functions`, `NULLCMD` — `rebind`, `RPROMPT`, `precmd_functions`, функции `precmd`,
 `TRAP*` — `prompt`. Опции берутся с последнего приглашения; пока их нет — считаются включёнными. `cdablevars`
 zsh — тот же режим, что `cdable_vars`; `set -k` у zsh нет, а комментарий в `eval` zsh читает при любой
-`interactivecomments`.
+`interactivecomments`. Код, который строка отдаёт zsh, сверяется так же и при bash: `zsh -c` и stdin zsh
+(`zsh5`, `zsh-5.9` — тоже zsh), `su -s /bin/zsh -c`, а если `$SHELL` — zsh, то и код, который через него запускают
+`sudo -s`/`-i`, `su`, `script`, `flock -c`, `tmux`, `screen`, `ssh -o ProxyCommand=`, — с опциями такого zsh,
+считающимися включёнными (его rc-файлы политика не читает); присваивание `SHELL` и `ZDOTDIR` — `rebind`.
 `paths` — операнды,
 похожие на пути, уже абсолютные и с раскрытыми симлинками: `rm -rf ~/`, `rm -rf "$HOME"` и
 `rm -rf /home/me/../me/` дают один и тот же `context.home`, и правило одно; `$PWD` раскрывается в

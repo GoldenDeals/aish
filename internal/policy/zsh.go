@@ -529,3 +529,112 @@ func (z *zshShell) maybeDir(name string) bool {
 	}
 	return true
 }
+
+// A line the shell runs as bash may hand code to a zsh all the same: one
+// it starts by name (zsh -c, the stdin of zsh, su -s /bin/zsh -c) or the
+// shell of SHELL when that names a zsh, which sudo -s, su, script, flock
+// -c, the windows of tmux and screen and the like run their code with.
+// That code, and the code it hands on in turn, is read as a zsh may read
+// it too, as a line of a zsh the shell is: the parser keeps its text and
+// parses it with the misreads of a zsh whose options, those of its rc
+// files, are not known (see zshShell.on). A zsh started so by a zsh the
+// shell is has the options of its rc files too, not those of the shell.
+// SHELL unset or naming another shell is taken for bash, as before.
+
+// zshes are the zshes a line starts.
+type zshes struct {
+	// child is a zsh the line starts, in the shell's directory and with
+	// its HOME, CDPATH and PATH.
+	child zshShell
+	// login tells that SHELL names a zsh.
+	login bool
+	// code holds the code they run, by its text.
+	code map[string]bool
+}
+
+func newZshes(sh shell) zshes {
+	return zshes{
+		child: zshShell{pwd: sh.pwd, home: sh.home, cdpath: sh.cdpath, path: sh.path},
+		login: isZsh(sh.login),
+	}
+}
+
+// isZsh tells whether the program prog is a zsh: its file named zsh, zsh5,
+// zsh-5.9..., as the shell of the config is told (shells.For).
+func isZsh(prog string) bool {
+	return strings.HasPrefix(filepath.Base(prog), "zsh")
+}
+
+// zshFor is the zsh that runs src, code handed on by code cur runs, nil
+// for bash: a zsh the line starts, or cur, which runs the code of its own
+// code that the line does not hand to a zsh.
+func (p *parser) zshFor(src string, cur *zshShell) *zshShell {
+	if p.zshes.code[src] {
+		return &p.zshes.child
+	}
+	return cur
+}
+
+// ranBy returns code, which the shell prog runs: of a zsh, it is read as
+// one the line starts reads it.
+func (p *parser) ranBy(prog string, code ...string) []string {
+	if isZsh(prog) {
+		p.zshRuns(code)
+	}
+	return code
+}
+
+// ranByLogin returns code, which the shell of SHELL runs, read as ranBy
+// reads it.
+func (p *parser) ranByLogin(code ...string) []string {
+	if p.zshes.login {
+		p.zshRuns(code)
+	}
+	return code
+}
+
+func (p *parser) zshRuns(code []string) {
+	if p.zshes.code == nil {
+		p.zshes.code = map[string]bool{}
+	}
+	for _, c := range code {
+		p.zshes.code[c] = true
+	}
+}
+
+// startedBy returns code, which the command name of strung or logins runs
+// with a shell of its own, read as ranBy reads it: su and runuser run it
+// with the shell of -s, else with the login shell of the user they run
+// it as, which the policy takes for SHELL; flock -c, script, sg and
+// newgrp with SHELL too; watch with sh.
+func (p *parser) startedBy(name string, args []string, code ...string) []string {
+	switch name {
+	case "su", "runuser":
+		opts, _ := suOpts.read(args)
+		if sh := values(opts, "s", "shell"); len(sh) > 0 {
+			return p.ranBy(sh[len(sh)-1].text, code...)
+		}
+		return p.ranByLogin(code...)
+	case "flock", "script", "sg", "newgrp":
+		return p.ranByLogin(code...)
+	}
+	return code
+}
+
+// shellRunners run the code runs finds of theirs with the shell of SHELL:
+// tmux and screen in their windows (default-shell), ssh, scp and sftp the
+// ProxyCommand and LocalCommand of this machine and sftp its !, Vim :! and
+// system(), at and batch their jobs.
+var shellRunners = map[string]bool{
+	"at": true, "batch": true, "ex": true, "gvim": true, "nvim": true, "scp": true, "screen": true,
+	"sftp": true, "ssh": true, "tmux": true, "vi": true, "view": true, "vim": true, "vimdiff": true,
+}
+
+// runBy returns code, that the runners among argv run here, read as
+// ranByLogin reads it when one of them is of shellRunners.
+func (p *parser) runBy(argv []string, code []string) []string {
+	if slices.ContainsFunc(argv, func(a string) bool { return shellRunners[filepath.Base(a)] }) {
+		return p.ranByLogin(code...)
+	}
+	return code
+}

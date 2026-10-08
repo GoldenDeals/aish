@@ -100,11 +100,11 @@ func Parse(src, cwd, home string) (Script, error) {
 // in.
 func parseIn(src string, sh shell) (Script, error) {
 	cwd := sh.pwd
-	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: sh.home, modes: inShell(sh), zsh: sh.zsh}
+	p := &parser{kinds: map[string]bool{}, cwd: cwd, home: sh.home, modes: inShell(sh), zshes: newZshes(sh)}
 	if cwd != "" {
 		p.line = &lines{sh: sh, at: map[*syntax.CallExpr]where{}}
 	}
-	err := p.parse(src, 0, false)
+	err := p.parse(src, 0, false, sh.zsh)
 	s := Script{Commands: p.out, Remote: p.remotes, sites: p.settle()}
 	for _, t := range p.writes {
 		switch {
@@ -163,9 +163,9 @@ type parser struct {
 	// subval follows the values a line gives its variables, for a
 	// subscript read as arithmetic later (see subval).
 	subval subval
-	// zsh is the zsh that runs the line, nil for bash: each piece of code
-	// parse reads, it reads as zsh may too (see zshShell).
-	zsh *zshShell
+	// zshes are the zshes the line starts, and the code they run (see
+	// zshFor).
+	zshes zshes
 }
 
 // snippet is code a line hands to a shell, here or on another machine.
@@ -183,9 +183,12 @@ type write struct {
 
 func (p *parser) mark(kind string) { p.kinds[kind] = true }
 
-func (p *parser) parse(src string, depth int, remote bool) error {
-	if p.zsh != nil {
-		if kind := p.zsh.misreads(src); kind != "" {
+// parse parses src, the code of the zsh z, nil for bash: that of a zsh is
+// read as it may read it too (see zshShell), and so is the code it hands
+// on (see zshFor).
+func (p *parser) parse(src string, depth int, remote bool, z *zshShell) error {
+	if z != nil {
+		if kind := z.misreads(src); kind != "" {
 			p.mark(kind)
 		}
 	}
@@ -240,7 +243,7 @@ func (p *parser) parse(src string, depth int, remote bool) error {
 	// bash -c "'" fails and the bash -c after it runs all the same: an
 	// error in one piece of code leaves the others to be parsed.
 	for _, s := range nested {
-		if e := p.parse(s.src, depth+1, s.remote); err == nil {
+		if e := p.parse(s.src, depth+1, s.remote, p.zshFor(s.src, z)); err == nil {
 			err = e
 		}
 	}
@@ -344,7 +347,7 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 		here, there, local := p.handed(argv, static, redirs)
 		found := p.shellC(argv[:local], static[:local])
 		ran, far := p.runs(argv, static, split, local, redirs)
-		found, there = append(found, ran...), append(there, far...)
+		found, there = append(found, p.runBy(argv[:local], ran)...), append(there, far...)
 		found = append(found, p.program(argv, static, redirs)...)
 		for _, s := range append(found, here...) {
 			add(s, p.remote)
@@ -378,10 +381,10 @@ func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect
 	case name == "source", name == ".":
 		// The file is not read: it may change between the check and the run.
 		p.mark(dynSource)
-	case shells[name]:
+	case isShell(name):
 		switch _, file, stdin := shellArgs(args); {
 		case stdin:
-			return p.stdin(redirs)
+			return p.ranBy(name, p.stdin(redirs)...)
 		case file >= 0 && !st[file]:
 			p.mark(dynComputed)
 		}
@@ -389,7 +392,7 @@ func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect
 		return p.wrapped(wrappers[name], args, st, redirs)
 	case logins[name] != nil:
 		if logins[name](args) {
-			return p.stdin(redirs)
+			return p.startedBy(name, args, p.stdin(redirs)...)
 		}
 	case name == "alias":
 		var code []string
@@ -658,16 +661,16 @@ func (p *parser) wrapped(w wrapper, args []string, static []bool, redirs []*synt
 	case has(opts, w.none...), !shell && (!bare || cmd < len(args)):
 		return code
 	case cmd == len(args):
-		return append(code, p.stdin(redirs)...)
+		return append(code, p.ranByLogin(p.stdin(redirs)...)...)
 	case w.joins && slices.Contains(static[cmd:], false), !w.joins && !static[cmd]:
 		// Joined, a word made at run time may be any code; escaped, the
 		// other words are its arguments whatever they hold.
 		p.mark(dynComputed)
 		return code
 	case w.joins:
-		return append(code, strings.Join(args[cmd:], " "))
+		return append(code, p.ranByLogin(strings.Join(args[cmd:], " "))...)
 	}
-	return append(code, escaped(args[cmd:]))
+	return append(code, p.ranByLogin(escaped(args[cmd:]))...)
 }
 
 // escaped joins words with spaces as sudo and sudo-rs do for the -c of the
@@ -706,14 +709,19 @@ func has(opts []option, names ...string) bool {
 // shells take their commands from -c, a file or stdin.
 var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true}
 
+// isShell tells whether prog is one of shells, or a zsh by another name
+// (see isZsh).
+func isShell(prog string) bool { return shells[filepath.Base(prog)] || isZsh(prog) }
+
 // shellC returns the scripts of `bash -c SCRIPT`, `sh -c`, … wherever a
 // shell is in argv: behind sudo or env, and as an argument of find -exec
 // or anything else that may run it. A script built at run time is marked;
-// a mode its options start the shell in is followed (see started).
+// a mode its options start the shell in is followed (see started). That of
+// a zsh is read as a zsh reads it too (see zshes).
 func (p *parser) shellC(argv []string, static []bool) []string {
 	var code []string
 	for i, a := range argv {
-		if !shells[filepath.Base(a)] {
+		if !isShell(a) {
 			continue
 		}
 		p.started(argv[i+1:], static[i+1:])
@@ -721,7 +729,7 @@ func (p *parser) shellC(argv []string, static []bool) []string {
 		switch j := i + 1 + script; {
 		case script < 0:
 		case static[j]:
-			code = append(code, argv[j])
+			code = append(code, p.ranBy(a, argv[j])...)
 		default:
 			p.mark(dynComputed)
 		}
@@ -732,7 +740,8 @@ func (p *parser) shellC(argv []string, static []bool) []string {
 // shellArgs reads the arguments of a shell as bash does: options first, -o
 // and -O with a value, then the first operand is the script of -c or else
 // the file to run. It returns their indexes in args, -1 for none, and
-// whether the shell reads its commands from stdin instead.
+// whether the shell reads its commands from stdin instead. zsh reads them
+// so too, and its --emulate takes a value.
 func shellArgs(args []string) (script, file int, stdin bool) {
 	c, s := false, false
 	i := 0
@@ -742,7 +751,7 @@ options:
 		case a == "--" || a == "-":
 			i++
 			break options
-		case a == "--rcfile" || a == "--init-file":
+		case a == "--rcfile" || a == "--init-file" || a == "--emulate":
 			i++
 		case strings.HasPrefix(a, "--"):
 		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
@@ -825,7 +834,7 @@ func (p *parser) handed(argv []string, static []bool, redirs []*syntax.Redirect)
 			case s.remote:
 				there = append(there, pc.text)
 			default:
-				here = append(here, pc.text)
+				here = append(here, p.startedBy(filepath.Base(a), argv[i+1:], pc.text)...)
 			}
 		}
 		if i == 0 && s.remote && known {
@@ -1283,9 +1292,12 @@ var promptVars = map[string]bool{
 
 // rebindVars tell which program or code a name of a command runs: PATH
 // and EXECIGNORE where it is looked for, BASH_CMDS is the table of hash
-// and BASH_ALIASES that of alias.
+// and BASH_ALIASES that of alias. SHELL is the shell sudo -s, su, script
+// and the like run code with (see zshes), ZDOTDIR where a zsh finds the
+// rc files it runs.
 var rebindVars = map[string]bool{
 	"PATH": true, "EXECIGNORE": true, "BASH_CMDS": true, "BASH_ALIASES": true,
+	"SHELL": true, "ZDOTDIR": true,
 }
 
 // assigned marks an assignment to the variable name of a value not known
