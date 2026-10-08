@@ -468,6 +468,11 @@ __aish_to_llm() {
 	else
 		__aish_req=$__aish_t
 		READLINE_LINE='__aish_ask "$__aish_req"'
+		# Under the user's set -e a request that fails, 130 after Ctrl+C
+		# among them, or a command of the agent's that fails would close the
+		# shell. In a list neither does, and $? is still the request's code.
+		# Only under set -e: the list keeps the user's ERR trap from them too.
+		[[ $- != *e* ]] || READLINE_LINE+=' && :'
 		__aish_redraw=1
 		__aish_typed=${__aish_buf#"${__aish_buf%%[![:space:]]*}"}
 		__aish_typed=${__aish_typed%"${__aish_typed##*[![:space:]]}"}
@@ -564,11 +569,12 @@ __aish_rows() {
 # erases the line typed and readline draws the one __aish_to_llm left.
 __aish_unecho() {
 	local p vis
+	p=${PS1-} # set -u: PS1 may be unset
 	# $? in the prompt is what it was at the prompt the request was typed
 	# at, the code __aish_route found, not that of local. In a list, a code
 	# other than 0 neither runs the user's ERR trap nor exits under set -e.
 	__aish_status "${__aish_rc:-0}" && :
-	p=${PS1@P}
+	p=${p@P}
 	p=${p##*$'\n'}
 	vis=$p
 	while [[ $vis == *$'\001'*$'\002'* ]]; do
@@ -577,6 +583,7 @@ __aish_unecho() {
 	p=${p//[$'\001\002']/}
 	local line cols __aish_n
 	line='__aish_ask "$__aish_req"' cols=${COLUMNS:-80}
+	[[ $- != *e* ]] || line+=' && :' # as __aish_to_llm writes it
 	# Readline leaves the cursor under the echo's last row, a full one too.
 	__aish_rows "$vis$line" "$cols"
 	local rows
@@ -620,7 +627,9 @@ __aish_ask() {
 	"$AISH_BIN" agent start -- "$__aish_q" || return
 	while [[ -s $AISH_RUN/next.cmd ]]; do
 		IFS= read -r __aish_id <"$AISH_RUN/next.id"
-		IFS= read -r -d '' __aish_cmd <"$AISH_RUN/next.cmd"
+		# Read whole, to the end of the file: read fails there, and that is
+		# no error to run the user's ERR trap for.
+		IFS= read -r -d '' __aish_cmd <"$AISH_RUN/next.cmd" || :
 		: >|"$AISH_RUN/next.cmd"
 		__aish_rc=${__aish_cmd//[$'\a\e']/}
 		printf '\e]6973;%s;agent-start;%s;%s\a' "$__aish_nonce" "$__aish_id" "${__aish_rc:0:1000}"

@@ -13,9 +13,13 @@ var Bash string
 var Zsh string
 
 // RCFile is passed to `bash --rcfile`: the user's own configuration first,
-// then the aish hooks.
+// then the aish hooks. Bash reading ~/.bashrc itself pays no heed to the
+// code the file leaves, often the 1 of a last `[ -f … ] && …`; after a
+// set -e in the file, the command that sources it would close the shell
+// with that code. Not last in a list, it does not: bash ignores set -e
+// while the file runs, and the option is on after it.
 func RCFile() string {
-	return "[ -f ~/.bashrc ] && . ~/.bashrc\n" + Bash
+	return "[ -f ~/.bashrc ] && . ~/.bashrc && :\n" + Bash
 }
 
 // ZshEnv and ZshRC are .zshenv and .zshrc of the ZDOTDIR aish starts zsh
