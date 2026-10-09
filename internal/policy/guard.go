@@ -15,6 +15,9 @@ import (
 // trust refuses in the same words when the policies were got around.
 const TrustReason = "trusting a project is for the user (aish trust)"
 
+// YoloReason is why the agent may not turn its checks off.
+const YoloReason = "turning the checks off is for the user (aish yolo)"
+
 // guardChecker keeps the agent from trusting a project file, which would
 // let the repository's hooks and tools run: the note "… not trusted; aish
 // trust" is in what the model reads too, and a cloned repository may ask
@@ -27,6 +30,13 @@ const TrustReason = "trusting a project is for the user (aish trust)"
 // Code that names neither (python -c, a script, a variable an earlier call
 // set) goes unseen: aish trust refuses the agent itself, trusted.json has
 // no such keeper.
+//
+// It keeps the agent from running aish yolo the same way, by the commands
+// of the line and, where it is blind, by yolo next to aish in the text. The
+// proxy refuses aish yolo while a request runs, but not code the line
+// leaves to the shell for later (a trap, PROMPT_COMMAND): run at the
+// prompt, in the foreground, it would take the checks off the user's next
+// request.
 type guardChecker struct{}
 
 func (guardChecker) Check(_ context.Context, in Input) (Decision, error) {
@@ -36,6 +46,9 @@ func (guardChecker) Check(_ context.Context, in Input) (Decision, error) {
 	case in.Line != "":
 		if g.line(in) {
 			return deny, nil
+		}
+		if yoloLine(in) {
+			return Decision{Action: Deny, Reason: YoloReason}, nil
 		}
 	case in.Tool == "write_file", in.Tool == "edit_file":
 		if g.names(in.Path) {
@@ -47,7 +60,9 @@ func (guardChecker) Check(_ context.Context, in Input) (Decision, error) {
 
 // Guard is the verdict of the guard alone: what the agent's calls go by
 // while the user has the policies off (aish yolo). No policy, rule or
-// answer of the user lifts it, so every engine has it, a nil one too.
+// answer of the user lifts it, so every engine has it, a nil one too. It
+// denies aish yolo under yolo as well: a trap left then would turn the
+// checks off again after the user's aish yolo off.
 func (e *Engine) Guard(ctx context.Context, in Input) (Decision, error) {
 	if e != nil && e.agent != "" {
 		in.Agent = e.agent
@@ -267,7 +282,13 @@ func mentions(line string) bool {
 	if strings.Contains(l, strings.ToLower(filepath.Base(config.TrustFile()))) {
 		return true
 	}
-	return strings.Contains(l, "trust") && (strings.Contains(l, "aish") || self() != "" && strings.Contains(l, strings.ToLower(self())))
+	return withAish(l, "trust")
+}
+
+// withAish tells whether the lowercased text of a line has word in it and
+// aish, by its name or by the running binary's.
+func withAish(l, word string) bool {
+	return strings.Contains(l, word) && (strings.Contains(l, "aish") || self() != "" && strings.Contains(l, strings.ToLower(self())))
 }
 
 // trusts tells whether argv runs aish trust: as the program, or anywhere
@@ -276,18 +297,38 @@ func mentions(line string) bool {
 // and so does a program built at run time with trust for its first
 // operand. aish trust --list only reads.
 func trusts(argv []string) bool {
+	return runsAish(argv, "trust", "--list")
+}
+
+// yoloLine tells whether a line may run aish yolo, now or in code it
+// leaves to the shell, as trusts and mentions tell of aish trust.
+func yoloLine(in Input) bool {
+	return slices.ContainsFunc(in.Commands, yolos) || blind(in) && withAish(strings.ToLower(in.Line), "yolo")
+}
+
+// yolos tells whether argv runs aish yolo as trusts tells of aish trust.
+// aish yolo off is let through, spelled so and nothing else: it only turns
+// the checks on, and a trap of the agent's could do worse than that with
+// any command.
+func yolos(argv []string) bool {
+	return runsAish(argv, "yolo", "off")
+}
+
+// runsAish tells whether argv runs aish sub, as trusts tells of trust;
+// aish sub but, with nothing after it, is let through.
+func runsAish(argv []string, sub, but string) bool {
 	for i, w := range argv {
 		rest := argv[i+1:]
-		if slices.Equal(rest, []string{"trust", "--list"}) {
+		if slices.Equal(rest, []string{sub, but}) {
 			continue
 		}
 		op := operand(rest)
 		switch {
-		case isAish(w) && op == "trust":
+		case isAish(w) && op == sub:
 			return true
 		case i == 0 && isAish(w) && !plain(op):
 			return true
-		case i == 0 && !plain(w) && op == "trust":
+		case i == 0 && !plain(w) && op == sub:
 			return true
 		}
 	}
