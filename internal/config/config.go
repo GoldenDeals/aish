@@ -83,6 +83,11 @@ type Config struct {
 	// is told that it pays for all of it again. A Go duration (5m, 1h) or
 	// days (1d); "0" does not check.
 	CacheTTL string `toml:"cache_ttl"`
+	// ToolTimeout is how long a tool call may run when the model gives it
+	// no timeout of its own: past it the call is stopped as Esc stops it,
+	// what it printed is its result, and the request goes on. A Go
+	// duration (2m, 1h) or days (1d); "0" is no limit.
+	ToolTimeout string `toml:"tool_timeout"`
 	// ColdWarnTokens is the size of a session, in tokens, from which a
 	// cache that expired or is not read is worth a word; 0 never.
 	ColdWarnTokens int `toml:"cold_warn_tokens"`
@@ -181,6 +186,7 @@ func Default() Config {
 		CompactAt:      0.8,
 		AskTimeout:     "5m",
 		CacheTTL:       "5m",
+		ToolTimeout:    "2m",
 		ColdWarnTokens: 50000,
 		JournalIgnore:  []string{"*secret*", "env", "printenv", "cat *credentials*", "history"},
 		StateIgnore:    []string{"*TOKEN*", "*SECRET*", "*KEY*", "*PASSWORD*", "AWS_*"},
@@ -318,6 +324,9 @@ func (c Config) check() error {
 	}
 	if _, err := ParseAge(c.CacheTTL); err != nil {
 		return fmt.Errorf("cache_ttl = %q: %w", c.CacheTTL, err)
+	}
+	if _, err := ParseAge(c.ToolTimeout); err != nil {
+		return fmt.Errorf("tool_timeout = %q: %w", c.ToolTimeout, err)
 	}
 	switch c.Policy.WriteOutsideHome {
 	case "", "allow", "ask", "deny":

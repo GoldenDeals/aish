@@ -141,6 +141,9 @@ type Agent struct {
 	exec    tools.Exec
 	hooks   hookState // found once per request
 	inCall  inCall    // the call Interrupt stops, see interrupt.go
+	// handLimit stops the command handed to the shell past its limit; it
+	// outlives the request that handed it off, see timeout.go.
+	handLimit handLimit
 	// subs are the subagents the task tool runs: see AddSubagents.
 	subs []subagent.Def
 	// bg are the subagents in the background, made on the first one and
@@ -180,6 +183,7 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	a.hideWork(true)
 	defer a.endWork()
 	a.load(true)
+	a.unlimitHanded() // a command Ctrl+C left is no longer the shell's
 	if err := a.closePending(ctx); err != nil {
 		return err
 	}
@@ -243,6 +247,7 @@ func (a *Agent) Resume(ctx context.Context, id string, rc int, ex tools.Exec) er
 	if call == nil {
 		return fmt.Errorf("no pending tool call %s", id)
 	}
+	a.unlimitHanded() // the shell is done with it
 	out, err := a.Shell.Wait(ctx, id, 10*time.Second)
 	if err != nil {
 		out = rpc.Output{Output: "(output was not captured: " + err.Error() + ")", Exit: rc}
@@ -250,8 +255,15 @@ func (a *Agent) Resume(ctx context.Context, id string, rc int, ex tools.Exec) er
 	res := bashResult(out, a.Cfg.MaxOutputBytes)
 	if out.Why != "" {
 		res = cutShort(res, &Interruption{Why: out.Why}) // the shell stopped it
+		if out.Why != ByUser.Why {
+			fmt.Fprintf(a.UI, "%s  (%s)%s\n", dim, out.Why, reset) // its limit: not the user's doing
+		}
 	}
-	if err := a.postTool(ctx, *call, a.hooks.handed(id), res, false); err != nil {
+	args := a.hooks.handed(id)
+	if args == nil {
+		args = a.callArgs(*call)
+	}
+	if err := a.postTool(ctx, *call, args, res, false); err != nil {
 		return err
 	}
 	return a.drive(ctx)
@@ -496,6 +508,12 @@ func (a *Agent) call(req context.Context, c session.ToolCall) (handedOff bool, e
 	if err != nil {
 		return false, a.append(toolResult(c, err.Error(), true))
 	}
+	// aish's timeout is no argument of the tool's: the policy, the hooks
+	// and the tool see the call without it (timeout.go).
+	lim, args, err := a.callLimit(t, args)
+	if err != nil {
+		return false, a.append(toolResult(c, err.Error(), true))
+	}
 
 	in := policy.NewInputIn(a.exec.Shell, t.Name(), args, a.exec.Dir, a.exec.Env, a.exec.Opts...)
 	in.GlobalAliases(a.exec.GlobalAliases)
@@ -579,13 +597,20 @@ func (a *Agent) call(req context.Context, c session.ToolCall) (handedOff bool, e
 			return false, a.append(toolResult(c, "empty command", true))
 		}
 		if hide {
-			return true, a.handHidden(c.ID, cmd)
+			err = a.handHidden(c.ID, cmd)
+		} else {
+			if !asked {
+				a.showBash(cmd, false)
+			}
+			err = a.Shell.HandOff(c.ID, cmd)
 		}
-		if !asked {
-			a.showBash(cmd, false)
+		if err == nil {
+			a.limitHanded(c.ID, lim)
 		}
-		return true, a.Shell.HandOff(c.ID, cmd)
+		return true, err
 	}
+	ctx, cancel := limit(ctx, lim)
+	defer cancel()
 	if hide {
 		return false, a.callHidden(req, ctx, t, c, args, title)
 	}
@@ -628,7 +653,7 @@ func (a *Agent) call(req context.Context, c session.ToolCall) (handedOff bool, e
 		if col >= 0 {
 			fmt.Fprint(a.UI, "\n")
 		}
-		if !streams {
+		if !streams || stop != ByUser { // its limit: not the user's doing
 			fmt.Fprintf(a.UI, "%s  (%s)%s\n", dim, stop.Why, reset)
 		}
 		return false, a.postTool(req, c, args, cutShort(capture.Truncate(res, a.Cfg.MaxOutputBytes*4), stop), true)

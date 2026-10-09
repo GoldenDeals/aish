@@ -233,6 +233,9 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 		runs[i] = a.prepSub(j.def, j.prompt)
 	}
 	if inBackground(args) {
+		for _, r := range runs {
+			r.limit = givenLimit(ctx) // the call ends now, they work on
+		}
 		return a.background().start(runs, live)
 	}
 	var open func(title string) Live
@@ -347,6 +350,9 @@ type subRun struct {
 	// subagent's turns cost goes there while the shell is in that session.
 	journal Journal
 	sess    string
+	// limit is how long one in the background may work, as the call of
+	// task gave it; 0 is no limit.
+	limit time.Duration
 }
 
 // prepSub takes what subagent d needs to work on prompt in the host's
@@ -395,7 +401,7 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
 			o = rpc.Output{Output: "not run: " + why, Exit: 126, Cwd: ex.Dir}
 		} else {
 			// The child's: its Cfg is the host's as the call found it.
-			o = child.runCommand(ctx, cmd, ex, out)
+			o = sh.run(ctx, id, ex.Dir, func(ctx context.Context) rpc.Output { return child.runCommand(ctx, cmd, ex, out) })
 		}
 		sh.done(id, o)
 		err = child.Resume(ctx, id, o.Exit, ex)
@@ -444,6 +450,10 @@ func (a *Agent) runCommand(ctx context.Context, cmd string, ex tools.Exec, out i
 		rc = 127
 		fmt.Fprintf(w, "%v\n", err)
 	}
+	why := ""
+	if in := stoppedBy(ctx); in != nil {
+		rc, why = in.Code, in.Why // its limit, or Esc: not the SIGKILL that ended it
+	}
 	if !w.bol {
 		io.WriteString(out, "\n")
 	}
@@ -454,7 +464,7 @@ func (a *Agent) runCommand(ctx context.Context, cmd string, ex tools.Exec, out i
 	if buf.AltScreen() {
 		text = "[full-screen interactive program; output not captured]"
 	}
-	return rpc.Output{Output: text, Exit: rc, Cwd: ex.Dir}
+	return rpc.Output{Output: text, Exit: rc, Cwd: ex.Dir, Why: why}
 }
 
 // claudeTools maps the tool names of Claude Code's subagent files to
@@ -854,19 +864,28 @@ func (j *memJournal) Append(es ...session.Entry) error {
 }
 
 // subShell is the Shell of a subagent: it keeps the command handed off
-// for runSub to run, and gives Resume the output runSub collected.
+// for runSub to run, and gives Resume the output runSub collected. The
+// limit of the command stops it (timeout.go): mu is for that, the timer
+// fires on a goroutine of its own.
 type subShell struct {
+	mu      sync.Mutex
 	id, cmd string
 	handed  bool
 	out     map[string]rpc.Output
+	stop    context.CancelCauseFunc // of the command running, see run
+	early   *Interruption           // asked for before it ran
 }
 
 func (s *subShell) HandOff(id, cmd string) error {
-	s.id, s.cmd, s.handed = id, cmd, true
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.id, s.cmd, s.handed, s.early = id, cmd, true, nil
 	return nil
 }
 
 func (s *subShell) take() (id, cmd string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	ok, s.handed = s.handed, false
 	return s.id, s.cmd, ok
 }

@@ -349,7 +349,7 @@ func (a *Agent) toolDefs(entries []session.Entry) []llm.ToolDef {
 	defers := a.deferring()
 	var defs []llm.ToolDef
 	add := func(t tools.Tool) {
-		defs = append(defs, llm.ToolDef{Name: t.Name(), Description: t.Desc(), Schema: t.Schema()})
+		defs = append(defs, llm.ToolDef{Name: t.Name(), Description: t.Desc(), Schema: a.schema(t)})
 	}
 	for _, t := range a.Tools.All() {
 		if !defers || !tools.IsHidden(t) {

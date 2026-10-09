@@ -193,10 +193,14 @@ func (p *Proxy) dropStop() {
 }
 
 // Interrupt stops the agent's command for call id the way Esc does, for in
-// (agent.Interrupter).
+// (agent.Interrupter). Its limit comes after the request: a command whose
+// output the agent took, or that Ctrl+C left, is no longer handed.
 func (s shell) Interrupt(id string, in *agent.Interruption) bool {
 	s.p.mu.Lock()
 	defer s.p.mu.Unlock()
+	if s.p.handed != id {
+		return false
+	}
 	return s.p.interruptCmd(id, in)
 }
 

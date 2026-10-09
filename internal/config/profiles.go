@@ -35,6 +35,7 @@ type Profile struct {
 	Effort        *string `toml:"effort"`
 	MaxTokens     *int64  `toml:"max_tokens"`
 	ContextWindow *int    `toml:"context_window"`
+	ToolTimeout   *string `toml:"tool_timeout"`
 }
 
 // LoadProfile is Load with profile name in force, "" being the top level
@@ -97,6 +98,7 @@ func (c Config) withProfile(name, from string) (Config, error) {
 	lay(&c.Effort, pr.Effort)
 	lay(&c.MaxTokens, pr.MaxTokens)
 	lay(&c.ContextWindow, pr.ContextWindow)
+	lay(&c.ToolTimeout, pr.ToolTimeout)
 	// Whether the endpoint changed is told by what the table sets, not by
 	// the values: a table naming provider or base_url has an endpoint of
 	// its own, and the top level's key is for the top level's.
@@ -157,6 +159,11 @@ func checkProfiles(ps map[string]Profile) error {
 		}
 		if err := checkProxies("profiles."+name+".", pr.HTTPProxy, pr.HTTPSProxy, pr.AllProxy); err != nil {
 			return err
+		}
+		if pr.ToolTimeout != nil {
+			if _, err := ParseAge(*pr.ToolTimeout); err != nil {
+				return fmt.Errorf("profiles.%s.tool_timeout = %q: %w", name, *pr.ToolTimeout, err)
+			}
 		}
 	}
 	return nil

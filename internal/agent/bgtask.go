@@ -197,7 +197,7 @@ func (s *bgSet) start(runs []*subRun, live io.Writer) (string, error) {
 			id: "bg" + strconv.Itoa(s.n), name: r.def.Name, prompt: r.prompt, state: bgQueued, run: r,
 			done: make(chan struct{}), out: &bgOutput{buf: capture.NewBuffer(subCapture, subCapture)},
 		}
-		j.ctx, j.cancel = context.WithCancel(context.Background())
+		j.ctx, j.cancel = bgContext(r.limit)
 		s.jobs[j.id] = j
 		s.order = append(s.order, j.id)
 		lines[i] = fmt.Sprintf("started %s (%s)", j.id, j.name)
@@ -242,6 +242,8 @@ func (s *bgSet) finish(j *bgJob, reply string, err error) {
 	switch {
 	case err == nil:
 		j.state = bgOK
+	case stoppedBy(j.ctx) != nil:
+		j.state, j.err = bgError, stoppedBy(j.ctx) // its limit, not task_cancel
 	case j.ctx.Err() != nil:
 		j.state = bgCancelled
 	default:
