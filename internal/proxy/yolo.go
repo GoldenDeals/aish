@@ -46,8 +46,9 @@ const (
 	yoloColor = "\x1b[0;31m"
 )
 
-// yoloStatus is the status text with the mark while yolo is on. Called
-// under p.mu.
+// yoloStatus is the status text with the mark while yolo is on; of no
+// text, the mark alone, which drawStatus draws when the status is off or
+// does not fit. Called under p.mu.
 func (p *Proxy) yoloStatus(text string) string {
 	switch {
 	case !p.yolo:

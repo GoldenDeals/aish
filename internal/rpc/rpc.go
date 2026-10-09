@@ -111,6 +111,8 @@ type Info struct {
 	Model   string `json:"model"`
 	Effort  string `json:"effort,omitempty"`
 	Window  int    `json:"window"`
+	// Yolo is whether `aish yolo` has the checks of the agent's calls off.
+	Yolo bool `json:"yolo,omitempty"`
 	// Asking is whether a request of the agent is in progress: what only
 	// the user may do is refused.
 	Asking bool `json:"asking,omitempty"`

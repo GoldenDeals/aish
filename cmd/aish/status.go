@@ -113,6 +113,10 @@ func statusCmd(cfg config.Config) int {
 		row("", strings.TrimSuffix(note, "\n"))
 	}
 	dirs := func(list string) string { return strings.Join(filepath.SplitList(list), ", ") }
+	if info.Yolo {
+		// Above the checks it has off; nothing while they are on.
+		row("yolo", "\x1b[31mon: no policies, [policy] rules or questions for the assistant till this shell exits; aish yolo off\x1b[0m")
+	}
 	// As the agent has them: an error shows here, not on the next request.
 	if a.policyErr != nil {
 		// The row says policy already, and a validation error names its file.

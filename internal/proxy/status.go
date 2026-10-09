@@ -58,16 +58,26 @@ func (p *Proxy) statusText() (text, color string) {
 // what the shell prints at the right of the prompt, zsh's RPROMPT. A
 // prompt the command's output left off the first column gets none: p.line
 // counts its columns from 0.
+//
+// The prompt and the command need the room more: 40 columns are theirs,
+// past what is drawn. While yolo is on, its mark stays with prompt_status
+// off and in a terminal too narrow for the whole status: alone, on the
+// same terms, so not below 44 columns.
 func (p *Proxy) drawStatus() {
 	p.dropLine()
-	if !p.promptStatus || p.size == nil || p.col.off {
+	if p.size == nil || p.col.off {
 		return
 	}
-	text, color := p.statusText()
 	w, h := p.size()
-	width := runewidth.StringWidth(text)
-	if w < width+40 {
-		return // the prompt and the command need the room more
+	var text, color string
+	if p.promptStatus {
+		text, color = p.statusText()
+	}
+	if !p.promptStatus || w < runewidth.StringWidth(text)+40 {
+		// "" while yolo is off; paintYolo colors the mark.
+		if text, color = p.yoloStatus(""), ""; text == "" || w < runewidth.StringWidth(text)+40 {
+			return
+		}
 	}
 	p.line = newInputLine(w, h, text, color)
 	p.paintYolo(p.line)
@@ -78,7 +88,7 @@ func (p *Proxy) drawStatus() {
 // p.mu.
 func (p *Proxy) info() rpc.Info {
 	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Saved: p.sess.Saved(), Name: p.sess.Name(),
-		Profile: p.profile, Model: p.model, Effort: p.effort, Window: p.window, Asking: p.asking}
+		Profile: p.profile, Model: p.model, Effort: p.effort, Window: p.window, Yolo: p.yolo, Asking: p.asking}
 }
 
 // status counts what `aish status` shows. Called under p.mu.
