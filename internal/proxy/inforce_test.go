@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GoldenDeals/aish/internal/config"
 	"github.com/GoldenDeals/aish/internal/mcp"
 	"github.com/GoldenDeals/aish/internal/policy"
 	"github.com/GoldenDeals/aish/internal/rpc"
@@ -149,23 +151,29 @@ func TestInForceModels(t *testing.T) {
 	}
 }
 
-// mcpStarted gives p the MCP servers of path as Run does.
+// mcpStarted gives p the config files as they are now, and the MCP servers
+// of path, the MCP config there, as Run does.
 func mcpStarted(t *testing.T, p *Proxy, path string) {
 	t.Helper()
-	servers, err := mcp.LoadConfig(path)
+	conf := config.NewSnapshot()
+	if cfg, err := conf.LoadProfile(""); err != nil || cfg.MCPConfig != path {
+		t.Fatalf("the MCP config %q: %v", cfg.MCPConfig, err)
+	}
+	servers, err := conf.Servers()
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.mu.Lock()
-	p.mcpFile, p.mcpSum = path, fileSum(path)
+	p.conf = conf
 	p.mu.Unlock()
-	p.mcp = mcp.NewManager(servers, filepath.Join(os.Getenv("XDG_CACHE_HOME"), "aish", "mcp"))
+	p.mcp = mcp.NewManager(mcp.FromConfig(servers), filepath.Join(os.Getenv("XDG_CACHE_HOME"), "aish", "mcp"))
 	t.Cleanup(p.mcp.Close)
 }
 
 // An edit of the MCP config is told of and applied by aish apply-config:
-// a server gone stops, a new one is there, the rest go on; one that does
-// not parse is not applied, nor the rest of the config with it.
+// a server gone stops, a new one is there, one changed is new too, the rest
+// go on as they were; one that does not parse is not applied, nor the rest
+// of the config with it.
 func TestApplyConfigMCP(t *testing.T) {
 	p := configured(t, "fold_lines = 3\n")
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(os.Getenv("HOME"), "cache"))
@@ -173,17 +181,20 @@ func TestApplyConfigMCP(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// write gives each server "NAME" or "NAME ARG".
 	write := func(names ...string) {
 		t.Helper()
 		// Not started by Warm: their commands wait for the first call.
 		s := "servers:\n"
 		for _, n := range names {
-			s += fmt.Sprintf("  %s:\n    command: /nonexistent/%s\n    env_command:\n      TOKEN: echo t\n", n, n)
+			name, arg, _ := strings.Cut(n, " ")
+			s += fmt.Sprintf("  %s:\n    command: /nonexistent/%s\n    args: [%q]\n    env_command:\n      TOKEN: echo t\n", name, name, arg)
 		}
 		if err := os.WriteFile(path, []byte(s), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// servers are "NAME STATE": failed for those started, new for those not.
 	servers := func() []string {
 		t.Helper()
 		v, err := call(t, p, rpc.MethodMCPStatus, nil)
@@ -192,14 +203,15 @@ func TestApplyConfigMCP(t *testing.T) {
 		}
 		var names []string
 		for _, s := range v.(mcp.StatusResult).Servers {
-			names = append(names, s.Name)
+			names = append(names, s.Name+" "+s.State)
 		}
 		return names
 	}
-	write("kept", "old")
+	write("changed 1", "kept", "old")
 	mcpStarted(t, p, path)
+	p.mcp.List(context.Background(), true)
 
-	write("kept", "new")
+	write("changed 2", "kept", "new")
 	ask(t, p, nil)
 	ask(t, p, nil)
 	if n := strings.Count(p.out.(*terminal).String(), changedLine); n != 1 {
@@ -208,19 +220,26 @@ func TestApplyConfigMCP(t *testing.T) {
 	if res := inForce(t, p, rpc.ConfigParams{}); !slices.Equal(res.Changed, []string{path}) {
 		t.Errorf("changed %q", res.Changed)
 	}
-	if got := servers(); !slices.Equal(got, []string{"kept", "old"}) {
+	if got := servers(); !slices.Equal(got, []string{"changed failed", "kept failed", "old failed"}) {
 		t.Errorf("before apply-config: %q", got)
 	}
 
 	res := apply(t, p, nil)
-	if !slices.Contains(res.Files, path) || len(res.Restart) > 0 {
+	if !slices.Equal(res.Files, []string{path}) || len(res.Keys) > 0 || len(res.Restart) > 0 {
 		t.Errorf("applied %+v", res)
 	}
-	if got := servers(); !slices.Equal(got, []string{"kept", "new"}) {
+	if got := servers(); !slices.Equal(got, []string{"changed new", "kept failed", "new new"}) {
 		t.Errorf("after apply-config: %q", got)
 	}
 	if res := inForce(t, p, rpc.ConfigParams{}); len(res.Changed) > 0 {
 		t.Errorf("changed %q", res.Changed)
+	}
+	// Applied again, as it is: nothing to start anew.
+	if res := apply(t, p, nil); len(res.Files) > 0 || len(res.Keys) > 0 {
+		t.Errorf("applied again %+v", res)
+	}
+	if got := servers(); !slices.Equal(got, []string{"changed new", "kept failed", "new new"}) {
+		t.Errorf("applied again: %q", got)
 	}
 
 	if err := os.WriteFile(path, []byte("servers: [\n"), 0o600); err != nil {
@@ -229,13 +248,13 @@ func TestApplyConfigMCP(t *testing.T) {
 	rewrite(t, "fold_lines = 4\n")
 	p.marker(Marker{Kind: "cmd-end", Payload: "0;/tmp"})
 	if _, err := call(t, p, rpc.MethodApplyConfig, rpc.AgentParams{Cwd: filepath.Join(os.Getenv("HOME"), "work")}); err == nil ||
-		!strings.Contains(err.Error(), "nothing applied") {
+		!strings.Contains(err.Error(), "nothing applied") || !strings.Contains(err.Error(), path) {
 		t.Errorf("a broken MCP config: %v", err)
 	}
 	p.mu.Lock()
 	cfg, _ := p.snapshot().LoadProfile("")
 	p.mu.Unlock()
-	if got := servers(); cfg.FoldLines != 3 || !slices.Equal(got, []string{"kept", "new"}) {
+	if got := servers(); cfg.FoldLines != 3 || !slices.Equal(got, []string{"changed new", "kept failed", "new new"}) {
 		t.Errorf("with a broken MCP config: fold_lines %d, servers %q", cfg.FoldLines, got)
 	}
 }

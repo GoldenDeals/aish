@@ -13,9 +13,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Snapshot is the config files as the proxy took them: config.toml as aish
-// started or `aish apply-config` last read it, and the project file of each
-// directory a request came from, as the first request there since read it.
+// Snapshot is the config files as the proxy took them: config.toml and the
+// MCP config it names as aish started or `aish apply-config` last read
+// them, and the project file of each directory a request came from, as the
+// first request there since read it.
 // Requests go by the snapshot, not by the disk: an edit is in force once
 // the user applies it, all of it at once, not one key from the next
 // request and another only after a restart. A snapshot does not change
@@ -27,8 +28,10 @@ import (
 // is, its hooks and tools too: an edit, a git pull say, turns them off at
 // once, as Project does, and `aish trust --revoke` too.
 type Snapshot struct {
-	path string
-	cfg  read // config.toml
+	path    string
+	cfg     read   // config.toml
+	mcpPath string // the MCP config config.toml names
+	mcp     read   // it
 
 	mu    sync.Mutex
 	dirs  map[string]string // a request's directory → its project file, "" if none
@@ -41,17 +44,35 @@ type read struct {
 	err  error
 }
 
-// NewSnapshot reads config.toml, or the file $AISH_CONFIG names, now. An
-// error reading it is kept: LoadEnv and LoadProfile return it, as Load
-// does.
+// NewSnapshot reads config.toml, or the file $AISH_CONFIG names, now, and
+// the MCP config it names right after: one is not of another moment than
+// the other. An error reading config.toml is kept: LoadEnv and LoadProfile
+// return it, as Load does; one reading the MCP config, Servers.
 func NewSnapshot() *Snapshot {
 	path := configFile()
 	data, err := os.ReadFile(path)
-	return &Snapshot{path: path, cfg: read{data, err}, dirs: map[string]string{}, files: map[string]read{}}
+	mcpPath := mcpFile(data, err)
+	return &Snapshot{path: path, cfg: read{data, err}, mcpPath: mcpPath, mcp: onDisk(mcpPath),
+		dirs: map[string]string{}, files: map[string]read{}}
 }
 
 // Path is the config.toml the snapshot is of.
 func (s *Snapshot) Path() string { return s.path }
+
+// Servers are the MCP servers of the snapshot: of the MCP config that
+// config.toml names, as it was read with config.toml. No file is no
+// servers. What is wrong with the file is told here only: LoadEnv and
+// LoadProfile do not see it, and a broken MCP config keeps no request
+// from going.
+func (s *Snapshot) Servers() (map[string]MCPServer, error) {
+	switch {
+	case errors.Is(s.mcp.err, fs.ErrNotExist):
+		return nil, nil
+	case s.mcp.err != nil:
+		return nil, s.mcp.err
+	}
+	return parseServers(s.mcpPath, s.mcp.data)
+}
 
 // LoadEnv is the package's LoadEnv of the snapshot: the environment, getenv
 // the shell's, is read anew, the file is not.
@@ -100,14 +121,17 @@ func (s *Snapshot) project(cwd string) (string, read) {
 	return path, f
 }
 
-// Changed tells how config.toml and the project file of cwd are on disk
-// where they differ from the snapshot, by a key for each: the proxy says
-// once that an edit waits to be applied, and again for the next edit. A
-// directory not asked about has no project file to differ.
+// Changed tells how config.toml, the MCP config and the project file of
+// cwd are on disk where they differ from the snapshot, by a key for each:
+// the proxy says once that an edit waits to be applied, and again for the
+// next edit. A directory not asked about has no project file to differ.
 func (s *Snapshot) Changed(cwd string) []string {
 	var keys []string
 	if now := onDisk(s.path); !now.same(s.cfg) {
 		keys = append(keys, now.key(s.path))
+	}
+	if now := onDisk(s.mcpPath); !now.same(s.mcp) {
+		keys = append(keys, now.key(s.mcpPath))
 	}
 	s.mu.Lock()
 	path, asked := s.dirs[cwd]
@@ -125,12 +149,15 @@ func (s *Snapshot) Changed(cwd string) []string {
 }
 
 // Stale names the files that differ on disk from the snapshot: config.toml,
-// and the project files of the directories asked about, edited, gone, or
-// another one nearer to the directory now.
+// the MCP config, and the project files of the directories asked about,
+// edited, gone, or another one nearer to the directory now.
 func (s *Snapshot) Stale() []string {
 	var names []string
 	if !onDisk(s.path).same(s.cfg) {
 		names = append(names, s.path)
+	}
+	if !onDisk(s.mcpPath).same(s.mcp) {
+		names = append(names, s.mcpPath)
 	}
 	s.mu.Lock()
 	dirs, files := maps.Clone(s.dirs), maps.Clone(s.files)

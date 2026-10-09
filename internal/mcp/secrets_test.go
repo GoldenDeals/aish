@@ -15,53 +15,6 @@ import (
 	"time"
 )
 
-func TestLoadConfigCommands(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "mcp.yaml")
-	os.WriteFile(path, []byte(`servers:
-  tracker:
-    command: npx
-    env:
-      GRAFANA_URL: https://grafana.example
-    env_command:
-      TRACKER_TOKEN: pass show tracker/token
-  remote:
-    url: https://example.com/mcp
-    headers:
-      Accept: application/json
-    headers_command:
-      Authorization: echo "Bearer $(pass show example.com/token)"
-`), 0o600)
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := cfg["tracker"].EnvCommand["TRACKER_TOKEN"]; got != "pass show tracker/token" {
-		t.Errorf("env_command %q", got)
-	}
-	if got := cfg["remote"].HeadersCommand["Authorization"]; got != `echo "Bearer $(pass show example.com/token)"` {
-		t.Errorf("headers_command %q", got)
-	}
-
-	for _, tc := range []struct{ yaml, want string }{
-		{"servers:\n  s:\n    command: x\n    env: {T: a}\n    env_command: {T: printf b}\n",
-			"server s: T is in both env and env_command"},
-		{"servers:\n  s:\n    url: https://h\n    headers: {Authorization: a}\n    headers_command: {authorization: printf b}\n",
-			"server s: authorization is in both headers and headers_command"},
-		{"servers:\n  s:\n    command: x\n    env_command: {T: \"\"}\n", "server s: env_command T: empty command"},
-		{"servers:\n  s:\n    url: https://h\n    headers_command: {X-Key: \"  \"}\n", "server s: headers_command X-Key: empty command"},
-	} {
-		os.WriteFile(path, []byte(tc.yaml), 0o600)
-		if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), path) {
-			t.Errorf("%q: %v, want %q and the file", tc.yaml, err, tc.want)
-		}
-	}
-	// The same name in env and headers is no clash: they are not one thing.
-	os.WriteFile(path, []byte("servers:\n  s:\n    command: x\n    env: {Authorization: a}\n    headers_command: {Authorization: printf b}\n"), 0o600)
-	if _, err := LoadConfig(path); err != nil {
-		t.Errorf("env and headers_command of one name: %v", err)
-	}
-}
-
 // shortTimeout makes a command time out in d for the test.
 func shortTimeout(t *testing.T, d time.Duration) {
 	old := commandTimeout

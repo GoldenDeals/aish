@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"reflect"
 	"slices"
 
 	"github.com/GoldenDeals/aish/internal/config"
@@ -35,8 +37,6 @@ import (
 type settings struct {
 	conf     *config.Snapshot
 	started  *config.Config  // the config Run got: what only a restart applies is told by it
-	mcpFile  string          // the MCP config the servers of p.mcp are of
-	mcpSum   string          // its sha256 when read
 	confSaid map[string]bool // the edits on disk, not applied yet, that tellChanged told of
 
 	foldLines    int // the request's fold_lines, the project's included; before one, config.toml's
@@ -107,7 +107,7 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 	}
 	old := p.snapshot()
 	sh := shellModel{profile: p.profile, model: p.model, effort: p.effort, def: p.defProfile}
-	started, mcpFile, mcpSum := p.started, p.mcpFile, p.mcpSum
+	started := p.started
 	p.mu.Unlock()
 
 	next := config.NewSnapshot()
@@ -129,18 +129,15 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 	if _, err := fresh.Engine(ctx, cfg.PolicyDir, rulesOf(cfg)); err != nil {
 		return rpc.Applied{}, fmt.Errorf("%w; nothing applied", err)
 	}
-	// The MCP config, read anew if it is another file or was edited; one
-	// that does not parse is not applied, as config.toml is not. The sum
-	// is taken first: an edit while the file is read is told of
-	// afterwards rather than missed.
-	mcpNow := fileSum(top.MCPConfig)
-	reloadMCP := top.MCPConfig != mcpFile || mcpNow != mcpSum
-	var servers map[string]mcp.Server
-	if reloadMCP {
-		if servers, err = mcp.LoadConfig(top.MCPConfig); err != nil {
-			return rpc.Applied{}, fmt.Errorf("%w; nothing applied", err)
-		}
+	// The MCP config, read with config.toml; one that does not parse is
+	// not applied, as config.toml is not. The servers p.mcp runs are old's,
+	// none if they did not parse as aish started.
+	servers, err := next.Servers()
+	if err != nil {
+		return rpc.Applied{}, fmt.Errorf("%w; nothing applied", err)
 	}
+	running, _ := old.Servers()
+	reloadMCP := !maps.EqualFunc(running, servers, func(a, b config.MCPServer) bool { return reflect.DeepEqual(a, b) })
 
 	res := rpc.Applied{Keys: old.Keys(next)}
 	for _, f := range old.Stale() {
@@ -150,9 +147,6 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 	}
 	dirs, _ := p.policies.Changed()
 	res.Files = append(res.Files, dirs...)
-	if mcpNow != mcpSum { // another file alone is named by its key
-		res.Files = append(res.Files, top.MCPConfig)
-	}
 	was := top
 	if started != nil {
 		was = *started
@@ -188,9 +182,8 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 	if reloadMCP {
 		// The servers that stay go on as they are; the agent lists the
 		// new set with its next request.
-		p.mcp.Reload(servers)
+		p.mcp.Reload(mcp.FromConfig(servers))
 		p.mcp.Warm()
-		p.mcpFile, p.mcpSum = top.MCPConfig, mcpNow
 	}
 	// Kept by a key without the proxies of the requests: made anew.
 	p.agentProv, p.agentProvKey = nil, ""

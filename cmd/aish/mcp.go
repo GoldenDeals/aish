@@ -36,11 +36,11 @@ func mcpCmd(cfg config.Config, args []string) int {
 		}
 		live = true
 	} else {
-		servers, err := mcp.LoadConfig(cfg.MCPConfig)
+		servers, err := config.NewSnapshot().Servers()
 		if err != nil {
 			return fail(err)
 		}
-		res = mcp.NewManager(servers, filepath.Join(config.CacheDir(), "mcp")).Status()
+		res = mcp.NewManager(mcp.FromConfig(servers), filepath.Join(config.CacheDir(), "mcp")).Status()
 	}
 
 	if len(res.Servers) == 0 {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/http"
 	"os"
 	"os/exec"
 	"slices"
@@ -19,34 +18,6 @@ import (
 // may wait for a passphrase with nobody there to type it. A variable for
 // the tests.
 var commandTimeout = 30 * time.Second
-
-// checkCommands refuses a key given both a literal and a command, of
-// which one would be lost without a word, and an empty command. A header
-// is one key whatever its case, as HTTP has it.
-func (s Server) checkCommands() error {
-	for _, m := range []struct {
-		name     string
-		lit, cmd map[string]string
-		key      func(string) string
-	}{
-		{"env", s.Env, s.EnvCommand, func(k string) string { return k }},
-		{"headers", s.Headers, s.HeadersCommand, http.CanonicalHeaderKey},
-	} {
-		lit := map[string]bool{}
-		for k := range m.lit {
-			lit[m.key(k)] = true
-		}
-		for _, k := range slices.Sorted(maps.Keys(m.cmd)) {
-			if lit[m.key(k)] {
-				return fmt.Errorf("%s is in both %s and %s_command", k, m.name, m.name)
-			}
-			if strings.TrimSpace(m.cmd[k]) == "" {
-				return fmt.Errorf("%s_command %s: empty command", m.name, k)
-			}
-		}
-	}
-	return nil
-}
 
 // resolve gives the environment and the headers of s: a literal with its
 // ${VAR} expanded from the proxy's environment; a command, its output.

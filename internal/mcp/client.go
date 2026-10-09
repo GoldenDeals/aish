@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"go.yaml.in/yaml/v3"
+	"github.com/GoldenDeals/aish/internal/config"
 )
 
 const protocolVersion = "2025-06-18"
@@ -31,7 +31,7 @@ const protocolVersion = "2025-06-18"
 const cancelTimeout = 2 * time.Second
 
 // Server is one entry of mcp.yaml: a command speaking MCP on stdio, or the
-// URL of a Streamable HTTP endpoint.
+// URL of a Streamable HTTP endpoint. Its fields are config.MCPServer's.
 type Server struct {
 	Command string            `yaml:"command" json:"command,omitempty"`
 	Args    []string          `yaml:"args" json:"args,omitempty"`
@@ -51,33 +51,18 @@ type Server struct {
 	Timeout int `yaml:"timeout" json:"timeout,omitempty"`
 }
 
-// LoadConfig reads mcp.yaml. A missing file means no servers.
-func LoadConfig(path string) (map[string]Server, error) {
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
+// FromConfig is the servers of the MCP config, as config.Snapshot.Servers
+// read them, as the manager runs them. Server stays a type of its own: the
+// key of a server's cache is its JSON (NewManager).
+func FromConfig(cfgs map[string]config.MCPServer) map[string]Server {
+	if cfgs == nil {
+		return nil
 	}
-	if err != nil {
-		return nil, err
+	servers := make(map[string]Server, len(cfgs))
+	for name, c := range cfgs {
+		servers[name] = Server(c)
 	}
-	var f struct {
-		Servers map[string]Server `yaml:"servers"`
-	}
-	if err := yaml.Unmarshal(b, &f); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	for name, s := range f.Servers {
-		if (s.Command == "") == (s.URL == "") {
-			return nil, fmt.Errorf("%s: server %s needs either command or url", path, name)
-		}
-		if s.Expose != "" && s.Expose != "deferred" && s.Expose != "tools" {
-			return nil, fmt.Errorf("%s: server %s: expose must be deferred or tools", path, name)
-		}
-		if err := s.checkCommands(); err != nil {
-			return nil, fmt.Errorf("%s: server %s: %w", path, name, err)
-		}
-	}
-	return f.Servers, nil
+	return servers
 }
 
 type rpcError struct {

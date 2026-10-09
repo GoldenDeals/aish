@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/GoldenDeals/aish/internal/tools"
@@ -100,33 +99,10 @@ func TestRemoteInstructions(t *testing.T) {
 	}
 }
 
-// expose is deferred, by default, or tools; commands is gone with the
-// command wrappers.
+// expose is deferred by default; config.checkServers takes only deferred
+// and tools.
 func TestExpose(t *testing.T) {
-	dir := t.TempDir()
-	load := func(expose string) error {
-		path := filepath.Join(dir, "mcp.yaml")
-		y := "servers:\n  s:\n    command: x\n"
-		if expose != "" {
-			y += "    expose: " + expose + "\n"
-		}
-		if err := os.WriteFile(path, []byte(y), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		_, err := LoadConfig(path)
-		return err
-	}
-	for _, e := range []string{"", "deferred", "tools"} {
-		if err := load(e); err != nil {
-			t.Errorf("expose %q: %v", e, err)
-		}
-	}
-	for _, e := range []string{"commands", "all"} {
-		if err := load(e); err == nil || !strings.Contains(err.Error(), "expose must be deferred or tools") {
-			t.Errorf("expose %q: %v", e, err)
-		}
-	}
-	m := NewManager(map[string]Server{"s": {Command: "x"}}, dir)
+	m := NewManager(map[string]Server{"s": {Command: "x"}}, t.TempDir())
 	if st := m.Status().Servers[0]; st.Expose != "deferred" {
 		t.Errorf("default expose %q", st.Expose)
 	}

@@ -62,7 +62,6 @@ func (sh *shellRun) cleanup() {
 func (p *Proxy) configure(conf *config.Snapshot, cfg config.Config) {
 	p.mu.Lock()
 	p.conf, p.started = conf, &cfg
-	p.mcpFile, p.mcpSum = cfg.MCPConfig, fileSum(cfg.MCPConfig)
 	p.applyFields(cfg)
 	p.titles.on = true // the shell aish runs: see titles
 	p.mu.Unlock()
@@ -134,12 +133,16 @@ func (p *Proxy) setup(sh *shellRun, cfg config.Config) error {
 		}
 	}
 
-	servers, err := mcp.LoadConfig(cfg.MCPConfig)
+	// The servers of the snapshot configure took, read with config.toml.
+	p.mu.Lock()
+	conf := p.snapshot()
+	p.mu.Unlock()
+	servers, err := conf.Servers()
 	if err != nil {
 		// A broken MCP config must not keep the shell from starting.
 		fmt.Fprintf(os.Stderr, "aish: %v\n", err)
 	}
-	p.mcp = mcp.NewManager(servers, filepath.Join(config.CacheDir(), "mcp"))
+	p.mcp = mcp.NewManager(mcp.FromConfig(servers), filepath.Join(config.CacheDir(), "mcp"))
 	p.mcp.Warm()
 	sh.onExit(p.mcp.Close)
 
