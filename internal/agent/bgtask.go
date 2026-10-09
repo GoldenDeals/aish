@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/llm"
 	"github.com/GoldenDeals/aish/internal/tools"
 )
 
@@ -49,6 +50,7 @@ const (
 	bgQueued    = "queued"
 	bgRunning   = "running"
 	bgOK        = "ok"
+	bgPartial   = statusPartial // stopped at max_steps
 	bgError     = "error"
 	bgCancelled = "cancelled"
 )
@@ -94,7 +96,7 @@ func (j *bgJob) over() bool { return j.state != bgQueued && j.state != bgRunning
 // answer is j's block of a result, as task gives it, headed by its id too:
 // the same subagent may be at work several times.
 func (j *bgJob) answer() string {
-	status, text := outcome(j.reply, j.err)
+	status, text := outcome(j.reply, j.state == bgPartial, j.err)
 	if j.state == bgCancelled {
 		status, text = bgCancelled, j.reply
 	}
@@ -256,25 +258,28 @@ func (s *bgSet) schedule() {
 
 func (s *bgSet) work(j *bgJob) {
 	defer j.cancel()
-	reply, err := runSafe(j.ctx, j.run, nopFinish{j.out})
+	reply, partial, err := runSafe(j.ctx, j.run, nopFinish{j.out})
 	// For aish tasks show, as task shows it on the call's output; not
 	// task_cancel's stop.
 	if why := stoppedBy(j.ctx); why != nil {
 		fmt.Fprintf(j.out, "%s✗ %v%s\n", red, why, reset)
 	} else if err != nil && j.ctx.Err() == nil {
-		fmt.Fprintf(j.out, "%s✗ %v%s\n", red, err, reset)
+		fmt.Fprintf(j.out, "%s✗ %s%s\n", red, llm.Short(err), reset)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.running--
-	s.finish(j, reply, err)
+	s.finish(j, reply, partial, err)
 	s.schedule()
 }
 
-// finish records how j ended. Called under s.mu.
-func (s *bgSet) finish(j *bgJob, reply string, err error) {
+// finish records how j ended: partial if max_steps stopped it. Called
+// under s.mu.
+func (s *bgSet) finish(j *bgJob, reply string, partial bool, err error) {
 	j.reply, j.err, j.run = reply, err, nil
 	switch {
+	case err == nil && partial:
+		j.state = bgPartial
 	case err == nil:
 		j.state = bgOK
 	case stoppedBy(j.ctx) != nil:
@@ -300,7 +305,7 @@ func (s *bgSet) finish(j *bgJob, reply string, err error) {
 func (s *bgSet) halt(j *bgJob) bool {
 	j.cancel()
 	if j.state == bgQueued {
-		s.finish(j, "", j.ctx.Err())
+		s.finish(j, "", false, j.ctx.Err())
 		return false
 	}
 	return j.state == bgRunning
@@ -568,14 +573,14 @@ func (t *bgTool) Desc() string {
 	switch t.name {
 	case taskWait:
 		return "Waits for subagents that task started in the background and returns their answers: a block each, as task " +
-			"gives them, headed \"## ID NAME (ok|error|cancelled)\", and for one still at work only the heading " +
+			"gives them, headed \"## ID NAME (ok|partial|error|cancelled)\", and for one still at work only the heading " +
 			"\"## ID NAME (running|queued)\". With ids it waits for all of them; without, for any one at work, and returns " +
 			"the answers not taken yet. It waits timeout seconds at most (60 by default, 600 at most); time running out is " +
 			"no error: those at work go on, and a later task_wait or task_result gives their answers."
 	case taskResult:
 		return "Tells what subagents that task started in the background have now, without waiting: for ids, their answers " +
-			"as task_wait gives them; without ids, a line for each one known with its state (queued, running, ok, error, " +
-			"cancelled). An answer may be taken again."
+			"as task_wait gives them; without ids, a line for each one known with its state (queued, running, ok, partial, " +
+			"error, cancelled). An answer may be taken again."
 	}
 	return "Stops subagents that task started in the background, with the commands they run; what they did is lost."
 }

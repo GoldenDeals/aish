@@ -365,8 +365,12 @@ func (a *Agent) drive(ctx context.Context) (err error) {
 			}
 		}
 		if a.Cfg.MaxSteps > 0 && steps(a.entries) >= a.Cfg.MaxSteps {
-			fmt.Fprintf(a.UI, "%s[aish: stopped after %d steps; ask to continue]%s\n", dim, a.Cfg.MaxSteps, reset)
-			if err := a.append(session.Entry{Kind: session.KindAssistant, Text: fmt.Sprintf("(stopped after %d steps)", a.Cfg.MaxSteps)}); err != nil {
+			next := "; ask to continue"
+			if a.name != "" {
+				next = ": the answer is partial" // nobody asks a subagent to go on
+			}
+			fmt.Fprintf(a.UI, "%s[aish: stopped after %d steps%s]%s\n", dim, a.Cfg.MaxSteps, next, reset)
+			if err := a.append(session.Entry{Kind: session.KindAssistant, Text: stoppedNote(a.Cfg.MaxSteps)}); err != nil {
 				return err
 			}
 			a.stop(ctx)
@@ -810,7 +814,7 @@ func (a *Agent) ask(ctx context.Context, d policy.Decision) policy.Decision {
 		return policy.Decision{Action: policy.Deny, Reason: "the user did not answer in " + span(wait)}
 	}
 	if err != nil {
-		return policy.Decision{Action: policy.Deny, Reason: "needs confirmation, no terminal: " + d.Reason}
+		return policy.Decision{Action: policy.Deny, Reason: askFailed(err) + ": " + d.Reason}
 	}
 	a.asks.reset()
 	switch strings.ToLower(strings.TrimSpace(ans)) {

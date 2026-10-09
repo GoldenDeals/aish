@@ -252,8 +252,9 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 		open = (&relay{w: live, bol: true}).add
 	}
 	type result struct {
-		reply string
-		err   error
+		reply   string
+		partial bool
+		err     error
 	}
 	res := make([]result, len(jobs))
 	slots := make(chan struct{}, maxParallel)
@@ -273,17 +274,17 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
-			reply, err := runSafe(ctx, runs[i], w)
+			reply, partial, err := runSafe(ctx, runs[i], w)
 			switch {
 			case err == nil:
 				w.Finish(0)
 			case ctx.Err() != nil:
 				w.Finish(130)
 			default:
-				fmt.Fprintf(w, "%s✗ %v%s\n", red, err, reset)
+				fmt.Fprintf(w, "%s✗ %s%s\n", red, llm.Short(err), reset)
 				w.Finish(1)
 			}
-			res[i] = result{reply, err}
+			res[i] = result{reply, partial, err}
 		}()
 	}
 	wg.Wait()
@@ -292,17 +293,22 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 	}
 	blocks := make([]string, len(jobs))
 	for i, j := range jobs {
-		status, text := outcome(res[i].reply, res[i].err)
+		status, text := outcome(res[i].reply, res[i].partial, res[i].err)
 		blocks[i] = block(j.def.Name, status, text)
 	}
 	return strings.Join(blocks, "\n\n"), nil
 }
 
-// outcome is the status of a subagent that answered reply or failed with
-// err, and the text of its block.
-func outcome(reply string, err error) (status, text string) {
-	if err != nil {
-		return "error", strings.TrimSpace(reply + "\n\n" + err.Error())
+// outcome is the status of a subagent that answered reply, partial if
+// max_steps stopped it, or failed with err, and the text of its block. An
+// error of the API is told as to the user of the host: without the URL,
+// the request id and the raw body.
+func outcome(reply string, partial bool, err error) (status, text string) {
+	switch {
+	case err != nil:
+		return "error", strings.TrimSpace(reply + "\n\n" + llm.Short(err))
+	case partial:
+		return statusPartial, reply
 	}
 	return "ok", reply
 }
@@ -317,7 +323,7 @@ func block(title, status, text string) string {
 
 // runSafe is runSub in a goroutine of its own: a panic there would take
 // the proxy, and the shell with it, down.
-func runSafe(ctx context.Context, s *subRun, out Live) (reply string, err error) {
+func runSafe(ctx context.Context, s *subRun, out Live) (reply string, partial bool, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("subagent %s: %v", s.def.Name, r)
@@ -379,11 +385,11 @@ func (a *Agent) prepSub(d subagent.Def, prompt string) *subRun {
 	return s
 }
 
-// runSub runs subagent s and returns its final answer. Its output goes to
-// out.
-func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
+// runSub runs subagent s and returns its final answer, partial if
+// max_steps stopped it. Its output goes to out.
+func runSub(ctx context.Context, s *subRun, out Live) (string, bool, error) {
 	if s.err != nil {
-		return "", s.err
+		return "", false, s.err
 	}
 	j := &memJournal{id: "sub:" + s.def.Name, spent: s.spent}
 	sh := &subShell{}
@@ -413,14 +419,8 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
 		sh.done(id, o)
 		err = child.Resume(ctx, id, o.Exit, ex)
 	}
-	reply := ""
-	for i := len(j.es) - 1; i >= 0; i-- {
-		if j.es[i].Kind == session.KindAssistant {
-			reply = capture.Truncate(strings.TrimSpace(j.es[i].Text), s.cfg.MaxOutputBytes)
-			break
-		}
-	}
-	return reply, err
+	reply, partial := subAnswer(j.es, s.cfg.MaxSteps, s.cfg.MaxOutputBytes)
+	return reply, partial, err
 }
 
 // runCommand runs a subagent's command in a bash of its own, in the
@@ -923,7 +923,7 @@ func (subUI) Size() (int, int)              { return 0, 0 }
 func (subUI) CommandAt(int, bool, int)      {}
 
 func (subUI) Ask(context.Context, string) (string, error) {
-	return "", errors.New("a subagent cannot ask the user")
+	return "", errSubAsk
 }
 
 func (subUI) Form(context.Context, []Question) ([]Answer, error) {

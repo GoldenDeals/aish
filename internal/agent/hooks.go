@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -109,6 +110,11 @@ func (a *Agent) userPrompt(ctx context.Context, text, cwd string) ([]session.Ent
 			msg := "denied by hook " + h.Name
 			if *d != "" {
 				msg += ": " + *d
+			}
+			if a.name != "" {
+				// The brief was the host's: it gets the refusal as the
+				// subagent's error, which the subagent's output shows too.
+				return nil, false, errors.New(msg)
 			}
 			fmt.Fprintf(a.UI, "%s  ✗ %s%s\n", red, msg, reset)
 			return nil, false, nil
