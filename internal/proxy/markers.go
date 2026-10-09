@@ -153,6 +153,7 @@ func (p *Proxy) cmdEnd(payload string) {
 	rc, cwd, _ := strings.Cut(payload, ";")
 	p.recordUser(rc, cwd)
 	p.saveState(cwd) // with the command that changed it in the journal
+	p.tellEnded()    // the user's tasks in the background that ended, spawn.go
 	p.drawStatus()   // once the command is in the journal
 }
 

@@ -42,9 +42,11 @@ const (
 	MethodResume  = "resume" // switch this shell to another session
 	MethodRename  = "rename" // name this shell's session, RenameParams
 	// The agent: begin a request, go on after the shell ran a command,
-	// stop the one in progress, sum the session up.
+	// start a subagent in the background for the user (SpawnParams), stop
+	// the one in progress, sum the session up.
 	MethodAgentStart  = "agent_start"
 	MethodAgentResume = "agent_resume"
+	MethodAgentSpawn  = "agent_spawn"
 	MethodAgentCancel = "agent_cancel"
 	MethodCompact     = "compact"
 	MethodRecap       = "recap" // retell the whole session on the screen
@@ -261,6 +263,13 @@ type AgentParams struct {
 	RC   int      `json:"rc,omitempty"`   // agent_resume: its exit status
 	Cwd  string   `json:"cwd"`
 	Env  []string `json:"env,omitempty"`
+}
+
+// SpawnParams start subagent Agent in the background on the user's Text:
+// `&NAME text` at the prompt. Task comes back.
+type SpawnParams struct {
+	AgentParams
+	Agent string `json:"agent"`
 }
 
 // Output is what the proxy captured for one agent-run command.

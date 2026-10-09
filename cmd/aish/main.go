@@ -34,6 +34,8 @@
 //	aish expand                  print the outputs folded during the last request (Ctrl+O)
 //	aish agent start -- TEXT     (internal) hand a request to the agent in the proxy
 //	aish agent resume ID RC      (internal) continue it after a bash command
+//	aish agent spawn NAME -- TEXT
+//	                             (internal) start subagent NAME in the background, as &NAME TEXT at the prompt
 package main
 
 import (

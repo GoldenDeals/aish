@@ -18,12 +18,15 @@ import (
 // returns when the proxy has left a command for the shell or given the
 // final answer.
 func agentCmd(args []string) int {
-	const agentUsage = "usage: aish agent start -- TEXT | aish agent resume ID RC"
+	const agentUsage = "usage: aish agent start -- TEXT | aish agent resume ID RC | aish agent spawn NAME -- TEXT"
 	params := shellParams()
 	var method string
 	switch {
 	case len(args) >= 1 && args[0] == "start":
 		method, params.Text = rpc.MethodAgentStart, strings.Join(trimDashes(args[1:]), " ")
+	case len(args) >= 2 && args[0] == "spawn":
+		params.Text = strings.Join(trimDashes(args[2:]), " ")
+		return spawnCmd(rpc.SpawnParams{AgentParams: params, Agent: args[1]})
 	case len(args) == 3 && args[0] == "resume":
 		// Not 0 on garbage: the model would be told the command succeeded.
 		rc, err := strconv.Atoi(args[2])
@@ -59,6 +62,11 @@ const giveUpAfter = 5 * time.Second
 // it prints before the shell goes on to its prompt. A second Ctrl+C gives
 // up on the proxy.
 func request(method string, params rpc.AgentParams) int {
+	return requestInto(method, params, nil)
+}
+
+// requestInto is request with what the proxy answers decoded into result.
+func requestInto(method string, params, result any) int {
 	client, err := rpc.FromEnv()
 	if err != nil {
 		return fail(err)
@@ -69,7 +77,7 @@ func request(method string, params rpc.AgentParams) int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- client.CallContext(ctx, method, params, nil) }()
+	go func() { done <- client.CallContext(ctx, method, params, result) }()
 	interrupted := false
 	for {
 		select {

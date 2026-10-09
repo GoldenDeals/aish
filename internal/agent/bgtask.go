@@ -25,7 +25,8 @@ import (
 // its status. Their output is kept for `aish tasks` (bgview.go). They
 // belong to the session: clear, resume and the end of the proxy stop them
 // (StopBackground), and task_cancel; Ctrl+C and the end of a request do
-// not.
+// not. The user starts them too, by `&NAME text` at the prompt (spawn.go):
+// those are his alone, and the model's tools do not see them.
 
 const (
 	// maxUnfinished is how many subagents may be in the background at
@@ -81,6 +82,11 @@ type bgJob struct {
 	cancel   context.CancelFunc
 	done     chan struct{} // closed once it is finished
 	out      *bgOutput
+
+	// user is set for one the user started (spawn.go), not task: the
+	// model's tools do not see it, and told is set once a prompt told of
+	// its end.
+	user, told bool
 }
 
 func (j *bgJob) over() bool { return j.state != bgQueued && j.state != bgRunning }
@@ -128,8 +134,8 @@ func (a *Agent) madeBackground() *bgSet {
 	return a.bg
 }
 
-// backgroundKnown tells whether a subagent in the background is known:
-// at work, or finished with its answer kept.
+// backgroundKnown tells whether a subagent task started in the background
+// is known: at work, or finished with its answer kept.
 func (a *Agent) backgroundKnown() bool {
 	s := a.madeBackground()
 	if s == nil {
@@ -137,18 +143,29 @@ func (a *Agent) backgroundKnown() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.jobs) > 0
+	for _, j := range s.jobs {
+		if !j.user {
+			return true
+		}
+	}
+	return false
 }
 
-// noteBackground tells the user, as a request ends, of the subagents still
-// at work in the background: nothing else shows them.
+// noteBackground tells the user, as a request ends, of the subagents task
+// left at work in the background: nothing else shows them. Those the user
+// started are known to him.
 func (a *Agent) noteBackground() {
 	s := a.madeBackground()
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
-	n := s.unfinished()
+	n := 0
+	for _, j := range s.jobs {
+		if !j.over() && !j.user {
+			n++
+		}
+	}
 	s.mu.Unlock()
 	what := "1 subagent"
 	switch {
@@ -191,24 +208,34 @@ func (s *bgSet) start(runs []*subRun, live io.Writer) (string, error) {
 			"take the answers of those at work with task_wait, or stop them with task_cancel", len(runs), n+len(runs), maxUnfinished)
 	}
 	lines := make([]string, len(runs))
-	for i, r := range runs {
-		s.n++
-		j := &bgJob{
-			id: "bg" + strconv.Itoa(s.n), name: r.def.Name, prompt: r.prompt, state: bgQueued, run: r,
-			done: make(chan struct{}), out: &bgOutput{buf: capture.NewBuffer(subCapture, subCapture)},
-		}
-		j.ctx, j.cancel = bgContext(r.limit)
-		s.jobs[j.id] = j
-		s.order = append(s.order, j.id)
+	for i, j := range s.add(runs, false) {
 		lines[i] = fmt.Sprintf("started %s (%s)", j.id, j.name)
 	}
-	s.schedule()
 	s.mu.Unlock()
 	text := strings.Join(lines, "\n")
 	if live != nil {
 		io.WriteString(live, text+"\n")
 	}
 	return text, nil
+}
+
+// add queues runs as jobs, the user's if user, and starts what schedule
+// lets. Called under s.mu, the limit checked.
+func (s *bgSet) add(runs []*subRun, user bool) []*bgJob {
+	jobs := make([]*bgJob, len(runs))
+	for i, r := range runs {
+		s.n++
+		j := &bgJob{
+			id: "bg" + strconv.Itoa(s.n), name: r.def.Name, prompt: r.prompt, state: bgQueued, run: r,
+			done: make(chan struct{}), out: &bgOutput{buf: capture.NewBuffer(subCapture, subCapture)}, user: user,
+		}
+		j.ctx, j.cancel = bgContext(r.limit)
+		s.jobs[j.id] = j
+		s.order = append(s.order, j.id)
+		jobs[i] = j
+	}
+	s.schedule()
+	return jobs
 }
 
 // schedule starts the queued jobs, in the order they came, while fewer
@@ -229,6 +256,13 @@ func (s *bgSet) schedule() {
 func (s *bgSet) work(j *bgJob) {
 	defer j.cancel()
 	reply, err := runSafe(j.ctx, j.run, nopFinish{j.out})
+	// For aish tasks show, as task shows it on the call's output; not
+	// task_cancel's stop.
+	if why := stoppedBy(j.ctx); why != nil {
+		fmt.Fprintf(j.out, "%s✗ %v%s\n", red, why, reset)
+	} else if err != nil && j.ctx.Err() == nil {
+		fmt.Fprintf(j.out, "%s✗ %v%s\n", red, err, reset)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.running--
@@ -314,14 +348,17 @@ func (s *bgSet) missing(id string) string {
 	return fmt.Sprintf("unknown id %s: subagents in the background do not outlive aish, clear or resume", id)
 }
 
-// check fails on the first of ids the set does not know: the model fixes
-// the call.
+// check fails on the first of ids the set does not know, or knows as the
+// user's: the model fixes the call.
 func (s *bgSet) check(ids []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, id := range ids {
-		if s.jobs[id] == nil {
+		switch j := s.jobs[id]; {
+		case j == nil:
 			return errors.New(s.missing(id))
+		case j.user:
+			return fmt.Errorf("%s is the user's own subagent (&%s), not one task started: its answer is not for you", id, j.name)
 		}
 	}
 	return nil
@@ -370,14 +407,26 @@ loop:
 }
 
 // awaited are the ids wait waits for: those of ids not finished or, with
-// none, those at work. Called under s.mu.
+// none, those of task's at work. Called under s.mu.
 func (s *bgSet) awaited(ids []string) []string {
 	if len(ids) == 0 {
-		ids = s.order
+		ids = s.tasks()
 	}
 	var out []string
 	for _, id := range ids {
 		if j := s.jobs[id]; j != nil && !j.over() {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// tasks are the ids of the jobs task started, as started: those the model
+// may know of. Called under s.mu.
+func (s *bgSet) tasks() []string {
+	var out []string
+	for _, id := range s.order {
+		if !s.jobs[id].user {
 			out = append(out, id)
 		}
 	}
@@ -389,6 +438,9 @@ func (s *bgSet) ready(ids []string) bool {
 	if len(ids) == 0 {
 		atWork := false
 		for _, j := range s.jobs {
+			if j.user {
+				continue
+			}
 			if j.over() && !j.taken {
 				return true
 			}
@@ -411,7 +463,7 @@ func (s *bgSet) answers(ids []string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(ids) == 0 {
-		for _, id := range s.order {
+		for _, id := range s.tasks() {
 			if j := s.jobs[id]; !j.over() || !j.taken {
 				ids = append(ids, id)
 			}
@@ -435,15 +487,16 @@ func (s *bgSet) answers(ids []string) string {
 	return strings.Join(blocks, "\n\n")
 }
 
-// list is a line for each one known, with its state.
+// list is a line for each one task started that is known, with its state.
 func (s *bgSet) list() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.order) == 0 {
+	ids := s.tasks()
+	if len(ids) == 0 {
 		return "No subagents in the background."
 	}
-	lines := make([]string, len(s.order))
-	for i, id := range s.order {
+	lines := make([]string, len(ids))
+	for i, id := range ids {
 		j := s.jobs[id]
 		lines[i] = fmt.Sprintf("%s %s: %s", j.id, j.name, j.state)
 	}

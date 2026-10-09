@@ -53,6 +53,7 @@ __aish_buf=      # full text of the command being entered (multi-line aware)
 __aish_ps0=      # marker emitted by PS0, set only for user commands
 __aish_cur=      # call id of the agent's command running, see __aish_run
 __aish_asked=    # the text of the request in progress, see __aish_escaped
+__aish_spawn=    # NAME of a line "&NAME text", for __aish_ask
 
 # Every local in this file is declared bare and assigned apart: under the
 # user's set -k, `local x=v` puts x=v in the environment of local, which
@@ -77,6 +78,7 @@ __aish_route() {
 	__aish_buf=$__aish_line
 	__aish_ps0=
 	__aish_hint=
+	__aish_spawn=
 
 	local __aish_trim
 	__aish_trim=${__aish_line#"${__aish_line%%[![:space:]]*}"}
@@ -90,6 +92,15 @@ __aish_route() {
 	'@'*)
 		# Starts with a file mention: "@main.go what is this?"
 		__aish_to_llm "$__aish_trim"
+		return
+		;;
+	'&'[A-Za-z0-9_-]*)
+		# "&reviewer check the diff": the subagent, in the background, on
+		# the text after its name (__aish_spawning). To bash & and a word
+		# are a syntax error; &>file is a redirection, and stays its.
+		__aish_spawn=${__aish_trim%%[[:space:]]*}
+		__aish_spawn=${__aish_spawn#&}
+		__aish_to_llm "${__aish_trim#&"$__aish_spawn"}"
 		return
 		;;
 	'!'*)
@@ -163,6 +174,36 @@ __aish_is_skill() {
 		d=${d%/*}
 	done
 	[[ -f /.claude/skills/$n/SKILL.md ]]
+}
+
+# __aish_is_agent: is there a subagent named $1 here? The roots are those of
+# subagent.Find (internal/subagent), by file name, as __aish_is_skill has
+# those of skills.Find.
+__aish_is_agent() {
+	local n d
+	n=$1
+	[[ $n =~ ^[A-Za-z0-9_-]{1,64}$ ]] || return 1
+	for d in "$HOME/.claude" "${XDG_CONFIG_HOME:-$HOME/.config}/aish"; do
+		__aish_agent_file "$d/agents/$n.md" && return 0
+	done
+	d=$PWD
+	while [[ -n $d ]]; do
+		__aish_agent_file "$d/.claude/agents/$n.md" && return 0
+		d=${d%/*}
+	done
+	__aish_agent_file "/.claude/agents/$n.md"
+}
+
+# __aish_agent_file: does the file $1 start with a frontmatter, as
+# subagent.Find takes a subagent's to? A README beside them does not.
+__aish_agent_file() {
+	local __aish_l
+	[[ -f $1 && -r $1 ]] || return 1
+	__aish_l=
+	IFS= read -r __aish_l <"$1" || [[ -n $__aish_l ]] || return 1
+	__aish_l=${__aish_l#$'\xef\xbb\xbf'}
+	__aish_l=${__aish_l#"${__aish_l%%[![:space:]]*}"}
+	[[ ${__aish_l%"${__aish_l##*[![:space:]]}"} == --- ]]
 }
 
 # __aish_is_prose: is $1 words rather than shell — min_words of them or
@@ -469,7 +510,8 @@ __aish_to_llm() {
 	if [[ -z ${2-} && $__aish_route_expand == true && $__aish_t == *'$'* ]]; then
 		__aish_expanding "$__aish_t" && __aish_t=$__aish_x
 	fi
-	if [[ -z $__aish_t ]]; then
+	# &NAME without text goes on too: __aish_spawning tells what it lacks.
+	if [[ -z $__aish_t && -z ${__aish_spawn-} ]]; then
 		READLINE_LINE=
 	else
 		__aish_req=$__aish_t
@@ -679,14 +721,15 @@ __aish_ask() {
 	# __aish_unecho draws the prompt's $? with.
 	if [[ ${__aish_redraw-} == 1 ]]; then
 		__aish_redraw=0
-		__aish_unecho "$1"
+		__aish_unecho "${__aish_spawn:+&$__aish_spawn${1:+ }}$1"
 	fi
-	local __aish_q __aish_rc
-	__aish_q=$1
+	local __aish_q __aish_rc __aish_a
+	__aish_q=$1 __aish_a=${__aish_spawn-}
 	# $1 keeps the text for the agent's commands; the global would keep it
 	# after the request. __aish_asked keeps it for those the prompt runs
 	# after Esc (__aish_escaped), till __aish_precmd.
 	unset -v __aish_req
+	__aish_spawn=
 	# The rewritten line is kept out of history by HISTIGNORE; record what the
 	# user typed instead.
 	[[ -o history ]] && builtin history -s -- "${__aish_typed:-$__aish_q}"
@@ -696,11 +739,31 @@ __aish_ask() {
 		__aish_rc=$__aish_intr __aish_intr=
 		return "$__aish_rc"
 	fi
+	if [[ -n $__aish_a ]]; then
+		__aish_spawning "$__aish_a" "$__aish_q"
+		return
+	fi
 
 	printf '\e]6973;%s;ask-start\a' "$__aish_nonce"
 	"$AISH_BIN" agent start -- "$__aish_q" || return
 	__aish_asked=$__aish_q
 	__aish_run "$__aish_q"
+}
+
+# __aish_spawning starts subagent $1 in the background on $2, the text of a
+# line "&NAME text": the proxy runs it, nothing of it goes to the session,
+# and the first prompt after it is done tells so. A name no agents directory
+# here has a file of, or no text, gets a hint, and nothing starts.
+__aish_spawning() {
+	if ! __aish_is_agent "$1"; then
+		printf 'aish: no subagent %s here; aish agents lists them\n' "$1" >&2
+		return 2
+	fi
+	if [[ -z $2 ]]; then
+		printf 'aish: what is %s to do? &%s TEXT\n' "$1" "$1" >&2
+		return 2
+	fi
+	"$AISH_BIN" agent spawn "$1" -- "$2"
 }
 
 # __aish_run runs the commands the agent leaves for the shell, $1 the text
@@ -833,10 +896,12 @@ __aish_comp_D() {
 }
 
 # __aish_comp_I completes the first word: @path, a skill for /name if one
-# fits, else as before, by the user's -I or as command names.
+# fits, a subagent after & (__aish_comp_agent), else as before, by the
+# user's -I or as command names.
 __aish_comp_I() {
 	__aish_comp_mention "${2-}" && return 0
 	__aish_comp_skill "${2-}" && return 0
+	__aish_comp_agent "${2-}" && return 0
 	if [[ -n ${__aish_comp_iprev-} ]]; then
 		"$__aish_comp_iprev" "$@" && return 0
 		return $?
@@ -918,6 +983,49 @@ __aish_comp_skill() {
 		done
 	)
 	((${#COMPREPLY[@]} > 0))
+}
+
+# __aish_comp_agent completes NAME of a line "&NAME text" with the subagents
+# of __aish_is_agent's roots, and fails when none fits. Bash ends a command
+# at &: the word after it comes as the first word of a command, and nothing
+# before it, the & included, is in COMP_LINE. It comes so after ; and | too,
+# and a word typed at the start of a line comes the same. So the subagents
+# come for an empty word, which -I gets only after such a separator, and
+# for a word no command starts: one that does is the command's, as before.
+__aish_comp_agent() {
+	local __aish_n __aish_w __aish_f
+	__aish_n=$1
+	[[ $__aish_n != *[!A-Za-z0-9_-]* ]] || return 1
+	COMPREPLY=()
+	while IFS= read -r __aish_f; do
+		__aish_agent_file "$__aish_f" || continue
+		__aish_f=${__aish_f##*/}
+		__aish_f=${__aish_f%.md}
+		[[ ${#__aish_f} -le 64 && $__aish_f != *[!A-Za-z0-9_-]* ]] || continue
+		[[ " ${COMPREPLY[*]-} " == *" $__aish_f "* ]] || COMPREPLY+=("$__aish_f")
+	done < <(
+		set +f
+		shopt -s nullglob
+		shopt -u failglob nocaseglob dotglob
+		GLOBIGNORE=
+		__aish_w=$PWD
+		set -- "$HOME/.claude" "${XDG_CONFIG_HOME:-$HOME/.config}/aish"
+		while [[ -n $__aish_w ]]; do
+			set -- "$@" "$__aish_w/.claude"
+			__aish_w=${__aish_w%/*}
+		done
+		for __aish_w in "$@" /.claude; do
+			for __aish_f in "$__aish_w/agents/$__aish_n"*.md; do
+				printf '%s\n' "$__aish_f"
+			done
+		done
+	)
+	((${#COMPREPLY[@]} > 0)) || return 1
+	if [[ -n $__aish_n ]] && compgen -c -- "$__aish_n" >/dev/null; then
+		COMPREPLY=()
+		return 1
+	fi
+	return 0
 }
 
 # __aish_comp_aish completes the words of aish, which aish lists: the

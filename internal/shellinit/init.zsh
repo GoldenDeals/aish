@@ -50,6 +50,7 @@ typeset -g __aish_buf=     # the command being entered, its lines joined
 typeset -g __aish_ps0=     # the cmd-start marker preexec prints, for a user command only
 typeset -g __aish_t=       # the text of a request, as __aish_route found it
 typeset -g __aish_raw=     # 1: the text goes as typed (the ? prefix)
+typeset -g __aish_spawn=   # NAME of a line "&NAME text", for __aish_ask
 typeset -g __aish_req=     # the text __aish_ask "$__aish_req" sends
 typeset -g __aish_typed=   # what was typed, for history
 typeset -g __aish_redraw=  # 1: __aish_ask replaces the line on the screen
@@ -67,14 +68,14 @@ typeset -g __aish_hint= __aish_hinted= __aish_rc=0 __aish_based= __aish_autocd=o
 __aish_accept() {
 	typeset -g __aish_autocd=${options[autocd]}
 	__aish_route
-	if [[ -n $__aish_t || -n $__aish_raw ]] && __aish_more; then
+	if [[ -n $__aish_t || -n $__aish_raw || -n $__aish_spawn ]] && __aish_more; then
 		typeset -g __aish_t= __aish_raw=
 		return 0
 	fi
 	if [[ -n $__aish_t && -z $__aish_raw && $__aish_route_expand == true && $__aish_t == *'$'* ]]; then
 		__aish_expanding
 	fi
-	if [[ -n $__aish_t || -n $__aish_raw ]]; then
+	if [[ -n $__aish_t || -n $__aish_raw || -n $__aish_spawn ]]; then
 		__aish_request
 	fi
 	typeset -g __aish_t= __aish_raw=
@@ -86,7 +87,7 @@ __aish_accept() {
 __aish_route() {
 	emulate -L zsh -o extendedglob
 	local __aish_line __aish_trim __aish_w __aish_end
-	__aish_t= __aish_raw=
+	__aish_t= __aish_raw= __aish_spawn=
 	__aish_line=$BUFFER
 	if [[ -n $PREBUFFER ]]; then
 		# Continuation line (PS2): part of a command already routed to zsh.
@@ -107,6 +108,14 @@ __aish_route() {
 	('@'*)
 		# Starts with a file mention: "@main.go what is this?"
 		__aish_t=$__aish_trim
+		return
+		;;
+	('&'[A-Za-z0-9_-]*)
+		# "&reviewer check the diff": the subagent, in the background, as in
+		# init.bash. To zsh & and a word are a parse error; &>file is a
+		# redirection, and stays its.
+		__aish_spawn=${${__aish_trim%%[[:space:]]*}#\&}
+		__aish_t=${__aish_trim#\&$__aish_spawn}
 		return
 		;;
 	('!'*)
@@ -196,6 +205,35 @@ __aish_is_skill() {
 		d=${d%/*}
 	done
 	[[ -f /.claude/skills/$n/SKILL.md ]]
+}
+
+# __aish_is_agent: is there a subagent named $1 here? The roots are those of
+# subagent.Find (internal/subagent), as in init.bash.
+__aish_is_agent() {
+	emulate -L zsh
+	local n d MATCH MBEGIN MEND match mbegin mend
+	n=$1
+	[[ $n =~ '^[A-Za-z0-9_-]{1,64}$' ]] || return 1
+	for d in "$HOME/.claude" "${XDG_CONFIG_HOME:-$HOME/.config}/aish"; do
+		__aish_agent_file "$d/agents/$n.md" && return 0
+	done
+	d=$PWD
+	while [[ -n $d ]]; do
+		__aish_agent_file "$d/.claude/agents/$n.md" && return 0
+		d=${d%/*}
+	done
+	__aish_agent_file "/.claude/agents/$n.md"
+}
+
+# __aish_agent_file: does the file $1 start with a frontmatter, as
+# subagent.Find takes a subagent's to? A README beside them does not.
+__aish_agent_file() {
+	emulate -L zsh -o extendedglob
+	local l
+	[[ -f $1 && -r $1 ]] || return 1
+	IFS= read -r l <$1 || [[ -n $l ]] || return 1
+	l=${l#$'\xef\xbb\xbf'}
+	[[ ${${l##[[:space:]]#}%%[[:space:]]#} == --- ]]
 }
 
 # __aish_is_prose: is $1 words rather than shell — min_words of them or
@@ -485,7 +523,8 @@ __aish_status() { return $1; }
 __aish_request() {
 	emulate -L zsh -o extendedglob
 	__aish_t=${${__aish_t##[[:space:]]#}%%[[:space:]]#}
-	if [[ -z $__aish_t ]]; then
+	# &NAME without text goes on too: __aish_spawning tells what it lacks.
+	if [[ -z $__aish_t && -z $__aish_spawn ]]; then
 		BUFFER=
 	else
 		__aish_req=$__aish_t
@@ -617,13 +656,13 @@ __aish_ask() {
 	# __aish_unecho draws the prompt's %? with.
 	if [[ ${__aish_redraw-} == 1 ]]; then
 		typeset -g __aish_redraw=0
-		__aish_unecho "$1"
+		__aish_unecho "${__aish_spawn:+&$__aish_spawn${1:+ }}$1"
 	fi
-	local __aish_q __aish_id __aish_cmd __aish_rc __aish_e __aish_c
-	__aish_q=$1
+	local __aish_q __aish_id __aish_cmd __aish_rc __aish_e __aish_c __aish_a
+	__aish_q=$1 __aish_a=$__aish_spawn
 	# $1 keeps the text for the agent's commands; the global would keep it
 	# after the request.
-	typeset -g __aish_req=
+	typeset -g __aish_req= __aish_spawn=
 	print -rs -- "${__aish_typed:-$__aish_q}"
 	typeset -g __aish_typed=
 	# Ctrl+C cut its expansion short: on the screen and in history, unsent.
@@ -631,6 +670,10 @@ __aish_ask() {
 		__aish_rc=$__aish_intr
 		typeset -g __aish_intr=
 		return $__aish_rc
+	fi
+	if [[ -n $__aish_a ]]; then
+		__aish_spawning "$__aish_a" "$__aish_q"
+		return
 	fi
 
 	printf '\e]6973;%s;ask-start\a' "$__aish_nonce"
@@ -673,6 +716,22 @@ __aish_ask() {
 		printf '\e]6973;%s;agent-end;%s;%s;%s\a' "$__aish_nonce" "$__aish_id" "$__aish_rc" "${PWD//[$'\a\e']/}"
 		"$AISH_BIN" agent resume "$__aish_id" "$__aish_rc" || break
 	done
+}
+
+# __aish_spawning starts subagent $1 in the background on $2, the text of a
+# line "&NAME text", as in init.bash; a name no agents directory here has a
+# file of, or no text, gets a hint.
+__aish_spawning() {
+	emulate -L zsh
+	if ! __aish_is_agent "$1"; then
+		print -ru2 -- "aish: no subagent $1 here; aish agents lists them"
+		return 2
+	fi
+	if [[ -z $2 ]]; then
+		print -ru2 -- "aish: what is $1 to do? &$1 TEXT"
+		return 2
+	fi
+	"$AISH_BIN" agent spawn "$1" -- "$2"
 }
 
 # Ctrl+V (or Ctrl+Q) before a paste, a habit where the terminal pastes with
@@ -753,13 +812,19 @@ __aish_comp_first() {
 
 # __aish_comp_ours completes the word under the cursor if it is aish's: an
 # @path after a first word that is no command, or first, @path or ?@path,
-# and /name if a skill fits.
+# NAME after an & that starts the line, and /name if a skill fits. Zsh ends
+# a command at &, and the word after it is the first one: the line before
+# it tells.
 __aish_comp_ours() {
 	emulate -L zsh -o extendedglob
 	[[ -z $compstate[quote] && -z $IPREFIX ]] || return 1
 	if ((CURRENT == 1)); then
 		if [[ $PREFIX == (\?|)@* ]]; then
 			__aish_comp_mention
+			return 0
+		fi
+		if [[ $PREFIX == [A-Za-z0-9_-]# && $LBUFFER == [[:space:]]#\&$PREFIX ]]; then
+			__aish_comp_agent
 			return 0
 		fi
 		[[ $PREFIX == /[A-Za-z0-9_-]# ]] && __aish_comp_skill
@@ -825,6 +890,28 @@ __aish_comp_skill() {
 	compadd -Q -- ${(u)names} && return 0
 	PREFIX=$p IPREFIX=$ip
 	return 1
+}
+
+# __aish_comp_agent completes NAME of a line "&NAME text" with the subagents
+# of __aish_is_agent's roots.
+__aish_comp_agent() {
+	emulate -L zsh -o extendedglob
+	local d f
+	local -a roots names
+	roots=("$HOME/.claude" "${XDG_CONFIG_HOME:-$HOME/.config}/aish")
+	d=$PWD
+	while [[ -n $d ]]; do
+		roots+=("$d/.claude")
+		d=${d%/*}
+	done
+	for d in $roots /.claude; do
+		for f in $d/agents/*.md(N-.); do
+			__aish_agent_file $f || continue
+			f=${f:t:r}
+			[[ $f == [A-Za-z0-9_-](#c1,64) ]] && names+=("$f")
+		done
+	done
+	compadd -Q -- ${(u)names}
 }
 
 # __aish_comp_aish completes the words of aish, which aish lists: the words

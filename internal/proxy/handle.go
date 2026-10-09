@@ -84,6 +84,9 @@ var handlers = map[string]handler{
 	rpc.MethodAgentResume: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
 		return nil, p.agentResume(ctx, ap)
 	}),
+	rpc.MethodAgentSpawn: decoded(func(p *Proxy, ctx context.Context, sp rpc.SpawnParams) (any, error) {
+		return p.agentSpawn(ctx, sp)
+	}),
 	rpc.MethodCompact: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
 		return nil, p.compact(ctx, ap)
 	}),
