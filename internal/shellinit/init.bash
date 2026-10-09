@@ -505,11 +505,16 @@ __aish_more() {
 	__aish_hold end-of-line
 }
 
-# __aish_hold binds \C-x\C-b, the accept-line of Enter's macro, to $1.
+# __aish_hold binds \C-x\C-b, the accept-line of Enter's macro, to $1 in
+# each keymap of the macro's. In vi command mode end-of-line is
+# vi-append-eol: bash takes a command there on to a next line in insert
+# mode, and so the line goes on.
 __aish_hold() {
-	local __aish_m
-	for __aish_m in emacs vi-insert; do
-		bind -m "$__aish_m" "\"\\C-x\\C-b\": $1"
+	local __aish_m __aish_f
+	for __aish_m in "${__aish_kms[@]}"; do
+		__aish_f=$1
+		[[ $__aish_m != vi-command || $1 != end-of-line ]] || __aish_f=vi-append-eol
+		bind -m "$__aish_m" "\"\\C-x\\C-b\": $__aish_f"
 	done
 	__aish_held=
 	[[ $1 == accept-line ]] || __aish_held=1
@@ -725,6 +730,22 @@ for __aish_km in emacs vi-insert; do
 	bind -m "$__aish_km" '"\C-j": "\C-x\C-a\C-x\C-b"'
 done
 unset __aish_km
+
+# In vi command mode, after Esc, Enter is accept-line, which would run a
+# request typed there as a command: it goes through the route there too.
+# A key the user bound there to something else or bound sequences under
+# stays his, and goes his way, past the route, as without aish.
+# __aish_kms are the keymaps of Enter's macro. Once, at load: $(...) forks.
+__aish_kms=(emacs vi-insert)
+__aish_b=$'\n'$(bind -m vi-command -p; bind -m vi-command -s; bind -m vi-command -X)$'\n'
+for __aish_k in '\C-m' '\C-j'; do
+	[[ $__aish_b == *$'\n"'"$__aish_k"$'": accept-line\n'* && $__aish_b != *$'\n"'"$__aish_k"[!\"]* ]] || continue
+	bind -m vi-command -x '"\C-x\C-a": __aish_route'
+	bind -m vi-command '"\C-x\C-b": accept-line'
+	bind -m vi-command "\"$__aish_k\": \"\\C-x\\C-a\\C-x\\C-b\""
+	__aish_kms=(emacs vi-insert vi-command)
+done
+unset __aish_k __aish_b
 
 # Ctrl+V (or Ctrl+Q) before a paste, a habit where the terminal pastes with
 # Ctrl+Shift+V: quoted-insert would take the paste's ESC for the character
