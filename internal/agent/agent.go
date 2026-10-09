@@ -138,6 +138,7 @@ type Agent struct {
 	maskKey string // the config the mask was built from: it is reloaded per request
 	exec    tools.Exec
 	hooks   hookState // found once per request
+	inCall  inCall    // the call Interrupt stops, see interrupt.go
 	// subs are the subagents the task tool runs: see AddSubagents.
 	subs []subagent.Def
 	// bg are the subagents in the background, made on the first one and
@@ -238,7 +239,11 @@ func (a *Agent) Resume(ctx context.Context, id string, rc int, ex tools.Exec) er
 	if err != nil {
 		out = rpc.Output{Output: "(output was not captured: " + err.Error() + ")", Exit: rc}
 	}
-	if err := a.postTool(ctx, *call, a.hooks.handed(id), bashResult(out, a.Cfg.MaxOutputBytes), false); err != nil {
+	res := bashResult(out, a.Cfg.MaxOutputBytes)
+	if out.Why != "" {
+		res = cutShort(res, &Interruption{Why: out.Why}) // the shell stopped it
+	}
+	if err := a.postTool(ctx, *call, a.hooks.handed(id), res, false); err != nil {
 		return err
 	}
 	return a.drive(ctx)
@@ -452,8 +457,19 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 
 // call executes one tool call. For a tool that hands its command off
 // (bash) it leaves the command for the shell and reports handedOff; the
-// result arrives with Resume. A dialog (ask_user) the user answers.
-func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, err error) {
+// result arrives with Resume. A dialog (ask_user) the user answers. The
+// call runs in a context of its own, made from req, the request's:
+// Interrupt stops the call alone, which gets a result then, and the
+// request goes on (settle). The post-tool hooks run in req: a hook that
+// masks the output is not cut short with the call.
+func (a *Agent) call(req context.Context, c session.ToolCall) (handedOff bool, err error) {
+	ctx, done := a.callContext(req)
+	defer done()
+	defer func() {
+		if !handedOff {
+			err = a.settle(req, ctx, c, err)
+		}
+	}()
 	t, ok := a.tool(c.Name)
 	if !ok {
 		return false, a.append(toolResult(c, "unknown tool "+c.Name, true))
@@ -553,7 +569,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		return true, a.Shell.HandOff(c.ID, cmd)
 	}
 	if hide {
-		return false, a.callHidden(ctx, t, c, args, title)
+		return false, a.callHidden(req, ctx, t, c, args, title)
 	}
 
 	col := -1 // where the line of the call was left open, if it was
@@ -575,12 +591,29 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		col = -1 // the UI ends the line
 	}
 	res, err := t.Execute(ctx, a.exec, args, out)
+	stop := interrupted(req, ctx)
+	if stop != nil && err == nil {
+		stop = nil // done before it was stopped
+	}
 	if live != nil {
 		exit := -1
-		if errors.Is(ctx.Err(), context.Canceled) {
+		switch {
+		case stop != nil:
+			exit = stop.Code
+		case errors.Is(ctx.Err(), context.Canceled):
 			exit = 130
 		}
 		live.Finish(exit)
+	}
+	if stop != nil {
+		// What it printed so far is its result, and the request goes on.
+		if col >= 0 {
+			fmt.Fprint(a.UI, "\n")
+		}
+		if !streams {
+			fmt.Fprintf(a.UI, "%s  (%s)%s\n", dim, stop.Why, reset)
+		}
+		return false, a.postTool(req, c, args, cutShort(capture.Truncate(res, a.Cfg.MaxOutputBytes*4), stop), true)
 	}
 	if err != nil {
 		if col >= 0 {
@@ -590,7 +623,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 			return false, ctx.Err()
 		}
 		fmt.Fprintf(a.UI, "%s  ✗ %v%s\n", red, err, reset)
-		return false, a.postTool(ctx, c, args, strings.TrimSpace(res+"\n"+err.Error()), true)
+		return false, a.postTool(req, c, args, strings.TrimSpace(res+"\n"+err.Error()), true)
 	}
 	if !streams {
 		// A longer result is kept for Ctrl+O, and the UI shows its status;
@@ -607,7 +640,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 			fmt.Fprintf(a.UI, "%s  %s%s\n", dim, summary(res), reset)
 		}
 	}
-	return false, a.postTool(ctx, c, args, capture.Truncate(res, a.Cfg.MaxOutputBytes*4), false)
+	return false, a.postTool(req, c, args, capture.Truncate(res, a.Cfg.MaxOutputBytes*4), false)
 }
 
 // show prints the call of a tool other than bash, titled title. Unless nl,

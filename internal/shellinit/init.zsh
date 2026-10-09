@@ -618,7 +618,7 @@ __aish_ask() {
 		typeset -g __aish_redraw=0
 		__aish_unecho "$1"
 	fi
-	local __aish_q __aish_id __aish_cmd __aish_rc
+	local __aish_q __aish_id __aish_cmd __aish_rc __aish_e __aish_c
 	__aish_q=$1
 	# $1 keeps the text for the agent's commands; the global would keep it
 	# after the request.
@@ -639,11 +639,36 @@ __aish_ask() {
 		IFS= read -r -d '' __aish_cmd <"$AISH_RUN/next.cmd" || :
 		: >|"$AISH_RUN/next.cmd"
 		__aish_rc=${__aish_cmd//[$'\a\e']/}
-		printf '\e]6973;%s;agent-start;%s;%s\a' "$__aish_nonce" "$__aish_id" "${__aish_rc:0:1000}"
-		# In a list, its failure neither returns under the user's
-		# err_return before agent-end nor exits under err_exit.
-		eval "$__aish_cmd" </dev/null && :
-		__aish_rc=$?
+		# Esc stops the command with SIGINT, once the proxy has written
+		# "<call id> <code>" to $AISH_RUN/esc: the always block finds the
+		# interrupt, resets it, and the command ends with that code. An
+		# interrupt breaks every loop it is in, this one too: break in the
+		# always block takes that for the loop of one round around it.
+		# Without the file the interrupt is Ctrl+C's and ends the request.
+		# agent-start is in the try block: the proxy may signal on it.
+		repeat 1; do
+			{
+				printf '\e]6973;%s;agent-start;%s;%s\a' "$__aish_nonce" "$__aish_id" "${__aish_rc:0:1000}"
+				# In a list, its failure neither returns under the user's
+				# err_return before agent-end nor exits under err_exit.
+				eval "$__aish_cmd" </dev/null && :
+				__aish_rc=$?
+			} always {
+				if [[ -s $AISH_RUN/esc ]]; then
+					IFS=' ' read -r __aish_e __aish_c <"$AISH_RUN/esc" || :
+					if [[ $__aish_e == "$__aish_id" ]]; then
+						: >|"$AISH_RUN/esc"
+						# Not interrupted when a trap of the user's took
+						# SIGINT: the command ended as the trap left it.
+						if ((TRY_BLOCK_INTERRUPT)); then
+							__aish_rc=$__aish_c
+							TRY_BLOCK_INTERRUPT=0
+							break
+						fi
+					fi
+				fi
+			}
+		done
 		printf '\e]6973;%s;agent-end;%s;%s;%s\a' "$__aish_nonce" "$__aish_id" "$__aish_rc" "${PWD//[$'\a\e']/}"
 		"$AISH_BIN" agent resume "$__aish_id" "$__aish_rc" || break
 	done

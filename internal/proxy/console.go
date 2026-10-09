@@ -28,6 +28,8 @@ type console struct {
 	form   *openForm  // the questions of ask_user while the user answers them
 	early  *early     // keys typed before readline has the terminal, see early.go
 	seq    keySeq     // keys a read cut, and pastes, see pastebrackets.go
+	esc    escKey     // a lone Esc during a request, see esc.go
+	lines  lineMode   // whether the shell's terminal reads lines (esc.go); nil without one
 }
 
 // emit writes to the terminal, or holds the output while the viewer or the
@@ -118,6 +120,9 @@ func (p *Proxy) takeKeys(b []byte) []byte {
 	}
 	if p.form != nil {
 		return p.formKey(b)
+	}
+	if b = p.escKeys(b); len(b) == 0 {
+		return nil
 	}
 	// A user's command (an editor, say) gets Ctrl+O as usual, and readline
 	// one pasted, with the rest of the paste.

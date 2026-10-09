@@ -66,5 +66,6 @@ func (p *Proxy) setTerminal(ptmx *os.File) {
 	}
 	p.mu.Lock()
 	p.fg = fg
+	p.lines = termLines(ptmx) // esc.go
 	p.mu.Unlock()
 }

@@ -264,6 +264,7 @@ type Output struct {
 	Exit   int    `json:"exit"`
 	Cwd    string `json:"cwd"`
 	TUI    bool   `json:"tui"`
+	Why    string `json:"why,omitempty"` // why the proxy had the shell stop it (Esc), "" if it ran to its end
 }
 
 // Handler serves one method call. Ctx is cancelled when the client hangs

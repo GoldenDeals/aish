@@ -19,8 +19,10 @@
 # (handled by the proxy) shows it.
 #
 # These markers, the files of $AISH_RUN (nonce, route, next.cmd, next.id,
-# state.base, state, restore.bash) and the calls of `aish agent` are the
-# contract between the proxy and any shell: init.zsh keeps it too.
+# esc, state.base, state, restore.bash) and the calls of `aish agent` are
+# the contract between the proxy and any shell: init.zsh keeps it too.
+# esc is "<call id> <code>" when Esc stopped the agent's command: the shell
+# ends it with agent-end and that code, and resumes the agent.
 
 [[ $- == *i* ]] || return 0
 [[ -n ${__aish_loaded-} ]] && return 0
@@ -49,6 +51,8 @@ type -P aish >/dev/null 2>&1 || aish() { "$AISH_BIN" "$@"; }
 __aish_fresh=1   # 1 while readline is at the primary prompt (not PS2)
 __aish_buf=      # full text of the command being entered (multi-line aware)
 __aish_ps0=      # marker emitted by PS0, set only for user commands
+__aish_cur=      # call id of the agent's command running, see __aish_run
+__aish_asked=    # the text of the request in progress, see __aish_escaped
 
 # Every local in this file is declared bare and assigned apart: under the
 # user's set -k, `local x=v` puts x=v in the environment of local, which
@@ -534,6 +538,11 @@ __aish_dump() {
 
 __aish_precmd() {
 	__aish_rc=$? # a global, as in __aish_route
+	# The agent's command was cut short; by Esc, the request goes on here.
+	if [[ -n ${__aish_cur-} ]]; then
+		__aish_escaped
+	fi
+	__aish_asked=
 	if [[ -n ${AISH_RUN-} ]]; then
 		# The state the shell starts with, which a session's changes are
 		# measured against; then the session `aish resume` switched to.
@@ -638,10 +647,11 @@ __aish_ask() {
 		__aish_redraw=0
 		__aish_unecho "$1"
 	fi
-	local __aish_q __aish_id __aish_cmd __aish_rc
+	local __aish_q __aish_rc
 	__aish_q=$1
 	# $1 keeps the text for the agent's commands; the global would keep it
-	# after the request.
+	# after the request. __aish_asked keeps it for those the prompt runs
+	# after Esc (__aish_escaped), till __aish_precmd.
 	unset -v __aish_req
 	# The rewritten line is kept out of history by HISTIGNORE; record what the
 	# user typed instead.
@@ -655,6 +665,17 @@ __aish_ask() {
 
 	printf '\e]6973;%s;ask-start\a' "$__aish_nonce"
 	"$AISH_BIN" agent start -- "$__aish_q" || return
+	__aish_asked=$__aish_q
+	__aish_run "$__aish_q"
+}
+
+# __aish_run runs the commands the agent leaves for the shell, $1 the text
+# of the request for them, until it leaves none. __aish_cur is the call
+# whose command runs, from before its agent-start to after its agent-end:
+# Esc stops that command with SIGINT, which throws the whole line away, as
+# Ctrl+C does, and __aish_escaped goes on with the request at the prompt.
+__aish_run() {
+	local __aish_id __aish_cmd __aish_rc
 	while [[ -s $AISH_RUN/next.cmd ]]; do
 		IFS= read -r __aish_id <"$AISH_RUN/next.id"
 		# Read whole, to the end of the file: read fails there, and that is
@@ -662,12 +683,39 @@ __aish_ask() {
 		IFS= read -r -d '' __aish_cmd <"$AISH_RUN/next.cmd" || :
 		: >|"$AISH_RUN/next.cmd"
 		__aish_rc=${__aish_cmd//[$'\a\e']/}
+		__aish_cur=$__aish_id
 		printf '\e]6973;%s;agent-start;%s;%s\a' "$__aish_nonce" "$__aish_id" "${__aish_rc:0:1000}"
 		eval "$__aish_cmd" </dev/null
 		__aish_rc=$?
 		printf '\e]6973;%s;agent-end;%s;%s;%s\a' "$__aish_nonce" "$__aish_id" "$__aish_rc" "${PWD//[$'\a\e']/}"
+		__aish_cur=
 		"$AISH_BIN" agent resume "$__aish_id" "$__aish_rc" || break
 	done
+}
+
+# __aish_escaped goes on with the request at the prompt after Esc stopped
+# the agent's command: the proxy wrote "<call id> <code>" to $AISH_RUN/esc,
+# then sent SIGINT. No trap keeps the line from that, not in a loop of the
+# shell's own: it is gone, __aish_ask with it, as after Ctrl+C. Here goes
+# what __aish_run would have done: agent-end with that code, `agent
+# resume`, and the commands the agent leaves after it. $? stays 130: bash
+# gives it back after PROMPT_COMMAND. Without the file the command was cut
+# short by Ctrl+C, or returned: the request is over. agent-end goes before
+# __aish_cur is cleared: a second SIGINT before it comes back here.
+__aish_escaped() {
+	local __aish_id __aish_code
+	if [[ -s ${AISH_RUN-}/esc ]]; then
+		IFS=' ' read -r __aish_id __aish_code <"$AISH_RUN/esc" || :
+	fi
+	if [[ ${__aish_id-} != "$__aish_cur" ]]; then
+		__aish_cur=
+		return 0
+	fi
+	printf '\e]6973;%s;agent-end;%s;%s;%s\a' "$__aish_nonce" "$__aish_id" "$__aish_code" "${PWD//[$'\a\e']/}"
+	__aish_cur=
+	: >|"$AISH_RUN/esc"
+	"$AISH_BIN" agent resume "$__aish_id" "$__aish_code" || return 0
+	__aish_run "${__aish_asked-}"
 }
 
 for __aish_km in emacs vi-insert; do

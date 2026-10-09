@@ -147,6 +147,7 @@ func (p *Proxy) cmdEnd(payload string) {
 	p.at = nil
 	p.asking = false
 	p.handed = "" // cut short by Ctrl+C or return, or never run
+	p.dropStop()
 	p.closeTool()
 	p.closeInterrupted()
 	rc, cwd, _ := strings.Cut(payload, ";")
@@ -236,6 +237,7 @@ func (p *Proxy) agentCmdStart(payload string) {
 	}
 	p.at, p.hide = nil, false
 	p.agent[id] = seg
+	p.stopStarted(id) // Esc came before it, see esc.go
 }
 
 // agentCmdEnd ends the agent's command, payload "id;rc;cwd", and gives
@@ -260,5 +262,5 @@ func (p *Proxy) agentCmdEnd(payload string) {
 		p.emit([]byte("\r\n"))
 	}
 	out, tui := render(seg.buf)
-	p.finish(id, rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui})
+	p.finish(id, rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui, Why: p.stopEnded(id)})
 }

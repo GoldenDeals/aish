@@ -42,6 +42,11 @@ type agentHost struct {
 	project   string             // the .aish.toml of the last request, "" if none
 	yolo      bool               // aish yolo is on: see yolo.go
 
+	// Esc, see esc.go: the agent's command the shell was asked to stop,
+	// and the request's cancel with a cause, errStopped.
+	stop    *cmdStop
+	stopReq context.CancelCauseFunc
+
 	policies     policy.Cache
 	untrusted    map[string]bool // the project files tellUntrusted told of
 	agentProv    llm.Provider    // the agent's provider, see providerFor
@@ -57,7 +62,8 @@ func (p *Proxy) request(ctx context.Context, ex tools.Exec, fresh bool, fn func(
 	p.mu.Lock()
 	gen := p.cancelGen
 	p.mu.Unlock()
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, stop := context.WithCancelCause(ctx)
+	cancel := func() { stop(nil) }
 	if !p.takeTurn(gen, cancel) {
 		cancel()
 		return context.Canceled
@@ -73,11 +79,11 @@ func (p *Proxy) request(ctx context.Context, ex tools.Exec, fresh bool, fn func(
 			p.mu.Unlock()
 		}
 		p.mu.Lock()
-		p.cancelReq, p.reqCtx = nil, nil
+		p.cancelReq, p.stopReq, p.reqCtx = nil, nil, nil
 		p.mu.Unlock()
 	}()
 	p.mu.Lock()
-	p.reqCtx = ctx
+	p.reqCtx, p.stopReq = ctx, stop
 	// Checked again: the request that had the turn while this one waited
 	// may have left a command for the shell.
 	handed := fresh && p.handed != ""
@@ -94,6 +100,9 @@ func (p *Proxy) request(ctx context.Context, ex tools.Exec, fresh bool, fn func(
 	p.mu.Lock()
 	p.overhead = o
 	p.mu.Unlock()
+	if errors.Is(context.Cause(ctx), errStopped) {
+		return nil // Esc in a turn: the agent waits for the user
+	}
 	if s := llm.Short(err); s != "" && !errors.Is(err, context.Canceled) {
 		// The shell prints it: an SDK's error carries the URL, the request
 		// ID and the raw body besides the API's type and message.

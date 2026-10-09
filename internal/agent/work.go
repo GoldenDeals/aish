@@ -419,8 +419,10 @@ func (a *Agent) handHidden(id, cmd string) error {
 // kept for Ctrl+O. A streaming tool gets no live output: its result has
 // what it printed. A call that fails is shown after all, as it would be
 // without hide_work, and not counted: it ends the group. A call Ctrl+C
-// cuts short is not counted either, nor shown: it stays pending.
-func (a *Agent) callHidden(ctx context.Context, t tools.Tool, c session.ToolCall, args map[string]any, title string) error {
+// cuts short is not counted either, nor shown: it stays pending. A call
+// stopped alone (Esc: ctx, made from req, interrupted) is shown as a
+// failed one is, and what it printed is its result.
+func (a *Agent) callHidden(req, ctx context.Context, t tools.Tool, c session.ToolCall, args map[string]any, title string) error {
 	g := a.work
 	k := kindOf(t)
 	g.add(k)
@@ -431,7 +433,8 @@ func (a *Agent) callHidden(ctx context.Context, t tools.Tool, c session.ToolCall
 	stop() // before the result, kept or shown
 	if err != nil {
 		g.drop(k)
-		if errors.Is(ctx.Err(), context.Canceled) {
+		in := interrupted(req, ctx)
+		if in == nil && errors.Is(ctx.Err(), context.Canceled) {
 			return ctx.Err()
 		}
 		if tools.Streams(t) && strings.TrimSpace(res) != "" {
@@ -443,11 +446,15 @@ func (a *Agent) callHidden(ctx context.Context, t tools.Tool, c session.ToolCall
 		} else {
 			a.show(title, true)
 		}
+		if in != nil {
+			fmt.Fprintf(a.UI, "%s  (%s)%s\n", dim, in.Why, reset)
+			return a.postTool(req, c, args, cutShort(capture.Truncate(res, a.Cfg.MaxOutputBytes*4), in), true)
+		}
 		fmt.Fprintf(a.UI, "%s  ✗ %v%s\n", red, err, reset)
-		return a.postTool(ctx, c, args, strings.TrimSpace(res+"\n"+err.Error()), true)
+		return a.postTool(req, c, args, strings.TrimSpace(res+"\n"+err.Error()), true)
 	}
 	g.hider.Hidden("⚙ "+title, res)
-	return a.postTool(ctx, c, args, capture.Truncate(res, a.Cfg.MaxOutputBytes*4), false)
+	return a.postTool(req, c, args, capture.Truncate(res, a.Cfg.MaxOutputBytes*4), false)
 }
 
 // leadBlanks leaves out the blank lines a reply begins with, while it has
