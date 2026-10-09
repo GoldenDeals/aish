@@ -4,7 +4,6 @@ package capture
 import (
 	"bytes"
 	"fmt"
-	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -96,31 +95,26 @@ const farCol = 512
 // screen is one line, FullScreen, and the main screen goes on below it.
 func Clean(raw []byte) string {
 	var lines []string
-	var line []rune
+	var line textLine
 	col := 0
 	put := func(r rune) {
-		for len(line) < col {
-			line = append(line, ' ')
-		}
-		if col < len(line) {
-			line[col] = r
-		} else {
-			line = append(line, r)
-		}
+		line.put(col, r)
 		col++
 	}
 	flush := func() {
-		lines = append(lines, strings.TrimRight(string(line), " "))
-		line, col = line[:0], 0
+		lines = append(lines, strings.TrimRight(line.String(), " "))
+		line.reset()
+		col = 0
 	}
 	// screen takes the stretch on the alternate screen that rest begins and
 	// returns its length. Programs nothing on the main screen came between
 	// share their line: a loop of them is not a line each.
 	screen := func(rest []byte) int {
-		if len(line) > 0 {
+		if line.len() > 0 {
 			flush()
 		}
-		line, col = line[:0], 0
+		line.reset()
+		col = 0
 		k := len(lines) - 1
 		for k >= 0 && lines[k] == "" {
 			k--
@@ -147,31 +141,23 @@ func Clean(raw []byte) string {
 			switch {
 			case !ok: // colors, titles, moves to other lines
 			case final == 'K' && arg == 0: // to the end of the line
-				line = line[:min(col, len(line))]
+				line.truncate(col)
 			case final == 'K' && arg == 1: // from its start through the cursor
-				for j := 0; j <= col && j < len(line); j++ {
-					line[j] = ' '
-				}
+				line.blank(0, col+1)
 			case final == 'K' && arg == 2: // all of it; the cursor stays
-				line = line[:0]
+				line.truncate(0)
 			case final == 'G':
-				col = min(max(arg, 1)-1, len(line)+farCol)
+				col = min(max(arg, 1)-1, line.len()+farCol)
 			case final == 'C':
-				col = min(col+max(arg, 1), max(col, len(line)+farCol))
+				col = min(col+max(arg, 1), max(col, line.len()+farCol))
 			case final == 'D':
 				col = max(col-max(arg, 1), 0)
 			case final == '@': // blanks inserted at the cursor push the rest right
-				if col < len(line) {
-					line = slices.Insert(line, col, slices.Repeat([]rune{' '}, min(max(arg, 1), farCol))...)
-				}
+				line.insert(col, min(max(arg, 1), farCol))
 			case final == 'P': // deleted at the cursor, the rest comes left
-				if col < len(line) {
-					line = slices.Delete(line, col, min(col+max(arg, 1), len(line)))
-				}
+				line.remove(col, max(arg, 1))
 			case final == 'X': // erased from the cursor on; it stays
-				for j := col; j < min(col+max(arg, 1), len(line)); j++ {
-					line[j] = ' '
-				}
+				line.blank(col, col+max(arg, 1))
 			}
 			i += n
 			continue
@@ -195,7 +181,7 @@ func Clean(raw []byte) string {
 		}
 		i++
 	}
-	if len(line) > 0 {
+	if line.len() > 0 {
 		flush()
 	}
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
