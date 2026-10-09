@@ -43,6 +43,7 @@ type panes struct {
 	// call is the live output of the task call, which the panes stand in
 	// for: the subagents write nothing there, and closePanes ends it.
 	call *fold
+	yolo bool // the bar has the mark of aish yolo, see yolo.go
 }
 
 func (pn *pane) write(b []byte) {
@@ -184,14 +185,16 @@ func (ps *panes) render() []byte {
 		for i, c := range cells {
 			ps.drawPane(&b, i, c)
 		}
-		fmt.Fprintf(&b, "\x1b[%d;1H%s%s%s", ps.h, reverse, cellText(ps.bar(), ps.w), reset)
+		mark, room := yoloBarMark(ps.yolo, ps.w)
+		fmt.Fprintf(&b, "\x1b[%d;1H%s%s%s%s", ps.h, reverse, cellText(ps.bar(), room), reset, mark)
 	}
 	b.WriteString("\x1b[?7h")
 	return b.Bytes()
 }
 
 // drawPane draws pane i in c: its header, then the tail of its output. A
-// pane zoomed has the keys in its header, as there is no status bar then.
+// pane zoomed has the keys in its header, and the mark of aish yolo, as
+// there is no status bar then.
 func (ps *panes) drawPane(b *bytes.Buffer, i int, c cell) {
 	if c.w <= 0 || c.h <= 0 {
 		return // a screen too small for all of them
@@ -205,12 +208,16 @@ func (ps *panes) drawPane(b *bytes.Buffer, i int, c cell) {
 	if ps.zoom == i {
 		head += "   0 grid  q detach  ctrl+c stop"
 	}
+	mark, room := "", w
+	if ps.zoom == i {
+		mark, room = yoloBarMark(ps.yolo, w)
+	}
 	rows := pn.rows(w, c.h-1)
 	for r := range c.h {
 		fmt.Fprintf(b, "\x1b[%d;%dH", c.y+r+1, c.x+1)
 		switch {
 		case r == 0:
-			b.WriteString(reverse + cellText(head, w) + reset)
+			b.WriteString(reverse + cellText(head, room) + reset + mark)
 		case r-1 < len(rows):
 			b.WriteString(cellText(rows[r-1], w))
 		default:

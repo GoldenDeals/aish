@@ -47,7 +47,7 @@ func (u *ui) Pane(title string) agent.Live {
 	defer p.mu.Unlock()
 	ps := p.panes
 	if ps == nil {
-		ps = &panes{zoom: -1, call: p.tool}
+		ps = &panes{zoom: -1, call: p.tool, yolo: p.yolo}
 		p.panes = ps
 		if p.view == nil && p.size != nil {
 			ps.delay = time.AfterFunc(paneDelay, func() {

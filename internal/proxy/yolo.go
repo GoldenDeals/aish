@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mattn/go-runewidth"
+
 	"github.com/GoldenDeals/aish/internal/agent"
 )
 
@@ -55,6 +57,7 @@ func (p *Proxy) setYolo(ctx context.Context, on bool) error {
 	}
 	if !on || p.yolo {
 		p.yolo = on
+		p.showYolo()
 		p.mu.Unlock()
 		return nil
 	}
@@ -86,6 +89,7 @@ func (p *Proxy) setYolo(ctx context.Context, on bool) error {
 		return errYoloAsks // a request began meanwhile: not the user's to answer for
 	}
 	p.yolo = true
+	p.showYolo()
 	return nil
 }
 
@@ -122,5 +126,39 @@ func (p *Proxy) yoloStatus(text string) string {
 func (p *Proxy) paintYolo(l *inputLine) {
 	if base, ok := strings.CutSuffix(l.text, yoloMark); ok && p.yolo {
 		l.text = base + yoloColor + yoloMark
+	}
+}
+
+// While the Ctrl+O viewer or the subagents' panes have the screen, the
+// prompt's status is out of sight: the mark goes to the right edge of
+// their status bar (of the zoomed pane's header, which has the keys then).
+// They draw it by a yolo of their own: openView and Pane copy p.yolo,
+// showYolo follows it. The alternate screen of a full-screen program gets
+// none, as it gets no status: it is the program's.
+
+// yoloBarMark is the mark at the right of a bar w columns wide, a space
+// before it, and the columns left of it for the bar's text: the text gives
+// way, not the mark. No mark, and all w columns, while yolo is off or the
+// bar is too narrow to keep a column of the text.
+func yoloBarMark(on bool, w int) (mark string, room int) {
+	mw := runewidth.StringWidth(yoloMark) + 1
+	if !on || w <= mw {
+		return "", w
+	}
+	return " " + yoloColor + yoloMark + reset, w - mw
+}
+
+// showYolo puts the mark on the bars of the viewer and the panes open now,
+// or takes it off, as p.yolo says. Called under p.mu.
+func (p *Proxy) showYolo() {
+	if p.view != nil && p.view.yolo != p.yolo {
+		p.view.yolo = p.yolo
+		p.write(p.view.render())
+	}
+	if p.panes != nil && p.panes.yolo != p.yolo {
+		p.panes.yolo = p.yolo
+		if p.panes.shown {
+			p.drawPanes()
+		}
 	}
 }

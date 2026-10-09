@@ -31,6 +31,7 @@ type viewer struct {
 	// the end of the folds only while the end is on the page.
 	scrolled bool
 	timer    *time.Timer // the next viewFrame; nil for a viewer of the tests
+	yolo     bool        // the bar has the mark of aish yolo, see yolo.go
 }
 
 // viewPart is a fold as the viewer shows it: its lines, the title's first,
@@ -314,7 +315,12 @@ func (v *viewer) render() []byte {
 		b.WriteString("\x1b[K\r\n")
 	}
 	end := min(v.top+v.page(), len(rows))
-	fmt.Fprintf(&b, "\x1b[7m %d-%d/%d  ↑↓ PgUp PgDn g G  ctrl+o/q close \x1b[0m\x1b[K", v.top+1, end, len(rows))
+	bar := fmt.Sprintf(" %d-%d/%d  ↑↓ PgUp PgDn g G  ctrl+o/q close ", v.top+1, end, len(rows))
+	mark, room := yoloBarMark(v.yolo, v.w)
+	fmt.Fprintf(&b, "\x1b[7m%s\x1b[0m\x1b[K", runewidth.Truncate(bar, room, ""))
+	if mark != "" {
+		fmt.Fprintf(&b, "\x1b[%dG%s", room+1, mark)
+	}
 	return b.Bytes()
 }
 

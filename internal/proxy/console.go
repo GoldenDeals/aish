@@ -52,6 +52,7 @@ func (t *console) write(b []byte) { _, _ = t.out.Write(b) }
 func (p *Proxy) openView(folds []Fold) {
 	w, h := p.size()
 	v := newViewer(folds, w, h)
+	v.yolo = p.yolo
 	p.view = v
 	p.write(v.open())
 	v.timer = time.AfterFunc(viewTick, func() { p.viewFrame(v) })
