@@ -199,6 +199,9 @@ func (p *Proxy) recordUser(rc, cwd string) {
 	if seg == nil || strings.TrimSpace(seg.cmd) == "" {
 		return
 	}
+	if aishOnly(seg.cmd) {
+		return // `aish status` and the like: the session told of itself
+	}
 	exit, _ := strconv.Atoi(rc)
 	out, tui := render(seg.buf)
 	if seg.cleared && strings.TrimSpace(out) == "" {
