@@ -112,17 +112,29 @@ const cancelled = "the user cancelled: stop and wait for their next request, do 
 
 // dialog asks the questions of call c, made with args, and records the
 // answers as its result. Ctrl+C leaves the call pending, as with any tool.
+// Unanswered in ask_timeout, the form is closed and the model told so.
 func (a *Agent) dialog(ctx context.Context, c session.ToolCall, args map[string]any) error {
 	qs, err := ParseQuestions(args)
 	if err != nil {
 		fmt.Fprintf(a.UI, "%s  ✗ %v%s\n", red, err, reset)
 		return a.postTool(ctx, c, args, err.Error(), true)
 	}
-	ans, err := a.UI.Form(ctx, qs)
+	fctx, stop := ctx, context.CancelFunc(func() {})
+	wait := a.Cfg.AskMaxWait()
+	if wait > 0 {
+		fctx, stop = waitAnswer(ctx, wait)
+	}
+	ans, err := a.UI.Form(fctx, qs)
+	stop()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	switch {
+	case wait > 0 && timedOut(ctx, err):
+		// The model decides what follows: no error, which would have it
+		// stop as after Esc.
+		fmt.Fprintf(a.UI, "%s  ✗ no answer in %s%s\n", red, span(wait), reset)
+		return a.postTool(ctx, c, args, noAnswer(wait), false)
 	case err != nil:
 		msg := "cannot ask the user: " + err.Error()
 		fmt.Fprintf(a.UI, "%s  ✗ %s%s\n", red, msg, reset)

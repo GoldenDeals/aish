@@ -44,12 +44,15 @@ func (p *Proxy) askForm(ctx context.Context, qs []agent.Question) ([]agent.Answe
 	case <-of.done:
 		return of.f.answers(), nil
 	case <-ctx.Done():
+		// Its deadline too: nobody answered in time, and the form goes as
+		// on Ctrl+C.
 		p.mu.Lock()
-		if p.form == of {
-			p.closeForm()
-			p.syncPaste()
+		defer p.mu.Unlock()
+		if p.form != of {
+			return of.f.answers(), nil // answered as ctx ended: the summary is on the screen
 		}
-		p.mu.Unlock()
+		p.closeForm()
+		p.syncPaste()
 		return nil, ctx.Err()
 	}
 }

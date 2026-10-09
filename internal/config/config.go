@@ -74,6 +74,10 @@ type Config struct {
 	// CompactAt is the share of the window past which the agent sums the
 	// session up before its next turn, as `aish compact` does; 0 never.
 	CompactAt float64 `toml:"compact_at"`
+	// AskTimeout is how long the form of ask_user waits for the user's
+	// answers: past it the form is closed and the model is told nobody
+	// answered. A Go duration (5m, 1h) or days (1d); "0" waits for ever.
+	AskTimeout string `toml:"ask_timeout"`
 	// CacheTTL is how long the provider keeps a session cached after its
 	// last turn: past it a request in a session of ColdWarnTokens or more
 	// is told that it pays for all of it again. A Go duration (5m, 1h) or
@@ -175,6 +179,7 @@ func Default() Config {
 		CodeStyle:      "monokai",
 		PromptStatus:   true,
 		CompactAt:      0.8,
+		AskTimeout:     "5m",
 		CacheTTL:       "5m",
 		ColdWarnTokens: 50000,
 		JournalIgnore:  []string{"*secret*", "env", "printenv", "cat *credentials*", "history"},
@@ -307,6 +312,9 @@ func (c Config) check() error {
 	}
 	if _, err := ParseAge(c.SessionsTTL); err != nil {
 		return fmt.Errorf("sessions_ttl = %q: %w", c.SessionsTTL, err)
+	}
+	if _, err := ParseAge(c.AskTimeout); err != nil {
+		return fmt.Errorf("ask_timeout = %q: %w", c.AskTimeout, err)
 	}
 	if _, err := ParseAge(c.CacheTTL); err != nil {
 		return fmt.Errorf("cache_ttl = %q: %w", c.CacheTTL, err)

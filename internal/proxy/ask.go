@@ -45,7 +45,9 @@ func (pr *prompt) chosen() string {
 
 // askUser prints q with Yes and No after it and waits for the user to pick
 // one, or for ctx: Ctrl+C goes to the shell, which stops the request.
-// Without a terminal there is nothing to draw the choices on.
+// ctx past its deadline is no answer in time: the question is left with
+// No, as if chosen, and the cause of ctx. Without a terminal there is
+// nothing to draw the choices on.
 func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	p.mu.Lock()
 	if p.size == nil {
@@ -73,12 +75,30 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 		return ans, nil
 	case <-ctx.Done():
 		p.mu.Lock()
-		if p.ask == pr {
-			p.ask = nil
-			p.emit([]byte("\x1b[?25h"))
-			p.syncPaste()
+		defer p.mu.Unlock()
+		if p.ask != pr {
+			// Answered as ctx ended: the screen shows the answer, and so
+			// it stands.
+			select {
+			case ans := <-pr.done:
+				return ans, nil
+			default:
+				return "", ctx.Err()
+			}
 		}
-		p.mu.Unlock()
+		p.ask = nil
+		end := ""
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// The keyboard is back as after an answer, and the line
+			// says that none came.
+			end = fmt.Sprintf("\x1b[%dDNo", choicesWidth)
+			if why := context.Cause(ctx); why != ctx.Err() {
+				end += " (" + why.Error() + ")"
+			}
+			end += "\x1b[K\r\n"
+		}
+		p.emit([]byte(end + "\x1b[?25h"))
+		p.syncPaste()
 		return "", ctx.Err()
 	}
 }

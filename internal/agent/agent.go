@@ -65,11 +65,14 @@ type UI interface {
 	// spinner.
 	Size() (cols, rows int)
 	// Ask prints q and returns the line the user answers with. An error
-	// means nobody can answer.
+	// means nobody can answer, or ctx ended. ctx past its deadline is a
+	// question nobody answered in time: it is left declined on the screen,
+	// with the cause of ctx.
 	Ask(ctx context.Context, q string) (string, error)
 	// Form asks the user qs one at a time and returns an answer to each;
 	// nil answers mean the user cancelled. An error means nobody can
-	// answer, or ctx ended: then the form is gone from the screen.
+	// answer, or ctx ended, at its deadline too: then the form is gone
+	// from the screen.
 	Form(ctx context.Context, qs []Question) ([]Answer, error)
 	// Fold keeps text, a tool's result, behind "ctrl+o to expand" and
 	// shows its status, which ends the line.
@@ -154,6 +157,9 @@ type Agent struct {
 	// coldNoted is the journal (Journal.ID) whose uncached prefix warnCold
 	// has told of: once a session is enough.
 	coldNoted string
+	// asks is how long the next question of the policy waits for an
+	// answer: less after each one left unanswered, see askwait.go.
+	asks askWaits
 	// work is the group of calls hide_work sums up in one line, while UI
 	// is the workUI over it; nil when the calls are shown. See work.go.
 	work *workGroup
@@ -162,6 +168,7 @@ type Agent struct {
 // Start records a new request made in ex and works on it.
 func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	a.exec, a.env, a.compactFailed = ex, "", false
+	a.asks.reset() // the user is back
 	a.hideWork(true)
 	defer a.endWork()
 	a.load(true)
@@ -697,16 +704,25 @@ func renderBash(cmd string, cols int, open bool) (text string, col int, long boo
 	return text, col, len(lines) > 1 || w > cols, hidden
 }
 
-// ask lets the user decide an "ask" verdict on the terminal.
+// ask lets the user decide an "ask" verdict on the terminal. Unanswered
+// in time, the call is denied: see askwait.go.
 func (a *Agent) ask(ctx context.Context, d policy.Decision) policy.Decision {
 	q := "allow?"
 	if d.Reason != "" {
 		q = d.Reason + " — allow?"
 	}
-	ans, err := a.UI.Ask(ctx, fmt.Sprintf("%s%s%s", bold, q, reset))
+	wait := a.asks.wait()
+	actx, stop := waitAnswer(ctx, wait)
+	ans, err := a.UI.Ask(actx, fmt.Sprintf("%s%s%s", bold, q, reset))
+	stop()
+	if timedOut(ctx, err) {
+		a.asks.missed()
+		return policy.Decision{Action: policy.Deny, Reason: "the user did not answer in " + span(wait)}
+	}
 	if err != nil {
 		return policy.Decision{Action: policy.Deny, Reason: "needs confirmation, no terminal: " + d.Reason}
 	}
+	a.asks.reset()
 	switch strings.ToLower(strings.TrimSpace(ans)) {
 	case "y", "yes", "д", "да":
 		return policy.Decision{Action: policy.Allow}
