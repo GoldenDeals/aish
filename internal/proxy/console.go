@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"io"
+	"time"
 )
 
 // console is the user's terminal. All the proxy writes there goes to out
@@ -44,11 +45,14 @@ func (t *console) emit(b []byte) {
 // read in.
 func (t *console) write(b []byte) { _, _ = t.out.Write(b) }
 
-// openView opens the viewer of folds on the alternate screen.
-func (t *console) openView(folds []Fold) {
-	w, h := t.size()
-	t.view = newViewer(folds, w, h)
-	t.write(t.view.open())
+// openView opens the viewer of folds on the alternate screen. It shows
+// what comes while it is open, see viewFrame. Called under p.mu.
+func (p *Proxy) openView(folds []Fold) {
+	w, h := p.size()
+	v := newViewer(folds, w, h)
+	p.view = v
+	p.write(v.open())
+	v.timer = time.AfterFunc(viewTick, func() { p.viewFrame(v) })
 }
 
 // input copies the keyboard to bash. Ctrl+O while the assistant works or

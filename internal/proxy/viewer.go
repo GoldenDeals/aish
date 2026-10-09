@@ -4,68 +4,200 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/mattn/go-runewidth"
 
 	"github.com/GoldenDeals/aish/internal/capture"
 )
 
 // viewer shows folded outputs in full on the alternate screen. Ctrl+O opens
-// it and closes it again, leaving the screen as it was.
+// it and closes it again, leaving the screen as it was. While it is open it
+// shows what comes: viewFrame takes the folds anew and draws them if they
+// changed, following their end unless the user scrolled up from it.
 type viewer struct {
+	parts []viewPart // the folds shown, one under another
+	rows  []string   // their rows, a blank one between two folds
+	title []bool
+	start []int // the first row of every part
+	top   int
+	w, h  int
+
+	// scrolled is set once the user moved the view: from then on it follows
+	// the end of the folds only while the end is on the page.
+	scrolled bool
+	timer    *time.Timer // the next viewFrame; nil for a viewer of the tests
+}
+
+// viewPart is a fold as the viewer shows it: its lines, the title's first,
+// and those wrapped to the width w. It is kept from one tick to the next,
+// so that a fold that did not change is not cleaned and wrapped again.
+type viewPart struct {
+	fold   Fold
 	lines  []string
-	titles map[int]bool // indexes of title lines
-	rows   []string     // lines wrapped to the width
-	title  []bool
-	first  []int // first row of every line
-	top    int
-	w, h   int
+	titles int // how many of the lines are the title's
+	w      int
+	rows   []string
+	trows  int // how many of the rows are the title's
 }
 
 func newViewer(folds []Fold, w, h int) *viewer {
-	v := &viewer{titles: map[int]bool{}}
-	last := 0
-	for i, f := range folds {
-		if i > 0 {
-			v.lines = append(v.lines, "")
-		}
-		last = len(v.lines)
-		// A command's lines after the first are indented, as on the screen.
-		for j, l := range strings.Split(f.Title, "\n") {
-			if j > 0 {
-				l = "  " + l
-			}
-			v.titles[len(v.lines)] = true
-			v.lines = append(v.lines, strings.ReplaceAll(l, "\t", "        "))
-		}
-		text := strings.TrimRight(capture.Clean([]byte(f.Text)), "\n")
-		if text == "" {
-			continue // a command cut short on the screen, with no output
-		}
-		for _, l := range strings.Split(text, "\n") {
-			v.lines = append(v.lines, strings.ReplaceAll(l, "\t", "        "))
-		}
+	v := &viewer{w: max(w, 10), h: max(h, 2)}
+	v.set(folds)
+	if n := len(v.start); n > 0 {
+		v.top = v.start[n-1] // the most recent output first
 	}
-	v.resize(w, h)
-	v.top = v.first[last] // the most recent output first
 	v.clamp()
 	return v
 }
 
-// resize rewraps the lines to the terminal width.
-func (v *viewer) resize(w, h int) {
-	v.w, v.h = max(w, 10), max(h, 2)
-	v.rows, v.title, v.first = nil, nil, nil
-	for i, l := range v.lines {
-		v.first = append(v.first, len(v.rows))
-		r := []rune(l)
-		for {
-			n := min(len(r), v.w)
-			v.rows = append(v.rows, string(r[:n]))
-			v.title = append(v.title, v.titles[i])
-			r = r[n:]
-			if len(r) == 0 {
-				break
-			}
+// newViewPart is f as the viewer shows it, not wrapped yet.
+func newViewPart(f Fold) viewPart {
+	pt := viewPart{fold: f}
+	// A command's lines after the first are indented, as on the screen.
+	for j, l := range strings.Split(f.Title, "\n") {
+		if j > 0 {
+			l = "  " + l
 		}
+		pt.lines = append(pt.lines, expandTabs(l))
+	}
+	pt.titles = len(pt.lines)
+	text := strings.TrimRight(capture.Clean([]byte(f.Text)), "\n")
+	if text == "" {
+		return pt // a command cut short on the screen, with no output
+	}
+	for _, l := range strings.Split(text, "\n") {
+		pt.lines = append(pt.lines, expandTabs(l))
+	}
+	return pt
+}
+
+// wrap wraps the lines of pt to the width w.
+func (pt *viewPart) wrap(w int) {
+	pt.w, pt.rows, pt.trows = w, nil, 0
+	for i, l := range pt.lines {
+		rows := wrapWidth(l, w)
+		if i < pt.titles {
+			pt.trows += len(rows)
+		}
+		pt.rows = append(pt.rows, rows...)
+	}
+}
+
+// expandTabs puts spaces for the tabs of a line, up to the next tab stop
+// every 8 columns, as the terminal moves the cursor: ls lines up its
+// columns with tabs, read_file ends the number of a line with one.
+func expandTabs(l string) string {
+	if !strings.ContainsRune(l, '\t') {
+		return l
+	}
+	var b strings.Builder
+	col := 0
+	for _, r := range l {
+		if r == '\t' {
+			n := 8 - col%8
+			b.WriteString(strings.Repeat(" ", n))
+			col += n
+			continue
+		}
+		b.WriteRune(r)
+		col += runewidth.RuneWidth(r)
+	}
+	return b.String()
+}
+
+// wrapWidth cuts l into rows at most w columns wide on the screen. A wide
+// character that does not fit goes to the next row, as the terminal would
+// put it: a row of the frame wider than the screen would wrap there and
+// push the rest of the frame down.
+func wrapWidth(l string, w int) []string {
+	var rows []string
+	start, col := 0, 0
+	for i, r := range l {
+		n := runewidth.RuneWidth(r)
+		if col+n > w && i > start {
+			rows = append(rows, l[start:i])
+			start, col = i, 0
+		}
+		col += n
+	}
+	return append(rows, l[start:])
+}
+
+// set shows folds, laying out anew only those it did not show before in
+// the same place.
+func (v *viewer) set(folds []Fold) {
+	parts := make([]viewPart, len(folds))
+	for i, f := range folds {
+		if i < len(v.parts) && v.parts[i].fold == f {
+			parts[i] = v.parts[i]
+		} else {
+			parts[i] = newViewPart(f)
+		}
+	}
+	v.parts = parts
+	v.layout()
+}
+
+// shows reports whether v shows folds already.
+func (v *viewer) shows(folds []Fold) bool {
+	if len(folds) != len(v.parts) {
+		return false
+	}
+	for i, f := range folds {
+		if v.parts[i].fold != f {
+			return false
+		}
+	}
+	return true
+}
+
+// update shows folds in place of what v shows and reports whether they
+// changed. Unless the user scrolled up from the end, the view follows it
+// as a terminal does: the top moves only as far as the last row needs.
+func (v *viewer) update(folds []Fold) bool {
+	if v.shows(folds) {
+		return false
+	}
+	follow := !v.scrolled || v.atEnd()
+	v.set(folds)
+	if follow {
+		v.top = max(v.top, len(v.rows)-v.page())
+	}
+	v.clamp()
+	return true
+}
+
+// layout puts the rows of the parts, wrapped to the width, one under
+// another.
+func (v *viewer) layout() {
+	v.rows, v.title, v.start = nil, nil, nil
+	for i := range v.parts {
+		pt := &v.parts[i]
+		if pt.w != v.w {
+			pt.wrap(v.w)
+		}
+		if i > 0 {
+			v.rows = append(v.rows, "")
+			v.title = append(v.title, false)
+		}
+		v.start = append(v.start, len(v.rows))
+		v.rows = append(v.rows, pt.rows...)
+		for j := range pt.rows {
+			v.title = append(v.title, j < pt.trows)
+		}
+	}
+	v.clamp()
+}
+
+// resize rewraps the lines to the terminal width. A view at the end stays
+// there.
+func (v *viewer) resize(w, h int) {
+	end := v.atEnd()
+	v.w, v.h = max(w, 10), max(h, 2)
+	v.layout()
+	if end {
+		v.top = len(v.rows)
 	}
 	v.clamp()
 }
@@ -75,6 +207,9 @@ func (v *viewer) page() int { return v.h - 1 }
 func (v *viewer) clamp() {
 	v.top = max(min(v.top, len(v.rows)-v.page()), 0)
 }
+
+// atEnd reports whether the last row is on the page.
+func (v *viewer) atEnd() bool { return v.top >= len(v.rows)-v.page() }
 
 func (v *viewer) open() []byte {
 	return append([]byte("\x1b[?1049h\x1b[?25l"), v.render()...)
@@ -130,6 +265,7 @@ var viewerKeys = []struct {
 
 // key handles input while the viewer is open and reports whether to close.
 func (v *viewer) key(in []byte) (closed bool) {
+	top := v.top
 	for len(in) > 0 {
 		matched := false
 		for _, k := range viewerKeys {
@@ -160,11 +296,14 @@ func (v *viewer) key(in []byte) (closed bool) {
 		}
 	}
 	v.clamp()
+	if v.top != top {
+		v.scrolled = true
+	}
 	return false
 }
 
 // viewFolds are the outputs of the current or last request, including the
-// one being printed.
+// one being printed. The open viewer takes them anew on every tick.
 func (r *recorder) viewFolds() []Fold {
 	folds := append([]Fold{}, r.folds...)
 	if f := r.liveFold(); f != nil && !f.open {
@@ -176,10 +315,38 @@ func (r *recorder) viewFolds() []Fold {
 	return folds
 }
 
+// viewTick is how often the open viewer looks for what came: a frame at
+// most that often, and only when there is something new to show.
+const viewTick = 200 * time.Millisecond
+
+// viewFrame shows in v what came since its last frame, unless v was
+// closed.
+func (p *Proxy) viewFrame(v *viewer) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.view != v {
+		return
+	}
+	p.refreshView()
+	v.timer.Reset(viewTick)
+}
+
+// refreshView draws the open viewer anew if the folds changed: the output
+// of a running command grew, it ended, another came. Past p.held, which
+// keeps the same output for the screen under the viewer. Called under p.mu.
+func (p *Proxy) refreshView() {
+	if p.view.update(p.viewFolds()) {
+		p.write(p.view.render())
+	}
+}
+
 // closeView shows the cursor the viewer hid, unless an open question or
 // form keeps it hidden. What was held goes after it, so that a spinner
 // drawn meanwhile hides it again.
 func (t *console) closeView() {
+	if t.view.timer != nil {
+		t.view.timer.Stop()
+	}
 	cursor := "\x1b[?25h"
 	if t.ask != nil || t.form != nil {
 		cursor = "\x1b[?25l"
