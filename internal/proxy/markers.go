@@ -123,14 +123,14 @@ func (p *Proxy) marker(m Marker) {
 
 // cmdStart begins the command line cmd the user typed. Called under p.mu.
 func (p *Proxy) cmdStart(cmd string) {
-	p.dropLine()
+	p.leaveLine()
 	p.dropEdits() // neovim's diffs from before it are no one's
 	p.user = &segment{cmd: cmd, buf: capture.NewText(headCap, tailCap), cols: p.cols()}
 }
 
 // askStart begins a request. Called under p.mu.
 func (p *Proxy) askStart() {
-	p.dropLine()
+	p.leaveLine()
 	p.asking = true
 	p.dropFolds()
 	// A command that asks (an alias of __aish_ask) is the request's:

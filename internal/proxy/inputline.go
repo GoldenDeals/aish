@@ -37,6 +37,7 @@ type inputLine struct {
 	saved    [2]int      // the cursor \e7, \e[s or ?1048h saved
 	held     bool        // by the shell, which has not restored it yet: \e7 is not ours to use
 	keyed    bool        // the first key came, the prompt ends at prompt
+	down     bool        // a new line before the first key took the status down with it, see leave
 	prompt   [2]int
 	shown    bool // the status is on the screen, whole
 	lost     bool // the output went past the model
@@ -81,6 +82,20 @@ func (l *inputLine) typed() {
 // With text on the line the status is already gone.
 func (l *inputLine) submit() []byte {
 	if !l.shown || l.lost || l.wrap {
+		return nil
+	}
+	return l.erase(nil)
+}
+
+// leave erases the status when the line at the prompt is accepted, its
+// command or request begun, if no key came at the prompt and a new line
+// took the status down: it is then on the line the output starts on. So
+// goes a line typed ahead while a command ran: readline or zle draws it
+// with the prompt, and the new line accepting it is one more of the
+// prompt's to inputLine (follow). Not inside a string the shell left
+// open: \e7 would end it.
+func (l *inputLine) leave() []byte {
+	if l.keyed || !l.down || !l.shown || l.lost || l.wrap || l.str {
 		return nil
 	}
 	return l.erase(nil)
@@ -221,4 +236,13 @@ func (t *console) dropLine() {
 		t.emit(t.line.flush())
 		t.line = nil
 	}
+}
+
+// leaveLine is dropLine for the line the command or the request just
+// begun was typed at: the status stays off its output, see leave.
+func (t *console) leaveLine() {
+	if t.line != nil {
+		t.emit(t.line.leave())
+	}
+	t.dropLine()
 }

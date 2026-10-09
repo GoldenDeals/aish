@@ -30,7 +30,7 @@ func (p *Proxy) agentSpawn(ctx context.Context, sp rpc.SpawnParams) (rpc.Task, e
 	}
 	// The prompt's line is behind: as with ask-start, the output that
 	// follows is no longer typed at it.
-	p.dropLine()
+	p.leaveLine()
 	p.mu.Unlock()
 	var t rpc.Task
 	err := p.request(ctx, execOf(ap), true, func(_ context.Context, a *agent.Agent) error {

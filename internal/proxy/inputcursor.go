@@ -123,4 +123,5 @@ func (l *inputLine) follow() {
 	l.ends = ends
 	l.saved[0] -= d
 	l.row = 0
+	l.down = true
 }
