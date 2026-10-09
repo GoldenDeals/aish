@@ -194,14 +194,20 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	if err := a.append(inst...); err != nil {
 		return err
 	}
-	files := mentions(text, cwd)
+	// A subagent's text is the host model's brief, not a request the user
+	// typed: an @file there would hand the model a file past the policy
+	// (read_file goes through it), a /skill kept from the model
+	// (disable-model-invocation) would load.
+	var files, used []session.Entry
+	if a.name == "" {
+		files, used = mentions(text, cwd), skillMentions(text, cwd)
+	}
 	for _, e := range files {
 		fmt.Fprintf(a.UI, "%s  %s%s\n", dim, mentionNote(e, cwd), reset)
 	}
 	if err := a.append(files...); err != nil {
 		return err
 	}
-	used := skillMentions(text, cwd)
 	for _, e := range used {
 		fmt.Fprintf(a.UI, "%s  %s%s\n", dim, skillNote(e, cwd), reset)
 	}
