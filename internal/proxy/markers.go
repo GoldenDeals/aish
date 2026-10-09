@@ -132,7 +132,7 @@ func (p *Proxy) cmdStart(cmd string) {
 func (p *Proxy) askStart() {
 	p.dropLine()
 	p.asking = true
-	p.folds = nil
+	p.dropFolds()
 	// A command that asks (an alias of __aish_ask) is the request's:
 	// in the journal it would hold the whole reply as its output.
 	p.user = nil

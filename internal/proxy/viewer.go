@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
 
@@ -14,12 +15,15 @@ import (
 // viewer shows folded outputs in full on the alternate screen. Ctrl+O opens
 // it and closes it again, leaving the screen as it was. While it is open it
 // shows what comes: viewFrame takes the folds anew and draws them if they
-// changed, following their end unless the user scrolled up from it.
+// changed, following their end unless the user scrolled up from it. A fold
+// without a title is no output but a line between them: the request the
+// calls below it were made for, a cleared screen (history.go).
 type viewer struct {
 	parts []viewPart // the folds shown, one under another
-	rows  []string   // their rows, a blank one between two folds
+	rows  []string   // their rows, a blank one between two folds but under a line
 	title []bool
-	start []int // the first row of every part
+	sep   []bool // the rows of a line between the outputs
+	start []int  // the first row of every part
 	top   int
 	w, h  int
 
@@ -34,6 +38,7 @@ type viewer struct {
 // so that a fold that did not change is not cleaned and wrapped again.
 type viewPart struct {
 	fold   Fold
+	sep    bool // a line between the outputs, all of it
 	lines  []string
 	titles int // how many of the lines are the title's
 	w      int
@@ -45,7 +50,13 @@ func newViewer(folds []Fold, w, h int) *viewer {
 	v := &viewer{w: max(w, 10), h: max(h, 2)}
 	v.set(folds)
 	if n := len(v.start); n > 0 {
-		v.top = v.start[n-1] // the most recent output first
+		// The most recent output first, under its request's line if it is
+		// the request's first.
+		i := n - 1
+		for i > 0 && v.parts[i-1].sep {
+			i--
+		}
+		v.top = v.start[i]
 	}
 	v.clamp()
 	return v
@@ -53,7 +64,13 @@ func newViewer(folds []Fold, w, h int) *viewer {
 
 // newViewPart is f as the viewer shows it, not wrapped yet.
 func newViewPart(f Fold) viewPart {
-	pt := viewPart{fold: f}
+	pt := viewPart{fold: f, sep: f.Title == ""}
+	if pt.sep {
+		for _, l := range strings.Split(cleanText(f.Text), "\n") {
+			pt.lines = append(pt.lines, expandTabs(l))
+		}
+		return pt
+	}
 	// A command's lines after the first are indented, as on the screen.
 	for j, l := range strings.Split(f.Title, "\n") {
 		if j > 0 {
@@ -62,7 +79,7 @@ func newViewPart(f Fold) viewPart {
 		pt.lines = append(pt.lines, expandTabs(l))
 	}
 	pt.titles = len(pt.lines)
-	text := strings.TrimRight(capture.Clean([]byte(f.Text)), "\n")
+	text := cleanText(f.Text)
 	if text == "" {
 		return pt // a command cut short on the screen, with no output
 	}
@@ -70,6 +87,35 @@ func newViewPart(f Fold) viewPart {
 		pt.lines = append(pt.lines, expandTabs(l))
 	}
 	return pt
+}
+
+// cleanText is capture.Clean of s, at no cost for a text with nothing to
+// clean: the outputs of the journal were cleaned as they were recorded,
+// and the viewer opens on all of them at once.
+func cleanText(s string) string {
+	if plainText(s) {
+		return strings.TrimRight(s, "\n")
+	}
+	return capture.Clean([]byte(s))
+}
+
+// plainText reports whether capture.Clean leaves s as it is, but for the
+// newlines at its end: valid UTF-8 with no control character other than a
+// tab or a newline, and no line ending in a space.
+func plainText(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '\n' || c == '\t':
+		case c < 0x20 || c == 0x7f:
+			return false
+		case c == ' ' && (i+1 == len(s) || s[i+1] == '\n'):
+			return false
+		}
+	}
+	return true
 }
 
 // wrap wraps the lines of pt to the width w.
@@ -111,6 +157,13 @@ func expandTabs(l string) string {
 // put it: a row of the frame wider than the screen would wrap there and
 // push the rest of the frame down.
 func wrapWidth(l string, w int) []string {
+	if printable(l) { // a column a byte
+		rows := make([]string, 0, len(l)/w+1)
+		for len(l) > w {
+			rows, l = append(rows, l[:w]), l[w:]
+		}
+		return append(rows, l)
+	}
 	var rows []string
 	start, col := 0, 0
 	for i, r := range l {
@@ -124,19 +177,32 @@ func wrapWidth(l string, w int) []string {
 	return append(rows, l[start:])
 }
 
+// printable reports whether l is printable ASCII only.
+func printable(l string) bool {
+	for i := 0; i < len(l); i++ {
+		if l[i] < 0x20 || l[i] > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
 // set shows folds, laying out anew only those it did not show before in
-// the same place.
+// the same place, and the rows from the first of them on: the history of
+// the session above them stays as it is.
 func (v *viewer) set(folds []Fold) {
 	parts := make([]viewPart, len(folds))
+	from := min(len(folds), len(v.parts))
 	for i, f := range folds {
 		if i < len(v.parts) && v.parts[i].fold == f {
 			parts[i] = v.parts[i]
 		} else {
 			parts[i] = newViewPart(f)
+			from = min(from, i)
 		}
 	}
 	v.parts = parts
-	v.layout()
+	v.layoutFrom(from)
 }
 
 // shows reports whether v shows folds already.
@@ -170,21 +236,31 @@ func (v *viewer) update(folds []Fold) bool {
 
 // layout puts the rows of the parts, wrapped to the width, one under
 // another.
-func (v *viewer) layout() {
-	v.rows, v.title, v.start = nil, nil, nil
-	for i := range v.parts {
+func (v *viewer) layout() { v.layoutFrom(0) }
+
+// layoutFrom is layout from part from on, the rows of those before it left
+// as the last layout put them.
+func (v *viewer) layoutFrom(from int) {
+	n := 0
+	if from = min(from, len(v.start)); from > 0 {
+		n = v.start[from-1] + len(v.parts[from-1].rows)
+	}
+	v.rows, v.title, v.sep, v.start = v.rows[:n], v.title[:n], v.sep[:n], v.start[:from]
+	for i := from; i < len(v.parts); i++ {
 		pt := &v.parts[i]
 		if pt.w != v.w {
 			pt.wrap(v.w)
 		}
-		if i > 0 {
+		if i > 0 && !v.parts[i-1].sep { // a line goes with what follows it
 			v.rows = append(v.rows, "")
 			v.title = append(v.title, false)
+			v.sep = append(v.sep, false)
 		}
 		v.start = append(v.start, len(v.rows))
 		v.rows = append(v.rows, pt.rows...)
 		for j := range pt.rows {
 			v.title = append(v.title, j < pt.trows)
+			v.sep = append(v.sep, pt.sep)
 		}
 	}
 	v.clamp()
@@ -226,9 +302,12 @@ func (v *viewer) render() []byte {
 	for i := 0; i < v.page(); i++ {
 		j := v.top + i
 		if j < len(rows) {
-			if title[j] {
+			switch {
+			case v.sep[j]:
+				b.WriteString("\x1b[1m" + rows[j] + "\x1b[0m")
+			case title[j]:
 				b.WriteString("\x1b[1;36m" + rows[j] + "\x1b[0m")
-			} else {
+			default:
 				b.WriteString(rows[j])
 			}
 		}
@@ -300,19 +379,6 @@ func (v *viewer) key(in []byte) (closed bool) {
 		v.scrolled = true
 	}
 	return false
-}
-
-// viewFolds are the outputs of the current or last request, including the
-// one being printed. The open viewer takes them anew on every tick.
-func (r *recorder) viewFolds() []Fold {
-	folds := append([]Fold{}, r.folds...)
-	if f := r.liveFold(); f != nil && !f.open {
-		// A command cut short on the screen is there before it prints anything.
-		if raw := f.raw.Bytes(); len(raw) > 0 || f.cut() {
-			folds = append(folds, Fold{Title: f.title + "  (running)", Text: string(raw)})
-		}
-	}
-	return folds
 }
 
 // viewTick is how often the open viewer looks for what came: a frame at

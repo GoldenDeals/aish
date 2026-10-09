@@ -49,6 +49,10 @@ type recorder struct {
 	spin   *spin               // that line, kept turning while the command runs, see hidework.go
 	watch  *promptWatch        // the fold of another command, watched for a prompt, see foldprompt.go
 	folds  []Fold              // folded outputs of the last request, for Ctrl+O
+	// foldsAt is where in the journal the request of folds began, and hist
+	// the journal before it for the viewer, see history.go.
+	foldsAt journalAt
+	hist    history
 
 	done    map[string]rpc.Output    // outputs of the agent's commands, till wait takes them
 	waiters map[string]chan struct{} // waits for those yet to come
@@ -126,7 +130,7 @@ func (p *Proxy) cleared() {
 	if es := p.sess.Entries(); len(es) > 0 && es[len(es)-1].Kind != session.KindClear {
 		_ = p.sess.Append(session.Entry{Kind: session.KindClear})
 	}
-	p.folds = nil
+	p.dropFolds()
 	if p.user != nil {
 		p.user.buf = capture.NewText(headCap, tailCap)
 		p.user.cleared = true

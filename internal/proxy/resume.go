@@ -77,7 +77,7 @@ func (p *Proxy) resume(ctx context.Context, id string) (_ rpc.Info, err error) {
 	}
 	p.sess.Unlock()
 	p.sess = next
-	p.folds = nil
+	p.dropFolds()
 	p.switched = true
 	p.restoreModel(saved)
 	return p.info(), nil

@@ -170,7 +170,8 @@ func (p *Proxy) agentStart(ctx context.Context, ap rpc.AgentParams) error {
 		return err
 	}
 	if !p.asking {
-		p.asking, p.folds = true, nil
+		p.asking = true
+		p.dropFolds()
 	}
 	p.mu.Unlock()
 	return p.request(ctx, execOf(ap), true, func(ctx context.Context, a *agent.Agent) error {
