@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/GoldenDeals/aish/internal/capture"
 )
 
 // prompt is a question the agent has open on the terminal, Yes or No; the
@@ -140,12 +142,19 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 // one before it ended, wrap to rows the erase does not count, or draw over
 // it. The breaks q starts with leave the line the cursor is on (aish yolo
 // after output short of a line's end): it is not the question's, and the
-// erase stops below it.
+// erase stops below it. Of the sequences in q only the styles are drawn,
+// the rest shows as signs (capture.VisibleStyled): the reason may have it
+// from the model, and a sequence that moves the cursor or erases would
+// draw over the call the user is asked about, or put the erase off.
 func askLines(q string) (lead string, lines []string) {
 	q = strings.ReplaceAll(strings.ReplaceAll(q, "\r\n", "\n"), "\r", "\n")
 	rest := strings.TrimLeft(q, "\n")
 	lead = strings.Repeat("\r\n", len(q)-len(rest))
-	return lead, strings.Split(rest, "\n")
+	lines = strings.Split(rest, "\n")
+	for i, l := range lines {
+		lines[i] = capture.VisibleStyled(l)
+	}
+	return lead, lines
 }
 
 // askKey reads the answer to the open question from what the user typed

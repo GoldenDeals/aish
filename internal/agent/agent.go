@@ -16,7 +16,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/mattn/go-runewidth"
 
@@ -553,8 +552,9 @@ func (a *Agent) call(req context.Context, c session.ToolCall) (handedOff bool, e
 	}
 	// The call is shown once the policy and the hooks have decided, with
 	// what it runs: nothing they print can come between its line and the
-	// status at the right of it.
-	title := tools.Title(t, args)
+	// status at the right of it. The title is the model's text, for the
+	// screen and Ctrl+O alike.
+	title := capture.VisibleLine(tools.Title(t, args))
 	showClosed := func() {
 		if toShell {
 			a.showBash(cmd, true)
@@ -578,7 +578,7 @@ func (a *Agent) call(req context.Context, c session.ToolCall) (handedOff bool, e
 		if !asked {
 			showClosed()
 		}
-		fmt.Fprintf(a.UI, "%s  ✗ %s%s\n", red, msg, reset)
+		fmt.Fprintf(a.UI, "%s  ✗ %s%s\n", red, shownReason(msg), reset)
 		return false, a.append(toolResult(c, msg, true))
 	}
 	// Ctrl+C may have come after the last hook was done and the policy had
@@ -720,18 +720,13 @@ const callMin = 20
 // line is left open for the status, the column it ends at; -1 when it is
 // closed. An open line is a single one, cut with "…" to leave room for the
 // short status and the column the proxy keeps free at the right edge. The
-// whole title is in Ctrl+O and in the journal.
+// whole title is in Ctrl+O and in the journal. Its control characters show
+// as signs: they would draw over the line, or take columns of their own.
 func renderCall(title string, cols int, open bool) (text string, col int) {
+	title = capture.VisibleLine(title)
 	if !open || cols <= 0 {
 		return fmt.Sprintf("%s⚙%s %s\n", cyan, reset, title), -1
 	}
-	// Control characters would take columns of their own, or none.
-	title = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, title)
 	w := cols - runewidth.StringWidth(shortStatus) - 1
 	if w < callMin {
 		w = cols
@@ -768,9 +763,14 @@ const cmdLines = 3
 // open for the status, where it ends: col, long and how many lines are hidden.
 // A closed line (col -1) shows the whole command: the user may be asked
 // about it, and without CommandAt the proxy would not keep the rest for
-// Ctrl+O.
+// Ctrl+O. The sequences of a terminal in it show as signs, not drawn: the
+// model's command would draw another over itself, above the question. The
+// shell gets cmd as it is.
 func renderBash(cmd string, cols int, open bool) (text string, col int, long bool, hidden int) {
 	lines := strings.Split(strings.TrimRight(cmd, "\n"), "\n")
+	for i, l := range lines {
+		lines[i] = capture.Visible(l)
+	}
 	if !open || cols <= 0 {
 		return fmt.Sprintf("%s❯%s %s%s%s\n", cyan, reset, bold, strings.Join(lines, "\n  "), reset), -1, false, 0
 	}
@@ -803,7 +803,7 @@ func renderBash(cmd string, cols int, open bool) (text string, col int, long boo
 func (a *Agent) ask(ctx context.Context, d policy.Decision) policy.Decision {
 	q := "allow?"
 	if d.Reason != "" {
-		q = d.Reason + " — allow?"
+		q = shownReason(d.Reason) + " — allow?"
 	}
 	wait := a.asks.wait()
 	actx, stop := a.waitAnswer(ctx, wait)

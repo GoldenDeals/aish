@@ -42,9 +42,10 @@ func TestRenderCallCut(t *testing.T) {
 		t.Errorf("narrow: col %d, width %d", col, w)
 	}
 
-	// Control characters would put the status off its column.
+	// Control characters would put the status off its column: a tab is
+	// spaces to its stop, the others signs of one column.
 	text, _ = renderCall("probe a\tb\x1b[31m", 80, true)
-	if got := strings.TrimPrefix(text, cyan+"⚙"+reset+" "); got != "probe a b [31m" {
+	if got := strings.TrimPrefix(text, cyan+"⚙"+reset+" "); got != "probe a b␛[31m" {
 		t.Errorf("control characters: %q", got)
 	}
 }

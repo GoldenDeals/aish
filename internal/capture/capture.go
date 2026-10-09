@@ -1,4 +1,5 @@
-// Package capture turns raw terminal output into text an LLM can read.
+// Package capture turns raw terminal output into text an LLM can read, and
+// the model's text into text a terminal can show as it is (Visible).
 package capture
 
 import (
