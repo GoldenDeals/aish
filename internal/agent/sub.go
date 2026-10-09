@@ -363,7 +363,7 @@ func (a *Agent) prepSub(d subagent.Def, prompt string) *subRun {
 		s.cfg.Model, s.cfg.Effort, s.cfg.ContextWindow = d.Model, "", 0
 		s.prov, s.err = llm.New(s.cfg)
 	}
-	s.reg, s.scope = subTools(a.Tools, d.Tools)
+	s.reg, s.scope = defTools(a.Tools, d)
 	return s
 }
 

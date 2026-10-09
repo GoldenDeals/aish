@@ -48,6 +48,10 @@ func agentsCmd(_ config.Config, args []string) int {
 			desc = runewidth.Truncate(desc, n, "…")
 		}
 		fmt.Printf("\x1b[1m%s\x1b[0m%s%s\n", d.Name, head[len(d.Name):], desc)
+		// Not a problem: Claude Code's fields aish has nothing for.
+		if len(d.Ignored) > 0 {
+			fmt.Printf("\x1b[2m  ignored: %s\x1b[0m\n", strings.Join(d.Ignored, ", "))
+		}
 	}
 	for _, p := range problems {
 		fmt.Printf("\x1b[33mproblem:\x1b[0m %s: %s\n", home(p.Path), p.Msg)
@@ -63,12 +67,25 @@ func agentModel(d subagent.Def) string {
 	return d.Model
 }
 
-// agentTools is the tools the subagent is limited to; empty when it is not.
+// agentTools is what its file limits the subagent to: the tools, those it
+// may not use, the permission mode; empty when it does not.
 func agentTools(d subagent.Def) string {
-	if d.Tools == nil {
-		return ""
+	var parts []string
+	if d.Tools != nil {
+		parts = append(parts, "tools: "+strings.Join(d.Tools, ", "))
 	}
-	return "tools: " + strings.Join(d.Tools, ", ")
+	if d.Disallowed != nil {
+		parts = append(parts, "disallowed: "+strings.Join(d.Disallowed, ", "))
+	}
+	switch d.Mode {
+	case "":
+	case "acceptEdits", "auto", "bypassPermissions":
+		// They would lift checks: a subagent's file lifts none in aish.
+		parts = append(parts, "mode: "+d.Mode+" (no effect)")
+	default:
+		parts = append(parts, "mode: "+d.Mode)
+	}
+	return strings.Join(parts, "  ")
 }
 
 // agentSource is where a subagent comes from: ~/.claude, ./.claude, ../.claude.

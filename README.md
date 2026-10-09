@@ -643,19 +643,29 @@ You are a code reviewer. Read the diff, then …
 - Тело после фронтматтера — системный промпт сабагента; обязательно.
 - `tools` — имена инструментов, которыми сабагент ограничен: строка через запятую или список YAML.
   Нет поля — доступны все инструменты.
+- `disallowedTools` — инструменты, которых сабагенту не дают, в том же виде, что `tools`. Запись убирает
+  инструмент, даже если его даёт `tools` или он достался без поля `tools` (см. «Запуск сабагентов»).
+- `permissionMode` — режим Claude Code. `plan` оставляет сабагенту только чтение. `default`, `manual` и
+  `dontAsk` ничего не меняют: спросить сабагент и так не может, вопрос для него — отказ. `acceptEdits`,
+  `auto` и `bypassPermissions` политику aish не ослабляют, `aish agents` пишет у них `(no effect)`.
+  Другое значение — проблема файла, такой сабагент не загружается.
 - `model` — модель сабагента. `inherit` и псевдонимы Claude Code (`sonnet`, `opus`, `haiku`) значат
   «модель этого shell»: aish не привязан к одному провайдеру. Любое другое значение — имя модели
   провайдера как есть (`gpt-5`). Нет поля — тоже модель shell.
 
 Остальные поля фронтматтера не читаются. `aish agents` (внутри aish — и просто `agents`) показывает
-найденных сабагентов — имя, откуда, модель, инструменты, описание — и проблемы с файлами: битый
-фронтматтер, нет `description` или промпта, имя с недопустимыми символами, `name` не совпадает с
-именем файла. Файлы без фронтматтера (`README.md` и т. п.) не считаются описаниями и пропускаются.
+найденных сабагентов — имя, откуда, модель, ограничения (`tools:`, `disallowed:`, `mode:`), описание — и
+проблемы с файлами: битый фронтматтер, нет `description` или промпта, имя с недопустимыми символами,
+`name` не совпадает с именем файла, неизвестный `permissionMode`. Поля, которых aish не читает (`hooks`,
+`color`, `maxTurns`…), он перечисляет строкой `ignored:` под сабагентом: это не проблема, но и не
+действует. Файлы без фронтматтера (`README.md` и т. п.) не считаются описаниями и пропускаются.
 
 ```
 $ aish agents
-reviewer  ./.claude  inherit  tools: Read, Grep, Bash  Reviews the diff before a commit and points…
-tester    ~/.claude  gpt-5                             Writes tests for the changed code
+nobash    ~/.claude  inherit  disallowed: Bash, Write, Edit  mode: plan  Looks around and reports
+  ignored: hooks, color
+reviewer  ./.claude  inherit  tools: Read, Grep, Bash                    Reviews the diff before a commit…
+tester    ~/.claude  gpt-5                                               Writes tests for the changed code
 problem: ~/proj/.claude/agents/draft.md: no description in the frontmatter
 ```
 
@@ -703,6 +713,20 @@ problem: ~/proj/.claude/agents/draft.md: no description in the frontmatter
   не исполняются. Если в `tools` есть ещё `Bash` без шаблона, bash не
   ограничен. Шаблоны других инструментов (`Read(src/**)`) не поддерживаются: такая запись не
   включает ничего.
+- `disallowedTools` понимает те же имена и убирает инструмент целиком, в том числе запись с шаблоном:
+  `Bash(git push *)` убирает весь bash, `Read(src/**)` — весь `read_file`. `Bash` в запрете убирает и
+  bash только для чтения от `Grep`, `Glob`, `LS`: в aish это тот же bash. `Grep`, `Glob` или `LS` в
+  запрете убирают команды чтения: bash, который дали только они, пропадает, а шаблоны `Bash(…)` и
+  `Bash` без шаблона (или bash без поля `tools`) остаются. `mcp__СЕРВЕР` убирает инструменты сервера,
+  `mcp__*` — все инструменты MCP, `Skill` — все скиллы. Запрет только убирает: того, чего нет в
+  `tools`, он не даёт.
+- `permissionMode: plan` — сабагент только читает: у него остаются `read_file`, скиллы и bash только
+  для чтения, как при `Grep`, — если `tools` даёт `Bash`, `Grep`, `Glob` или `LS` (или поля `tools`
+  нет). Если bash дали только шаблоны `Bash(…)`, в `plan` его нет: шаблон может разрешить команду,
+  которая пишет. `write_file`, `edit_file`, инструменты MCP и свои инструменты (см. «Свои
+  инструменты») убираются: что они пишут, aish не знает.
+- Под `aish yolo` bash сабагента не ограничивают ни `tools`, ни `plan`, но инструменты, которые
+  убрали `disallowedTools` и `plan` (или которых нет в `tools`), не возвращаются.
 - Сабагент со своей `model`, отличной от модели shell, работает с effort провайдера по умолчанию и
   без автокомпакта: effort и окно контекста shell подобраны под его модель.
 - Сабагентов можно запустить в фоне (`background` у `task`): вызов сразу возвращает по строке

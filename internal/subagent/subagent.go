@@ -1,8 +1,9 @@
 // Package subagent reads Claude Code's subagent definitions: .md files in an
 // agents directory, a frontmatter with the name, when to delegate to it, the
-// tools and the model, then the subagent's system prompt. They are only
-// files the agent builds a nested run from; this package runs nothing and
-// caches nothing, as there are a few of them, read once per request.
+// tools it may and may not use, its permission mode and the model, then the
+// subagent's system prompt. They are only files the agent builds a nested
+// run from; this package runs nothing and caches nothing, as there are a
+// few of them, read once per request.
 package subagent
 
 import (
@@ -32,6 +33,14 @@ type Def struct {
 	// Tools are the names of the tools the subagent may use, as written in
 	// the frontmatter; nil means all the tools of the host.
 	Tools []string
+	// Disallowed are the names of the tools it may not use, as written in
+	// disallowedTools: an entry takes its tool away, whatever gives it.
+	Disallowed []string
+	// Mode is permissionMode as Claude Code spells it, "" without one.
+	Mode string
+	// Ignored are the fields of the frontmatter aish does not read, in the
+	// order of the file.
+	Ignored []string
 	// Model is the model to run the subagent with; empty means the host's.
 	Model string
 	File  string // path of the .md file
@@ -131,13 +140,20 @@ func load(path string) (Def, error) {
 	case body == "":
 		return Def{}, errors.New("no system prompt: the body after the frontmatter is empty")
 	}
+	mode, err := permissionMode(fm.PermissionMode)
+	if err != nil {
+		return Def{}, err
+	}
 	return Def{
-		Name:   fm.Name,
-		Desc:   strings.TrimSpace(fm.Description),
-		Prompt: body,
-		Tools:  toolNames(fm.Tools),
-		Model:  model(fm.Model),
-		File:   path,
+		Name:       fm.Name,
+		Desc:       strings.TrimSpace(fm.Description),
+		Prompt:     body,
+		Tools:      toolNames(fm.Tools),
+		Disallowed: toolNames(fm.DisallowedTools),
+		Mode:       mode,
+		Ignored:    fm.ignored,
+		Model:      model(fm.Model),
+		File:       path,
 	}, nil
 }
 
@@ -181,6 +197,31 @@ func model(m string) string {
 	return m
 }
 
+// Plan is the permission mode of a subagent that only reads.
+const Plan = "plan"
+
+// modes are Claude Code's permission modes. Only plan changes anything in
+// aish: default, manual and dontAsk are what a subagent has anyway, as it
+// cannot ask and a question is a refusal for it; acceptEdits, auto and
+// bypassPermissions would lift checks, which no subagent's file does here.
+var modes = []string{"default", "manual", "acceptEdits", "auto", "dontAsk", "bypassPermissions", Plan}
+
+// permissionMode is the permissionMode field as Claude Code spells it; ""
+// without one. A mode aish does not know is the file's problem, not one to
+// pass over: it may be one that limits the subagent.
+func permissionMode(m string) (string, error) {
+	m = strings.TrimSpace(m)
+	if m == "" {
+		return "", nil
+	}
+	for _, k := range modes {
+		if strings.EqualFold(m, k) {
+			return k, nil
+		}
+	}
+	return "", fmt.Errorf("permissionMode %q: one of %s", m, strings.Join(modes, ", "))
+}
+
 // list is a frontmatter field that is a string or a list of them.
 func list(v any) []string {
 	switch v := v.(type) {
@@ -199,9 +240,37 @@ func list(v any) []string {
 type frontmatter struct {
 	Name        string `yaml:"name"`
 	Description string `yaml:"description"`
-	// A string or a list.
-	Tools any    `yaml:"tools"`
-	Model string `yaml:"model"`
+	// The tools fields are a string or a list.
+	Tools           any    `yaml:"tools"`
+	DisallowedTools any    `yaml:"disallowedTools"`
+	PermissionMode  string `yaml:"permissionMode"`
+	Model           string `yaml:"model"`
+	// ignored are the fields of the file that are none of the above.
+	ignored []string
+}
+
+// known are the fields of the frontmatter aish reads.
+var known = map[string]bool{
+	"name": true, "description": true, "tools": true, "disallowedTools": true, "permissionMode": true, "model": true,
+}
+
+// ignored are the fields of the frontmatter src that aish does not read,
+// in the order of src: Claude Code has more, and a file written for it
+// would get nothing of them here without a word.
+func ignored(src []byte) []string {
+	var doc yaml.Node
+	if yaml.Unmarshal(src, &doc) != nil || doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 ||
+		doc.Content[0].Kind != yaml.MappingNode {
+		return nil
+	}
+	var out []string
+	m := doc.Content[0].Content
+	for i := 0; i+1 < len(m); i += 2 {
+		if k := m[i].Value; !known[k] {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 var errNoFrontmatter = errors.New("no frontmatter: the file must start with ---")
@@ -223,9 +292,11 @@ func parse(path string) (frontmatter, string, error) {
 		if strings.TrimSpace(lines[i]) != "---" {
 			continue
 		}
-		if err := yaml.Unmarshal([]byte(strings.Join(lines[1:i], "\n")), &fm); err != nil {
+		src := []byte(strings.Join(lines[1:i], "\n"))
+		if err := yaml.Unmarshal(src, &fm); err != nil {
 			return fm, "", fmt.Errorf("frontmatter: %w", err)
 		}
+		fm.ignored = ignored(src)
 		return fm, strings.TrimSpace(strings.Join(lines[i+1:], "\n")), nil
 	}
 	return fm, "", errors.New("frontmatter: no closing ---")
