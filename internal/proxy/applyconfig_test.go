@@ -17,16 +17,17 @@ import (
 )
 
 // apply is `aish apply-config` typed at the prompt of the shell, in its
-// work directory, with env its environment (nil: the test's).
+// work directory, with env its environment (nil: the test's), and its
+// question answered Yes.
 func apply(t *testing.T, p *Proxy, env []string) rpc.Applied {
 	t.Helper()
 	cwd := filepath.Join(os.Getenv("HOME"), "work")
 	p.marker(Marker{Kind: "cmd-end", Payload: "0;" + cwd}) // back at the prompt
-	v, err := call(t, p, rpc.MethodApplyConfig, rpc.AgentParams{Cwd: cwd, Env: env})
+	res, err := applyAnswered(t, p, rpc.AgentParams{Cwd: cwd, Env: env}, "y")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return v.(rpc.Applied)
+	return res
 }
 
 // configured is a proxy whose config.toml is toml, read as Run reads it.
@@ -124,7 +125,7 @@ func TestApplyConfigBroken(t *testing.T) {
 	for _, toml := range []string{"fold_lines = [\n", "fold_lines = 4\nnosuch = 1\n", "fold_lines = 4\nprofile = \"gone\"\n"} {
 		rewrite(t, toml)
 		p.marker(Marker{Kind: "cmd-end", Payload: "0;/tmp"})
-		_, err := call(t, p, rpc.MethodApplyConfig, rpc.AgentParams{Cwd: filepath.Join(os.Getenv("HOME"), "work")})
+		_, err := applyAnswered(t, p, rpc.AgentParams{Cwd: filepath.Join(os.Getenv("HOME"), "work")}, "y")
 		if toml == "fold_lines = 4\nprofile = \"gone\"\n" {
 			// The profile it selects is not the shell's to fail on: told as a request tells it.
 			if err != nil {

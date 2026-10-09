@@ -61,6 +61,9 @@ var handlers = map[string]handler{
 	rpc.MethodApplyConfig: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
 		return p.applyConfig(ctx, ap)
 	}),
+	rpc.MethodTrust: decoded(func(p *Proxy, ctx context.Context, tp rpc.TrustParams) (any, error) {
+		return p.trust(ctx, tp)
+	}),
 	rpc.MethodConfig: decoded(func(p *Proxy, ctx context.Context, cp rpc.ConfigParams) (any, error) {
 		return p.configFor(ctx, cp)
 	}),

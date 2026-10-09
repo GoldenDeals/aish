@@ -1,14 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/GoldenDeals/aish/internal/rpc"
 )
@@ -51,47 +45,7 @@ func yoloCmd(args []string) int {
 }
 
 // confirmYolo makes the call of aish yolo, which the proxy answers once the
-// user answered its question: no rpc.CallTimeout, then. Ctrl+C gives up on
-// it by closing the connection for writing, not whole: the proxy takes the
-// question off the screen and only then answers, so what aish prints next
-// comes below the question, not over its lines. A second Ctrl+C, or
-// giveUpAfter, closes the connection.
+// user answered its question (confirmCall).
 func confirmYolo(path string) (interrupted bool, err error) {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sig)
-	d := net.Dialer{Timeout: 2 * time.Second}
-	c, err := d.Dial("unix", path)
-	if err != nil {
-		return false, err
-	}
-	conn := c.(*net.UnixConn)
-	defer conn.Close()
-	req := rpc.Request{Method: rpc.MethodYolo}
-	req.Params, _ = json.Marshal(rpc.YoloParams{On: true})
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
-		return false, err
-	}
-	done := make(chan error, 1)
-	go func() {
-		var resp rpc.Response
-		err := json.NewDecoder(conn).Decode(&resp)
-		if err == nil && resp.Error != "" {
-			err = errors.New(resp.Error)
-		}
-		done <- err
-	}()
-	for {
-		select {
-		case err := <-done:
-			return interrupted, err
-		case <-sig:
-			if interrupted {
-				return true, errors.New("gave up on the proxy")
-			}
-			interrupted = true
-			_ = conn.CloseWrite()
-			_ = conn.SetReadDeadline(time.Now().Add(giveUpAfter))
-		}
-	}
+	return confirmCall(path, rpc.MethodYolo, rpc.YoloParams{On: true}, nil)
 }

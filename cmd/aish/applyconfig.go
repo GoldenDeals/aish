@@ -11,7 +11,8 @@ import (
 // applyConfigCmd is `aish apply-config`: the proxy reads the config files
 // anew and puts them in force for this shell. It reads them as it starts
 // and with this command only, so that an edit is in force when the user
-// says so, all of it at once.
+// says so, all of it at once: it asks first, and answers once the user
+// answered, Yes or No, in their time (confirmCall).
 func applyConfigCmd(args []string) int {
 	if len(args) > 0 {
 		return fail(errors.New("usage: aish apply-config"))
@@ -21,7 +22,12 @@ func applyConfigCmd(args []string) int {
 		return fail(err)
 	}
 	var res rpc.Applied
-	if err := client.Call(rpc.MethodApplyConfig, shellParams(), &res); err != nil {
+	// Interrupted after the Yes, the proxy answers with what it applied.
+	if interrupted, err := confirmCall(client.Path, rpc.MethodApplyConfig, shellParams(), &res); err != nil {
+		if interrupted {
+			fail(errors.New("apply-config: interrupted; nothing applied"))
+			return 130
+		}
 		return fail(err)
 	}
 	fmt.Print(appliedText(res))

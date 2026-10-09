@@ -55,10 +55,16 @@ const (
 	MethodMCPStatus   = "mcp_status"
 )
 
-// MethodApplyConfig reads the config files anew and puts them in force:
-// AgentParams with the shell's cwd and environment, for the project file
-// and the profile they select; Applied back.
+// MethodApplyConfig reads the config files anew and puts them in force
+// once the user said Yes to the proxy's question: AgentParams with the
+// shell's cwd and environment, for the project file and the profile they
+// select; Applied back.
 const MethodApplyConfig = "apply_config"
+
+// MethodTrust is `aish trust` inside aish: the proxy trusts the project
+// file of TrustParams.Cwd, as it is now, once the user said Yes to its
+// question; Trusted back.
+const MethodTrust = "trust"
 
 // The config in force, for the commands in the shell that show it or go by
 // it: MethodConfig is the config of a request from a directory,
@@ -148,6 +154,19 @@ type Applied struct {
 	Info    Info     `json:"info"`
 	// Switched is whether Info differs from what the shell had before.
 	Switched bool `json:"switched,omitempty"`
+}
+
+// TrustParams name the directory of `aish trust`, the client's: its
+// project file is the one trusted.
+type TrustParams struct {
+	Cwd string `json:"cwd"`
+}
+
+// Trusted is the project file `aish trust` trusted and its keys that run
+// code from the repository, as config.CodeKeys has them.
+type Trusted struct {
+	Path string   `json:"path"`
+	Keys []string `json:"keys,omitempty"`
 }
 
 // ConfigParams ask for the config a request of the shell from Cwd would go

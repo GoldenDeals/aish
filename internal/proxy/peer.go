@@ -24,7 +24,7 @@ import (
 // as a subagent's command, which is the proxy's child, cannot: the PTY is
 // not its controlling terminal.
 
-var errNotShell = errors.New("not from the shell's foreground: a background process cannot start, resume, compact or recap a request, switch the session or the model, apply the config, or turn yolo on or off")
+var errNotShell = errors.New("not from the shell's foreground: a background process cannot start, resume, compact or recap a request, switch the session or the model, apply the config, trust a project file, or turn yolo on or off")
 
 // fromShell is nil if the call ctx is of comes from the process group in
 // the foreground of the shell's terminal. Without the client's pid, or

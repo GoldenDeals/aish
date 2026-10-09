@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/GoldenDeals/aish/internal/config"
+	"github.com/GoldenDeals/aish/internal/policy"
 	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
@@ -47,8 +48,15 @@ func TestTrustAsking(t *testing.T) {
 			}
 			defer l.Close()
 			go rpc.Serve(l, func(_ context.Context, method string, _ json.RawMessage) (any, error) {
-				if method == rpc.MethodInfo {
+				switch {
+				case method == rpc.MethodInfo:
 					return rpc.Info{Model: "m", Asking: c.asking}, nil
+				case method == rpc.MethodTrust && c.asking:
+					return nil, errors.New(policy.TrustReason)
+				case method == rpc.MethodTrust:
+					// The proxy trusts it, once the user said Yes.
+					file := filepath.Join(repo, config.ProjectFile)
+					return rpc.Trusted{Path: file}, config.Trust(file)
 				}
 				t.Errorf("unexpected rpc %s", method)
 				return nil, errors.New("unexpected")

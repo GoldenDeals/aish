@@ -93,7 +93,8 @@ var errApplyAsks = errors.New("the config is applied by the user, not by the ass
 // profile, model and effort follow config.toml where they are what it gave
 // them (follow). Only the user, at the shell's foreground, applies: as with
 // `aish model`, the assistant is refused by p.asking, a process in the
-// background by fromShell.
+// background by fromShell, and what passes them is applied only once the
+// user said Yes to the question, which the proxy reads from the keyboard.
 func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applied, error) {
 	fg := p.fromShell(ctx)
 	p.mu.Lock()
@@ -155,8 +156,16 @@ func (p *Proxy) applyConfig(ctx context.Context, ap rpc.AgentParams) (rpc.Applie
 	}
 	res.Restart = restartKeys(was, top)
 
+	// In force only with the user's Yes (userconfirm.go), and as checked
+	// above: an edit while the question is open waits for the next time.
+	if err := p.userConfirms(ctx, applyQuestion(res), "nothing applied"); err != nil {
+		return rpc.Applied{}, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.asking {
+		return rpc.Applied{}, errApplyAsks // a request began meanwhile: not the user's to answer for
+	}
 	p.conf = next
 	p.policies.Reset(fresh)
 	p.applyFields(top)
