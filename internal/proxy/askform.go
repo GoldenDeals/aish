@@ -18,6 +18,7 @@ type openForm struct {
 	done  chan struct{}
 	clock *askClock // nil: the form waits as long as its ctx
 	guard askGuard  // the keys typed ahead, no answer (askguard.go)
+	hold  askHold   // the shell's output meanwhile (askhold.go)
 }
 
 // askForm shows the questions and waits for the user to answer or cancel
@@ -88,6 +89,7 @@ func (p *Proxy) formKey(b []byte) []byte {
 		case key[0] == 0x03:
 			// Interrupts the request, like anywhere else.
 			pass = append(append(pass, g.release(nil)...), key[0])
+			of.hold.interrupted()
 		case key[0] == ctrlO:
 			// Nothing to view: nothing, as before.
 		case !fresh && g.ahead, k == keyRune && !of.f.takes(r):
@@ -128,17 +130,20 @@ func (t *console) drawForm() {
 }
 
 // closeForm takes the form off the screen and leaves the summary of the
-// answers in its place, if there are any. Called under p.mu.
+// answers in its place, if there are any. The shell's output held
+// meanwhile goes after them, all but the echo of a Ctrl+C, which goes
+// with the frame (askhold.go). Called under p.mu.
 func (t *console) closeForm() {
 	of := t.form
 	t.form = nil
 	of.clock.stop()
 	w, _ := t.size()
-	out := of.erase(w)
+	out := string(of.hold.echo()) + of.erase(w)
 	if s := of.f.summary(); s != "" {
 		out += s + "\r\n"
 	}
 	t.emit([]byte(out + "\x1b[?25h"))
+	t.release(&of.hold)
 	close(of.done)
 }
 

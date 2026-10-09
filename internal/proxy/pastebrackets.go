@@ -242,7 +242,7 @@ func (t *console) pasteOutput(b, show []byte) {
 	}
 	if m.again && openSeq(show) == len(show) {
 		m.again = false
-		t.emit(pasteOn)
+		t.emitShell(pasteOn) // after show, wherever it went
 	}
 	t.otherOutput(set && m.shell, show) // modifyOtherKeys, see shiftenter.go
 }

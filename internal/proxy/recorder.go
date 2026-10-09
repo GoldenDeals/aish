@@ -120,7 +120,7 @@ func (p *Proxy) output(b []byte) {
 	if p.line != nil {
 		show = p.line.feed(show)
 	}
-	p.emit(show)
+	p.emitShell(show) // held while a question is open, see askhold.go
 	p.pasteOutput(b, show)
 }
 

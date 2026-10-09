@@ -157,29 +157,28 @@ func TestPasteQuestion(t *testing.T) {
 
 // The shell turning the mode off while the proxy reads the keys gets it
 // turned on again after its output, not inside a sequence the output cut
-// short; once the keys are the shell's again, its mode is back.
+// short; once the keys are the shell's again, its mode is back. Under a
+// question the output, and the mode with it, waits for the answer
+// (askhold.go): the terminal keeps the mode on till then.
 func TestPasteModeShellOff(t *testing.T) {
 	p, out, res, cancel := questionProxy(t)
 	defer cancel()
-	p.output([]byte("job\x1b[?2004l"))
-	if s := out.String(); pasteModeOf(s) != "on" || !strings.HasSuffix(s, "job\x1b[?2004l"+string(pasteOn)) {
-		t.Errorf("the mode was not turned on again: %q", s)
-	}
 	before := len(out.String())
+	p.output([]byte("job\x1b[?2004l"))
 	p.output([]byte("\x1b[?2004h\x1b[?2004l\x1b[3"))
-	if s := out.String()[before:]; s != "\x1b[?2004h\x1b[?2004l\x1b[3" {
-		t.Errorf("into a sequence cut short: %q", s)
-	}
 	p.output([]byte("1mred"))
-	if s := out.String()[before:]; !strings.HasSuffix(s, "\x1b[31mred"+string(pasteOn)) {
-		t.Errorf("after the sequence: %q", s)
+	if s := out.String()[before:]; s != "" {
+		t.Errorf("under the question: %q", s)
 	}
-	before = len(out.String())
 	pause(p) // the question's keys come after one (askguard.go)
 	p.key([]byte("y"))
 	answer(t, res)
-	if m := pasteModeOf(out.String()[before:]); m != "off" {
-		t.Errorf("answered, the mode %q: %q", m, out.String()[before:])
+	s := out.String()[before:]
+	if !strings.Contains(s, "job\x1b[?2004l"+string(pasteOn)+"\x1b[?2004h\x1b[?2004l\x1b[31mred"+string(pasteOn)) {
+		t.Errorf("the output after the answer: %q", s)
+	}
+	if m := pasteModeOf(s); m != "off" {
+		t.Errorf("answered, the mode %q: %q", m, s)
 	}
 	// The keys are the shell's: its mode is its own.
 	before = len(out.String())

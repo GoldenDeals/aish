@@ -20,6 +20,7 @@ type prompt struct {
 	firm  bool      // a question the agent's code may have opened, see confirm.go
 	from  time.Time // when the keys of a firm one start to count
 	guard askGuard  // the keys typed ahead, no answer (askguard.go)
+	hold  askHold   // the shell's output meanwhile (askhold.go)
 }
 
 // choices is the block of answers drawn after the question: the one chosen
@@ -118,13 +119,15 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 		end += "\x1b[K\r\n"
 	} else {
 		// Interrupted: the terminal echoed ^C as it signalled the client,
-		// which only then asks to stop, so the echo is on the screen
-		// already and goes with the question, as with a form. The prompt
-		// starts where the question did, below the call.
+		// which only then asks to stop, so the echo came, held with the
+		// shell's output, and goes after the choices and with the
+		// question, as with a form (askhold.go). The prompt starts where
+		// the question did, below the call.
 		cols, _ := p.size()
-		end = (&openForm{shown: pr.shown}).erase(cols)
+		end = string(pr.hold.echo()) + (&openForm{shown: pr.shown}).erase(cols)
 	}
 	p.emit([]byte(end + "\x1b[?25h"))
+	p.release(&pr.hold) // the shell's output, the question off the screen
 	p.releaseKeys(&pr.guard)
 	p.syncPaste()
 	return "", err
@@ -173,6 +176,7 @@ func (p *Proxy) askKey(b []byte) []byte {
 			// typed before it; the question goes when the request ends,
 			// see askUser.
 			pass = append(append(pass, g.release(nil)...), c)
+			p.ask.hold.interrupted()
 			continue
 		case c == ctrlO:
 			if folds := p.viewFolds(); len(folds) > 0 {
@@ -211,7 +215,9 @@ func (p *Proxy) askKey(b []byte) []byte {
 			}
 			p.ask.done <- ans
 			p.ask.clock.stop()
+			hold := &p.ask.hold
 			p.ask = nil
+			p.release(hold) // the shell's output, after the answer
 			return append(pass, g.release(b[i:])...)
 		default:
 			if k == keyRune {

@@ -209,10 +209,14 @@ func TestYoloConfirmNotFromPTY(t *testing.T) {
 	if _, err := tty.Write([]byte("y\r\n\x1b[D\ry")); err != nil {
 		t.Fatal(err)
 	}
-	for deadline := time.Now().Add(5 * time.Second); !strings.HasSuffix(out.String(), "\x1b[D\ry"); time.Sleep(time.Millisecond) {
+	// The output waits for the answer (askhold.go).
+	for deadline := time.Now().Add(5 * time.Second); !strings.HasSuffix(heldOutput(p), "\x1b[D\ry"); time.Sleep(time.Millisecond) {
 		if time.Now().After(deadline) {
-			t.Fatalf("the PTY's output never came: %q", out.String())
+			t.Fatalf("the PTY's output never came: %q", heldOutput(p))
 		}
+	}
+	if s := out.String(); strings.Contains(s, "\x1b[D\ry") {
+		t.Errorf("drawn over the question: %q", s)
 	}
 	select {
 	case err := <-res:
@@ -225,6 +229,9 @@ func TestYoloConfirmNotFromPTY(t *testing.T) {
 	p.key([]byte("n"))
 	if err := answered(t, res); !errors.Is(err, errYoloDeclined) {
 		t.Errorf("then n: %v", err)
+	}
+	if s := modeless(out.String()); !strings.HasSuffix(s, "No\x1b[K\r\n\x1b[?25hy\r\r\n\x1b[D\ry") {
+		t.Errorf("the output after the answer: %q", s)
 	}
 }
 
