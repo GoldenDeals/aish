@@ -161,7 +161,7 @@ func compactAt(share float64, window int) string {
 	case window == 0:
 		return fmt.Sprintf("%d%% of the window; the window is unknown, so never", pct)
 	}
-	// As compactLimit in internal/agent counts it.
+	// As agent.CompactLimit counts it.
 	return fmt.Sprintf("%d%% of the window, at %s tokens", pct, session.Short(int(share*float64(window))))
 }
 

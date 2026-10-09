@@ -62,20 +62,16 @@ func contextCmd(cfg config.Config, args []string) int {
 	head := func(s string) { fmt.Fprintf(w, "\x1b[1m%s\x1b[0m\n", s) }
 
 	head("context")
-	ctx := session.Short(st.Tokens) + " tokens"
-	if info.Window > 0 {
-		ctx = fmt.Sprintf("%s / %s (%d%%)", session.Short(st.Tokens), session.Short(info.Window), st.Tokens*100/info.Window)
+	size, window := contextSize(es, cfg, st)
+	ctx := session.Short(size.Tokens) + " tokens"
+	if window > 0 {
+		ctx = fmt.Sprintf("%s / %s (%d%%)", session.Short(size.Tokens), session.Short(window), size.Tokens*100/window)
 	}
-	if !st.Measured && st.Tokens > 0 {
+	if !size.Measured && size.Tokens > 0 {
 		ctx += ", estimated"
 	}
 	row("used", ctx)
-	// The window the agent takes, as Proxy.prepare does.
-	agentWindow := cfg.ContextWindow
-	if agentWindow <= 0 {
-		agentWindow = info.Window
-	}
-	row("compact_at", compactAt(cfg.CompactAt, agentWindow))
+	row("compact_at", compactAt(cfg.CompactAt, window))
 	row("entries", fmt.Sprintf("%d commands, %d requests since the last compact", st.Commands, st.Requests))
 	row("session", fmt.Sprintf("%d tool calls, %d compacts, %s in (%s cached) / %s out tokens spent",
 		st.ToolCalls, st.Compacts, session.Short(st.InputTokens), session.Short(st.CachedTokens), session.Short(st.OutputTokens)))
@@ -91,7 +87,7 @@ func contextCmd(cfg config.Config, args []string) int {
 
 	if kinds := kindStats(session.Current(es), cfg.MaxOutputBytes); len(kinds) > 0 {
 		head("by kind")
-		printKinds(w, kinds)
+		printKinds(w, kinds, size.PerToken)
 	}
 	if ts := toolStats(msgs); len(ts) > 0 {
 		head("tools")
@@ -103,6 +99,20 @@ func contextCmd(cfg config.Config, args []string) int {
 		}
 	}
 	return 0
+}
+
+// contextSize is the size of the context es as the status at the prompt
+// and the agent's compact_at count it (session.Tokens): by the
+// max_output_bytes of cfg, the config of this directory in force, with the
+// system prompt and the tool schemas of the last request. window is the
+// agent's, as Proxy.prepare gives it: context_window, or else the one the
+// shell knows for its model.
+func contextSize(es []session.Entry, cfg config.Config, st rpc.Status) (size session.Estimate, window int) {
+	window = cfg.ContextWindow
+	if window <= 0 {
+		window = st.Window
+	}
+	return session.Tokens(es, cfg.MaxOutputBytes, st.Overhead), window
 }
 
 // contextArgs reads aish context [--full].
@@ -165,10 +175,12 @@ func kindStats(es []session.Entry, maxOutput int) []kindStat {
 	return append(out, total)
 }
 
-func printKinds(w io.Writer, rows []kindStat) {
+// printKinds prints the by kind table, the tokens at perToken bytes a
+// token, as session.Tokens counts what the API has not.
+func printKinds(w io.Writer, rows []kindStat, perToken float64) {
 	fmt.Fprintf(w, "  \x1b[2m%-16s %8s %10s %8s\x1b[0m\n", "kind", "entries", "bytes", "~tokens")
 	for _, r := range rows {
-		fmt.Fprintf(w, "  \x1b[2m%-16s\x1b[0m %8d %10d %8s\n", r.kind, r.entries, r.bytes, session.Short(r.bytes/4))
+		fmt.Fprintf(w, "  \x1b[2m%-16s\x1b[0m %8d %10d %8s\n", r.kind, r.entries, r.bytes, session.Short(int(float64(r.bytes)/perToken)))
 	}
 }
 

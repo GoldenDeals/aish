@@ -84,6 +84,10 @@ type Entry struct {
 	InputTokens  int `json:"input_tokens,omitempty"`
 	CachedTokens int `json:"cached_tokens,omitempty"`
 	OutputTokens int `json:"output_tokens,omitempty"`
+	// DroppedTokens is the part of OutputTokens the next request does not
+	// send, the reasoning of a provider that cannot take it back: paid
+	// for, not in the context.
+	DroppedTokens int `json:"dropped_tokens,omitempty"`
 
 	// instructions, file, skill (About: the skill's name), context (About:
 	// the hook's name)
@@ -307,29 +311,128 @@ func Current(es []Entry) []Entry {
 	return es
 }
 
-// Tokens estimates the size of the context: what the last turn measured
-// plus about four bytes a token for what came after it. Shell output counts
-// up to maxOutput bytes, as much as the model is sent.
-func Tokens(es []Entry, maxOutput int) int {
-	es = Current(es)
-	n, from := 0, 0
-	for i := len(es) - 1; i >= 0; i-- {
-		if es[i].InputTokens > 0 {
-			n, from = es[i].InputTokens+es[i].OutputTokens, i+1
-			break
-		}
+// Estimate is the size of the context the next request sends, in tokens.
+type Estimate struct {
+	Tokens int
+	// Measured: a turn since the last summary or clear was measured, and
+	// Tokens starts from what the API counted.
+	Measured bool
+	// PerToken is how many bytes of the journal a token takes: what the
+	// API has not counted yet is estimated by it.
+	PerToken float64
+}
+
+const (
+	// defaultPerToken is the bytes a token is taken to take till the API
+	// has counted enough of the session: about what code and command
+	// output take with Claude's tokenizers. Prose takes 3–4, JSON and
+	// listings 2, random text such as base64 one.
+	defaultPerToken = 3.0
+	// The measure is taken once the API has counted minMeasured tokens of
+	// the journal's own, from steps of between minPerToken and maxPerToken
+	// bytes a token: past those the count is of something the bytes do not
+	// hold.
+	minMeasured              = 1000
+	minPerToken, maxPerToken = 1.0, 8.0
+)
+
+// Tokens estimates the size of the context the next request sends: what
+// the last turn measured, all it was sent and its reply but the reasoning
+// its provider does not send back, and what came after it at PerToken
+// bytes a token. Till a turn since the last summary or clear is measured,
+// the whole context is estimated so, with overhead: the bytes of the
+// system prompt and the tool schemas, which the API counts into
+// InputTokens and the journal does not hold. Shell output counts up to
+// maxOutput bytes, as much as the model is sent. An empty context stays
+// empty: there is nothing to send yet.
+//
+// The status at the prompt, `aish context` and the agent's compact_at all
+// count by it, with the max_output_bytes and the overhead of the agent.
+func Tokens(es []Entry, maxOutput, overhead int) Estimate {
+	est := Estimate{PerToken: perToken(es, maxOutput)}
+	cur := Current(es)
+	from := 0
+	if i := lastMeasured(cur); i >= 0 {
+		est.Tokens, est.Measured, from = cur[i].InputTokens+kept(cur[i]), true, i+1
 	}
 	bytes := 0
-	for _, e := range es[from:] {
+	for _, e := range cur[from:] {
 		bytes += EntryBytes(e, maxOutput)
 	}
-	return n + bytes/4
+	if !est.Measured {
+		if bytes == 0 {
+			return est
+		}
+		bytes += overhead
+	}
+	est.Tokens += int(float64(bytes) / est.PerToken)
+	return est
+}
+
+// lastMeasured is the index of the last turn of es whose input the API
+// counted, -1 if there is none.
+func lastMeasured(es []Entry) int {
+	for i := len(es) - 1; i >= 0; i-- {
+		if es[i].Kind == KindAssistant && es[i].InputTokens > 0 {
+			return i
+		}
+	}
+	return -1
+}
+
+// kept is what the next request sends of the reply of the turn e.
+func kept(e Entry) int { return e.OutputTokens - min(e.DroppedTokens, e.OutputTokens) }
+
+// perToken is how many bytes of the journal a token takes with the model
+// of the last measured turn, as the API counted the session: from one
+// measured turn of a request to the next, the input grew by the first
+// one's reply and by the entries between them, results of tools mostly,
+// and their bytes over those tokens is the measure. Within a request the
+// reasoning of its turns stays, or the provider says it drops it
+// (DroppedTokens); between requests some models drop it unsaid, so no
+// step across one is taken, nor one that changed what was sent before the
+// conversation (Prefix: tools tool_search loaded, say).
+// The tokenizer is the model's, the mix of code, output and prose the
+// session's. defaultPerToken till minMeasured tokens are counted so.
+func perToken(es []Entry, maxOutput int) float64 {
+	last := lastMeasured(es)
+	if last < 0 {
+		return defaultPerToken
+	}
+	model := es[last].Provider + "\x00" + es[last].Model
+	bytes, tokens := 0, 0
+	prev, between := -1, 0
+	for i, e := range es {
+		switch {
+		case e.Kind == KindAssistant && e.InputTokens > 0:
+			if prev >= 0 && e.Prefix == es[prev].Prefix && e.Provider+"\x00"+e.Model == model {
+				t := e.InputTokens - es[prev].InputTokens - kept(es[prev])
+				if r := float64(between) / float64(t); t > 0 && r >= minPerToken && r <= maxPerToken {
+					bytes, tokens = bytes+between, tokens+t
+				}
+			}
+			prev, between = i, 0
+		case e.Kind == KindAssistant || e.Kind == KindUser || e.Kind == KindSummary || e.Kind == KindClear:
+			// A turn the API did not count, or another request or
+			// context: no step from the last turn to the next.
+			prev, between = -1, 0
+		default:
+			between += EntryBytes(e, maxOutput)
+		}
+	}
+	if tokens < minMeasured {
+		return defaultPerToken
+	}
+	return float64(bytes) / float64(tokens)
 }
 
 // EntryBytes is what Tokens counts for e: its command, text and output,
 // shell output up to maxOutput bytes, the arguments of its tool calls, and
-// a little for the wrapping.
+// a little for the wrapping. A kind the model is not sent counts nothing.
 func EntryBytes(e Entry, maxOutput int) int {
+	if !sent(e.Kind) {
+		return 0
+	}
 	out := len(e.Output)
 	if e.Kind == KindShell && maxOutput > 0 && !e.TUI {
 		out = min(out, maxOutput)
@@ -339,6 +442,17 @@ func EntryBytes(e Entry, maxOutput int) int {
 		n += len(c.Args)
 	}
 	return n
+}
+
+// sent tells whether the model is sent entries of kind k, as
+// agent.Messages builds the conversation. A clear is not, nor is a kind
+// kept for the journal alone: neither weighs in the context.
+func sent(k string) bool {
+	switch k {
+	case KindShell, KindUser, KindAssistant, KindToolResult, KindInstructions, KindFile, KindSkill, KindContext, KindSummary:
+		return true
+	}
+	return false
 }
 
 func modTime(p string) time.Time {

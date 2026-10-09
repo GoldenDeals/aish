@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -73,21 +74,135 @@ func TestOpenCountsBadLines(t *testing.T) {
 	}
 }
 
+// byDefault is bytes in tokens at the default measure.
+func byDefault(bytes int) int { return int(float64(bytes) / defaultPerToken) }
+
 func TestTokens(t *testing.T) {
 	es := []Entry{
 		{Kind: KindShell, Cmd: "cat big", Output: string(make([]byte, 100000))},
 		{Kind: KindAssistant, Text: "hi", InputTokens: 5000, OutputTokens: 100},
 		{Kind: KindShell, Cmd: "ls", Output: string(make([]byte, 4000))},
 	}
-	if got := Tokens(es, 1000); got != 5100+(2+1000+40)/4 {
-		t.Errorf("tokens %d", got)
+	// Overhead unknown: the measure is the default one.
+	est := Tokens(es, 1000, 0)
+	if want := 5100 + byDefault(2+1000+40); est.Tokens != want || !est.Measured || est.PerToken != defaultPerToken {
+		t.Errorf("tokens %+v, want %d", est, want)
 	}
 	es = append(es, Entry{Kind: KindSummary, Text: string(make([]byte, 400))})
-	if got := Tokens(es, 1000); got != (400+40)/4 {
-		t.Errorf("after a summary: %d", got)
+	if est := Tokens(es, 1000, 0); est.Tokens != byDefault(400+40) || est.Measured {
+		t.Errorf("after a summary: %+v", est)
+	}
+	// Till a turn is measured, the system prompt and the tools count too.
+	if est := Tokens(es, 1000, 3000); est.Tokens != int(float64(400+40+3000)/est.PerToken) || est.Measured {
+		t.Errorf("after a summary, with the overhead: %+v", est)
 	}
 	if c := Current(es); len(c) != 1 || c[0].Kind != KindSummary {
 		t.Errorf("current %+v", c)
+	}
+	// Nothing to send, nothing to count, overhead or not.
+	if est := Tokens([]Entry{{Kind: KindShell, Cmd: "ls"}, {Kind: KindClear}}, 1000, 3000); est.Tokens != 0 {
+		t.Errorf("a cleared context: %+v", est)
+	}
+}
+
+// Reasoning the provider does not send back is paid for, not carried into
+// the next request's context.
+func TestTokensDropped(t *testing.T) {
+	es := []Entry{
+		{Kind: KindUser, Text: "q"},
+		{Kind: KindAssistant, Text: "a", InputTokens: 5000, OutputTokens: 900, DroppedTokens: 800},
+	}
+	if est := Tokens(es, 1000, 0); est.Tokens != 5100 {
+		t.Errorf("tokens %d, want 5000 sent and the 100 of the reply", est.Tokens)
+	}
+	// A count past the reply's drops the reply, no more.
+	es[1].DroppedTokens = 2000
+	if est := Tokens(es, 1000, 0); est.Tokens != 5000 {
+		t.Errorf("tokens %d, want 5000", est.Tokens)
+	}
+}
+
+// Only a turn of the model is a measure of the context: an entry of
+// another kind with tokens, a subagent's spending say, is not, and the
+// model is not sent it.
+func TestTokensMeasuredTurn(t *testing.T) {
+	es := []Entry{
+		{Kind: KindUser, Text: "q"},
+		{Kind: KindAssistant, Text: "a", InputTokens: 5000, OutputTokens: 100},
+		{Kind: KindToolResult, Output: "r", InputTokens: 90000, OutputTokens: 9000},
+		{Kind: "spent", InputTokens: 70000, OutputTokens: 7000},
+	}
+	est := Tokens(es, 1000, 0)
+	if want := 5100 + byDefault(1+40); est.Tokens != want || !est.Measured {
+		t.Errorf("tokens %+v, want %d", est, want)
+	}
+}
+
+// The bytes a token takes are measured within requests: from one turn the
+// API counted to the next, the input grew by the reply and the results
+// between them.
+func TestTokensPerToken(t *testing.T) {
+	out := strings.Repeat("x", 20000)
+	turn := func(in, out int) Entry {
+		return Entry{Kind: KindAssistant, Text: "t", Provider: "p", Model: "m", InputTokens: in, OutputTokens: out}
+	}
+	es := []Entry{
+		{Kind: KindUser, Text: "list"},
+		turn(3000, 500),
+		{Kind: KindToolResult, Output: out},       // 20040 bytes
+		turn(3000+500+10020, 200),                 // 10020 tokens for them: 2 bytes a token
+		{Kind: KindShell, Cmd: "ls", Output: out}, // after it: 2+1000+40 bytes
+	}
+	est := Tokens(es, 1000, 0)
+	if est.PerToken != 2 {
+		t.Fatalf("%v bytes a token, want 2", est.PerToken)
+	}
+	if want := 13520 + 200 + (2+1000+40)/2; est.Tokens != want {
+		t.Errorf("tokens %d, want %d", est.Tokens, want)
+	}
+
+	// No step across requests: some models drop the reasoning of the last
+	// one unsaid. A step past belief is left out too: tools tool_search
+	// loaded, say.
+	more := append(slices.Clone(es[:4]),
+		Entry{Kind: KindUser, Text: "again"},
+		turn(50_000, 100),
+		Entry{Kind: KindToolResult, Output: "loaded: a, b"},
+		turn(60_000, 100),
+	)
+	if est := Tokens(more, 1000, 0); est.PerToken != 2 {
+		t.Errorf("%v bytes a token, want still 2", est.PerToken)
+	}
+	// Nor a step that changed what goes before the conversation, however
+	// likely its measure.
+	loaded := append(slices.Clone(es[:4]), Entry{Kind: KindToolResult, Output: out}, turn(13520+200+5010, 100))
+	loaded[5].Prefix = "tools loaded"
+	if est := Tokens(loaded, 1000, 0); est.PerToken != 2 {
+		t.Errorf("%v bytes a token past a new prefix, want still 2", est.PerToken)
+	}
+	// Reasoning the provider said it dropped is not in the next input.
+	dropped := slices.Clone(es)
+	dropped[1].OutputTokens, dropped[1].DroppedTokens = 2500, 2000
+	if est := Tokens(dropped, 1000, 0); est.PerToken != 2 {
+		t.Errorf("%v bytes a token with the reasoning dropped, want 2", est.PerToken)
+	}
+
+	// A summary since: the context is estimated whole, by the same measure.
+	es = append(es, Entry{Kind: KindSummary, Text: strings.Repeat("s", 960)})
+	if est := Tokens(es, 1000, 3000); est.PerToken != 2 || est.Tokens != (1000+3000)/2 || est.Measured {
+		t.Errorf("after a summary: %+v", est)
+	}
+
+	// Another model's steps do not measure this one's tokenizer.
+	other := append(slices.Clone(es[:4]), Entry{Kind: KindUser, Text: "q"},
+		Entry{Kind: KindAssistant, Text: "t", Provider: "p", Model: "n", InputTokens: 15000})
+	if est := Tokens(other, 1000, 0); est.PerToken != defaultPerToken {
+		t.Errorf("%v bytes a token of another model", est.PerToken)
+	}
+	// Too little counted to tell.
+	small := []Entry{{Kind: KindUser, Text: "hi"}, turn(3000, 10), {Kind: KindToolResult, Output: "ok"}, turn(3050, 10)}
+	if est := Tokens(small, 1000, 0); est.PerToken != defaultPerToken {
+		t.Errorf("%v bytes a token from 40 tokens", est.PerToken)
 	}
 }
 
@@ -107,6 +222,9 @@ func TestEntryBytes(t *testing.T) {
 		}}, 11 + 40 + 16 + 12},
 		// A tool's result is not shell output: whole.
 		{"tool result", Entry{Kind: KindToolResult, Output: strings.Repeat("x", 5000)}, 5000 + 40},
+		// What the model is not sent weighs nothing.
+		{"clear", Entry{Kind: KindClear}, 0},
+		{"a kind for the journal alone", Entry{Kind: "spent", Text: "x"}, 0},
 	} {
 		if got := EntryBytes(c.e, 1000); got != c.want {
 			t.Errorf("%s: %d bytes, want %d", c.name, got, c.want)

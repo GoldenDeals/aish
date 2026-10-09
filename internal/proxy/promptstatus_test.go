@@ -23,7 +23,7 @@ func TestPromptStatusHides(t *testing.T) {
 	const (
 		draw   = "\x1b7\x1b[79G\x1b[2mm\x1b[0m\x1b8"
 		erase  = "\x1b7\x1b[79G\x1b[K\x1b8"
-		drawLs = "\x1b7\x1b[74G\x1b[2m11 · m\x1b[0m\x1b8" // with ls in the journal
+		drawLs = "\x1b7\x1b[74G\x1b[2m14 · m\x1b[0m\x1b8" // with ls in the journal, 44 bytes at 3 a token
 	)
 	written := 0
 	expect := func(what, want string) {

@@ -38,7 +38,7 @@ func cutOutputs(es []session.Entry) []session.Entry {
 	if over <= 0 {
 		return nil
 	}
-	cutResults(outs, over/4) // tokens, as cutResults counts them
+	cutResults(outs, over)
 	for k, i := range at {
 		cur[i].Output = outs[k].Output
 	}

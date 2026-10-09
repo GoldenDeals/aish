@@ -215,6 +215,10 @@ type Status struct {
 	// Measured when the API reported it, else estimated.
 	Tokens   int  `json:"tokens"`
 	Measured bool `json:"measured"`
+	// Overhead is the system prompt and the tool schemas of the last
+	// request, in bytes: what the journal does not hold of a context
+	// (session.Tokens), 0 before the first request.
+	Overhead int `json:"overhead,omitempty"`
 	// Since the last compact: the user's commands and requests.
 	Commands int `json:"commands"`
 	Requests int `json:"requests"`

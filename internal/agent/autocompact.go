@@ -6,7 +6,6 @@ import (
 	"slices"
 
 	"github.com/GoldenDeals/aish/internal/capture"
-	"github.com/GoldenDeals/aish/internal/config"
 	"github.com/GoldenDeals/aish/internal/llm"
 	"github.com/GoldenDeals/aish/internal/session"
 )
@@ -22,13 +21,6 @@ const autoNote = "The context is compacted automatically, in the middle of the w
 // and the tail, with the exit status.
 const minCut = 1000
 
-// compactLimit is the context size, in tokens, past which the session is
-// compacted before the agent's next turn: compact_at of the window, 0 when
-// either is unknown or off.
-func compactLimit(cfg config.Config) int {
-	return int(cfg.CompactAt * float64(cfg.ContextWindow))
-}
-
 // autoCompact keeps the context under compact_at of the window before a
 // turn, so that a long request does not fail on the API's limit halfway:
 // it sums the session up, as `aish compact` does, and the request goes on
@@ -40,8 +32,9 @@ func compactLimit(cfg config.Config) int {
 // compact_at is not asked for again till the next request: every try sends
 // the whole history.
 func (a *Agent) autoCompact(ctx context.Context) error {
-	limit := compactLimit(a.Cfg)
-	tokens := a.contextTokens(a.entries)
+	limit := CompactLimit(a.Cfg)
+	size := a.contextSize(a.entries)
+	tokens := size.Tokens
 	cur := session.Current(a.entries)
 	if a.windowFull && !slices.ContainsFunc(cur, func(e session.Entry) bool { return e.Kind == session.KindAssistant }) {
 		// The reply is gone from the context, and the window it filled with
@@ -53,7 +46,7 @@ func (a *Agent) autoCompact(ctx context.Context) error {
 		return nil
 	}
 	if res := soleTurnResults(cur); res != nil && !full {
-		cutResults(res, tokens-limit)
+		cutResults(res, int(float64(tokens-limit)*size.PerToken))
 		fmt.Fprintf(a.UI, "%s[aish: context %s past compact_at right after a summary; the model gets the last output cut]%s\n",
 			dim, session.Short(tokens), reset)
 		return nil
@@ -164,15 +157,15 @@ func soleTurnResults(cur []session.Entry) []session.Entry {
 	return cur[last+1:]
 }
 
-// cutResults shortens res, in place, by about tokens, each in proportion
+// cutResults shortens res, in place, by about bytes, each in proportion
 // to its size. The entries are the agent's: the journal keeps the results
 // whole.
-func cutResults(res []session.Entry, tokens int) {
+func cutResults(res []session.Entry, bytes int) {
 	total := 0
 	for _, e := range res {
 		total += len(e.Output)
 	}
-	keep := total - tokens*4 // Tokens counts four bytes a token
+	keep := total - bytes
 	if total == 0 || keep >= total {
 		return
 	}

@@ -161,6 +161,10 @@ func TestResponsesComplete(t *testing.T) {
 	if resp.StopReason != "completed" || resp.InputTokens != 100 || resp.CachedTokens != 64 || resp.OutputTokens != 7 {
 		t.Errorf("stop %q, tokens in %d, cached %d, out %d", resp.StopReason, resp.InputTokens, resp.CachedTokens, resp.OutputTokens)
 	}
+	// The reasoning goes back with Raw: the context keeps it.
+	if resp.DroppedTokens != 0 {
+		t.Errorf("dropped %d tokens; the reasoning is replayed", resp.DroppedTokens)
+	}
 	want := []ToolCall{
 		{ID: "call_1", Name: "bash", Args: json.RawMessage(`{"command":"ls"}`)},
 		{ID: "call_2", Name: "read_file", Args: json.RawMessage(`{}`)},

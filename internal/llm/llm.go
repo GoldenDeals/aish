@@ -69,6 +69,10 @@ type Response struct {
 	InputTokens, OutputTokens int
 	// CachedTokens is the part of InputTokens read from the provider's cache.
 	CachedTokens int
+	// DroppedTokens is the part of OutputTokens the next request does not
+	// send: reasoning the API has no way to take back (Chat Completions).
+	// A provider that replays its reasoning (Raw) drops none.
+	DroppedTokens int
 }
 
 // The stop reasons the agent acts on. A provider maps its own to these;

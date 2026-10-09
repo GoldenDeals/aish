@@ -398,6 +398,7 @@ func (a *Agent) turn(ctx context.Context) error {
 		Kind: session.KindAssistant, Text: resp.Text, Raw: resp.Raw,
 		Provider: a.Provider.Name(), Model: a.Provider.Model(), Profile: a.Cfg.Profile, Prefix: a.prefixKey(req),
 		InputTokens: resp.InputTokens, CachedTokens: resp.CachedTokens, OutputTokens: resp.OutputTokens,
+		DroppedTokens: resp.DroppedTokens,
 	}
 	for _, c := range resp.ToolCalls {
 		e.ToolCalls = append(e.ToolCalls, session.ToolCall{ID: c.ID, Name: c.Name, Args: c.Args})

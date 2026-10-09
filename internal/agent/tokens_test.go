@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GoldenDeals/aish/internal/config"
 	"github.com/GoldenDeals/aish/internal/llm"
 	"github.com/GoldenDeals/aish/internal/session"
 	"github.com/GoldenDeals/aish/internal/tools"
@@ -33,16 +34,52 @@ func TestContextTokens(t *testing.T) {
 		t.Fatalf("request %d tools, system %q", len(req.Tools), req.System)
 	}
 	over := overhead(req)
-	if over < len(a.Cfg.SystemPrompt)/4 {
-		t.Fatalf("overhead %d", over)
+	if over < len(a.Cfg.SystemPrompt) || over != a.Overhead() {
+		t.Fatalf("overhead %d bytes, Overhead %d", over, a.Overhead())
 	}
-	if got, want := a.contextTokens(es), session.Tokens(es, a.Cfg.MaxOutputBytes)+over; got != want {
-		t.Errorf("after a summary %d, want %d", got, want)
+	// The agent counts as the status and aish context do, by its own
+	// max_output_bytes and overhead.
+	want := session.Tokens(es, a.Cfg.MaxOutputBytes, over)
+	if got := a.contextSize(es); got != want || got.Measured {
+		t.Errorf("after a summary %+v, want %+v", got, want)
+	}
+	if bare := session.Tokens(es, a.Cfg.MaxOutputBytes, 0); want.Tokens < bare.Tokens+int(float64(over)/want.PerToken) {
+		t.Errorf("after a summary %d tokens, without the overhead %d", want.Tokens, bare.Tokens)
 	}
 
 	es = append(es, session.Entry{Kind: session.KindAssistant, Text: "now this", InputTokens: 9000, OutputTokens: 50})
-	if got, want := a.contextTokens(es), session.Tokens(es, a.Cfg.MaxOutputBytes); got != want {
-		t.Errorf("after a measured turn %d, want %d", got, want)
+	if got := a.contextTokens(es); got != 9050 {
+		t.Errorf("after a measured turn %d, want 9050", got)
+	}
+}
+
+// compact_at goes by the window the agent has: none known, none past it.
+func TestCompactLimit(t *testing.T) {
+	cfg := config.Default()
+	cfg.CompactAt, cfg.ContextWindow = 0.8, 200_000
+	if got := CompactLimit(cfg); got != 160_000 {
+		t.Errorf("limit %d", got)
+	}
+	cfg.ContextWindow = 0
+	if got := CompactLimit(cfg); got != 0 {
+		t.Errorf("limit %d of an unknown window", got)
+	}
+}
+
+// Past compact_at right after a summary, the results of the one turn since
+// are cut by what is over the limit, at the bytes a token takes in this
+// context.
+func TestCutResultsBytes(t *testing.T) {
+	res := []session.Entry{
+		{Kind: session.KindToolResult, Output: strings.Repeat("a", 30000)},
+		{Kind: session.KindToolResult, Output: strings.Repeat("b", 10000)},
+	}
+	cutResults(res, 20000)
+	if n := len(res[0].Output) + len(res[1].Output); n < 19000 || n > 21500 {
+		t.Errorf("%d bytes left of 40000 cut by 20000", n)
+	}
+	if len(res[0].Output) < 2*len(res[1].Output) {
+		t.Errorf("not in proportion: %d and %d", len(res[0].Output), len(res[1].Output))
 	}
 }
 

@@ -60,7 +60,7 @@ data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choice
 
 data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
 
-data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":7,"total_tokens":107,"prompt_tokens_details":{"cached_tokens":64}}}
+data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":7,"total_tokens":107,"prompt_tokens_details":{"cached_tokens":64},"completion_tokens_details":{"reasoning_tokens":5}}}
 
 data: [DONE]
 
@@ -125,6 +125,11 @@ func TestOpenAIComplete(t *testing.T) {
 		}
 		if resp.StopReason != "tool_calls" || resp.InputTokens != 100 || resp.CachedTokens != 64 || resp.OutputTokens != 7 {
 			t.Errorf("stop %q, tokens in %d, cached %d, out %d", resp.StopReason, resp.InputTokens, resp.CachedTokens, resp.OutputTokens)
+		}
+		// The reasoning is in the reply's count, and the next request has no
+		// way to send it back: the context does not keep it.
+		if resp.DroppedTokens != 5 {
+			t.Errorf("dropped %d tokens, want the 5 of the reasoning", resp.DroppedTokens)
 		}
 		// A call cut short leaves arguments that do not parse; the call still
 		// needs a result, so it goes on with no arguments.

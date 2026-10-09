@@ -140,17 +140,40 @@ func TestKindStats(t *testing.T) {
 		t.Errorf("stats\n%+v\nwant\n%+v", got, want)
 	}
 	// The same measure as the estimate of the context.
-	if total := got[len(got)-1].bytes; total/4 != session.Tokens(es, 1000) {
-		t.Errorf("total %d bytes, Tokens %d", total, session.Tokens(es, 1000))
+	est := session.Tokens(es, 1000, 0)
+	if total := got[len(got)-1].bytes; int(float64(total)/est.PerToken) != est.Tokens {
+		t.Errorf("total %d bytes, Tokens %+v", total, est)
 	}
 	if got := kindStats(nil, 1000); got != nil {
 		t.Errorf("empty context: %+v", got)
 	}
 	var b bytes.Buffer
-	printKinds(&b, got)
-	printKinds(&b, want[4:])
-	if s := b.String(); !strings.Contains(s, "summary") || !strings.HasSuffix(s, "\x1b[0m        6       1317      329\n") {
+	printKinds(&b, got, est.PerToken)
+	printKinds(&b, want[4:], 2.5)
+	if s := b.String(); !strings.Contains(s, "summary") || !strings.HasSuffix(s, "\x1b[0m        6       1317      526\n") {
 		t.Errorf("printed %q", s)
+	}
+}
+
+// aish context sizes the context by the config of its directory, with the
+// overhead the proxy knows, and by the agent's window: context_window, or
+// else the one the shell knows for its model.
+func TestContextSize(t *testing.T) {
+	es := []session.Entry{
+		{Kind: session.KindUser, Text: "q"},
+		{Kind: session.KindAssistant, Text: "a", InputTokens: 5000, OutputTokens: 100},
+		{Kind: session.KindShell, Cmd: "cat big", Output: strings.Repeat("x", 9000)},
+	}
+	cfg := config.Default()
+	cfg.MaxOutputBytes = 300
+	st := rpc.Status{Info: rpc.Info{Window: 200_000}, Overhead: 4000}
+	size, window := contextSize(es, cfg, st)
+	if want := session.Tokens(es, 300, 4000); size != want || window != 200_000 {
+		t.Errorf("size %+v, window %d; want %+v, 200000", size, window, want)
+	}
+	cfg.ContextWindow = 100_000
+	if _, window := contextSize(es, cfg, st); window != 100_000 {
+		t.Errorf("window %d, not context_window", window)
 	}
 }
 
@@ -179,7 +202,7 @@ func TestContextCmd(t *testing.T) {
 	go rpc.Serve(l, func(_ context.Context, method string, _ json.RawMessage) (any, error) {
 		switch method {
 		case rpc.MethodStatus:
-			return rpc.Status{Info: rpc.Info{SessionID: "s1", Window: 200_000}, Tokens: 1234, Commands: 1, Requests: 1}, nil
+			return rpc.Status{Info: rpc.Info{SessionID: "s1", Window: 200_000}, Tokens: 1234, Overhead: 30_000, Commands: 1, Requests: 1}, nil
 		case rpc.MethodHistory:
 			return es, nil
 		case rpc.MethodConfig:
@@ -195,7 +218,11 @@ func TestContextCmd(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	for _, s := range []string{"context", "1.2k / 200k (0%), estimated", "by kind", "total", "tools", "bash"} {
+	// Counted here as the status and the agent count it, by the config of
+	// this directory and the proxy's overhead: not the proxy's 1234,
+	// counted by the shell's directory.
+	used := session.Short(session.Tokens(es, config.Default().MaxOutputBytes, 30_000).Tokens) + " / 200k (5%), estimated"
+	for _, s := range []string{"context", used, "by kind", "total", "tools", "bash"} {
 		if !strings.Contains(stderr, s) {
 			t.Errorf("no %q in stderr:\n%s", s, stderr)
 		}

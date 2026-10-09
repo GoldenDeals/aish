@@ -124,6 +124,8 @@ func (p *openaiProvider) Complete(ctx context.Context, req Request, onText func(
 		InputTokens:  int(acc.Usage.PromptTokens),
 		CachedTokens: int(acc.Usage.PromptTokensDetails.CachedTokens),
 		OutputTokens: int(acc.Usage.CompletionTokens),
+		// Counted in the reply, never sent back: the context loses it.
+		DroppedTokens: int(min(acc.Usage.CompletionTokensDetails.ReasoningTokens, acc.Usage.CompletionTokens)),
 	}
 	if len(acc.Choices) == 0 {
 		return resp, nil
