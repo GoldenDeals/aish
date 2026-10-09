@@ -45,7 +45,7 @@ func TestRulesBraceQuotes(t *testing.T) {
 		{`find . -exec {'sudo',ls} \;`, Ask, computed},
 		{`echo $({'sudo',ls})`, Ask, computed},
 		{`bash -c {'sudo ls',}`, Ask, computed},
-		{`trap {'sudo ls',} EXIT`, Ask, computed},
+		{`trap {'sudo ls',} EXIT`, Ask, "command built at run time (computed, prompt)"},
 		{`su -c {'sudo ls',}`, Ask, computed},
 		{`ssh host {'sudo ls',}`, Ask, computed},
 		{`{'cd',} /etc && rm -rf passwd`, Ask, computed},

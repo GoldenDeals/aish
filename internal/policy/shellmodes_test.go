@@ -85,7 +85,7 @@ func TestRulesShellModesOn(t *testing.T) {
 		{`git fetch GIT_SSH_COMMAND='sudo ls'`, env, []string{"keyword"}, Deny, sudo},
 		{`ls PATH=/tmp`, env, []string{"keyword"}, Ask, rebind},
 		{`set -k; ls PATH=/tmp`, env, []string{"keyword"}, Ask, rebind},
-		{`f() { ls PATH=bin; }`, env, []string{"keyword"}, Ask, rebind},
+		{`f() { ls PATH=bin; }`, env, []string{"keyword"}, Ask, "command built at run time (prompt, rebind)"},
 		{`eval 'ls PATH=/tmp'`, env, []string{"emacs", "keyword", "histexpand"}, Ask, rebind},
 		{`ls PATH=/tmp`, exported, nil, Ask, rebind},
 		{`set -k`, env, []string{"keyword"}, Allow, ""},

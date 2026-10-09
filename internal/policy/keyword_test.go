@@ -59,15 +59,15 @@ func TestParseKeyword(t *testing.T) {
 		{`set -k; false && set +k; ls PATH=/tmp`, [][]string{{"ls"}}, nil, []string{"computed", "rebind"}},
 		{`set -k; (set +k); ls PATH=/tmp`, [][]string{{"ls"}}, nil, []string{"computed", "rebind"}},
 		{`for i in 1 2; do ls PATH=/tmp; set -k; done; set +k`, [][]string{{"ls"}}, nil, []string{"computed", "rebind"}},
-		{`f() { set -k; }; set +k; f; ls PATH=/tmp`, [][]string{{"ls"}}, nil, []string{"computed", "rebind"}},
-		{`f() { ls PATH=/tmp; }; set -k; f; set +k`, [][]string{{"ls"}}, nil, []string{"rebind"}},
+		{`f() { set -k; }; set +k; f; ls PATH=/tmp`, [][]string{{"ls"}}, nil, []string{"computed", "prompt", "rebind"}},
+		{`f() { ls PATH=/tmp; }; set -k; f; set +k`, [][]string{{"ls"}}, nil, []string{"prompt", "rebind"}},
 		{`set -k; set +k -- "$(ls PATH=/tmp)"`, [][]string{{"ls"}}, nil, []string{"rebind"}},
 		{`set -k; set +k < <(ls PATH=/tmp)`, [][]string{{"ls"}}, nil, []string{"rebind"}},
 		{`set -k; set +k; cat < <(ls PATH=/tmp)`, nil, [][]string{{"ls"}}, nil},
 
 		// Code handed to a shell: in the mode the line turns on anywhere,
 		// and turning it on itself is computed.
-		{`trap 'ls PATH=/tmp' EXIT; set -k; set +k`, [][]string{{"ls"}}, nil, []string{"rebind"}},
+		{`trap 'ls PATH=/tmp' EXIT; set -k; set +k`, [][]string{{"ls"}}, nil, []string{"prompt", "rebind"}},
 		{`eval 'set -k'; git fetch GIT_SSH_COMMAND='sudo ls'`, nil, nil, []string{"computed"}},
 		{`eval 'set -k; git fetch GIT_SSH_COMMAND="sudo ls"'`, [][]string{sudoLs}, nil, []string{"computed"}},
 		{`eval 'set -k'; eval 'git fetch GIT_SSH_COMMAND="sudo ls"'`, [][]string{sudoLs}, nil, []string{"computed"}},

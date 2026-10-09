@@ -952,7 +952,10 @@ tmux в строке `if-shell`, Perl в `{= =}` у `parallel`, конфиг `ss
 here-string), `prompt` — присваивание
 `PROMPT_COMMAND`, `PS0`, `PS1`, `PS2`,
 `PS4`, `BASH_ENV`, `ENV`, `MAILPATH` — не только `=` и `export`, но и `read`, `printf -v`, `mapfile`,
-`declare -n`, `rebind` — имя команды начнёт запускать другое: присваивание `PATH` (и
+`declare -n` — и код, который строка оставляет твоему shell'у на потом: `trap` с кодом (кроме `trap -p`, `-l`, `-`
+и `''`), определение функции (`command_not_found_handle` тоже) и алиаса, `bind -x` и макрос `bind`, `complete -C`,
+`-F` и `-W` с подстановкой — в самой строке и в коде её `eval`, но не в `( … )`, `$(…)`, фоне (`&`) и `bash -c`;
+команды такого кода проверяются, как команды строки, `rebind` — имя команды начнёт запускать другое: присваивание `PATH` (и
 `export PATH=…:$PATH`), `EXECIGNORE`, `BASH_CMDS`, `BASH_ALIASES`, `unset PATH`, `hash -p`, `enable`
 (кроме `-n`, `-d` и списка), `git config` переменной с кодом (`alias.ИМЯ '!…'`, `core.pager`…; код тоже
 разбирается), `git --exec-path=`, опция `tmux set` с командой, `screen -X shell`/`defshell` и `blankerprg`,

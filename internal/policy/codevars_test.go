@@ -67,8 +67,8 @@ func TestParseCodeVars(t *testing.T) {
 		{`: ${PATH:=/tmp}`, nil, []string{"rebind"}},
 		{`for PS1 in '$(sudo ls)'; do :; done`, nil, []string{"prompt"}},
 
-		{`bind -f /tmp/rc`, nil, []string{"computed"}},
-		{`bind -m vi -f ~/.inputrc`, nil, []string{"computed"}},
+		{`bind -f /tmp/rc`, nil, []string{"computed", "prompt"}},
+		{`bind -m vi -f ~/.inputrc`, nil, []string{"computed", "prompt"}},
 
 		{`EDITOR=vim git commit`, [][]string{{"vim"}, {"git", "commit"}}, nil},
 		{`export LANG=C; LC_ALL=C sort f; for f in a b; do echo "$f"; done; : ${x:=1}`, [][]string{{"sort", "f"}}, nil},
@@ -134,7 +134,7 @@ func TestRulesCodeVars(t *testing.T) {
 		{`LD_PRELOAD=/tmp/x.so ls`, Ask, "command built at run time (rebind)"},
 		{`export NODE_OPTIONS=--require=/tmp/x.js`, Ask, "command built at run time (rebind)"},
 		{`PAGER="$p" git log`, Ask, "command built at run time (computed)"},
-		{`bind -f /tmp/rc`, Ask, "command built at run time (computed)"},
+		{`bind -f /tmp/rc`, Ask, "command built at run time (computed, prompt)"},
 		{`EDITOR=vim git commit`, Allow, ""},
 		{`export LANG=C`, Allow, ""},
 	} {

@@ -68,7 +68,10 @@ func TestGuardYolo(t *testing.T) {
 		// Only off, spelled so, is let through.
 		{"aish yolo off", Allow, ""},
 		{"aish yolo 'off'", Allow, ""},
-		{"trap 'aish yolo off' DEBUG", Allow, ""},
+		// A trap is code the shell keeps for later (prompt), and the
+		// guard does not see through such a line, as with PROMPT_COMMAND:
+		// yolo next to aish is denied there, off or not.
+		{"trap 'aish yolo off' DEBUG", Deny, YoloReason},
 		{"aish yolo off now", Deny, YoloReason},
 		{`aish yolo "$x"`, Deny, YoloReason},
 		{`aish yolo off; echo "$x"`, Deny, YoloReason},

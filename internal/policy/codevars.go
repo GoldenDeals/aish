@@ -92,7 +92,7 @@ func (p *parser) assignedTo(name, value string) {
 	}
 	for _, src := range varCode(name, value) {
 		if strings.TrimSpace(src) != "" {
-			p.varCode = append(p.varCode, snippet{src, p.remote})
+			p.varCode = append(p.varCode, snippet{src: src, remote: p.remote})
 		}
 	}
 }
@@ -113,7 +113,7 @@ func (p *parser) envFunction(value string) {
 	if _, err := upToError(src); err != nil {
 		p.mark(dynComputed)
 	}
-	p.varCode = append(p.varCode, snippet{src, p.remote})
+	p.varCode = append(p.varCode, snippet{src: src, remote: p.remote})
 }
 
 // assignedText marks an assignment to the variable name of a value made at

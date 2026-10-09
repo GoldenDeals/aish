@@ -20,7 +20,7 @@ var setters = map[string]func(p *parser, args []string, static []bool) []string{
 	"[":         (*parser).test,
 	"bind":      (*parser).bind,
 	"compgen":   (*parser).complete,
-	"complete":  (*parser).complete,
+	"complete":  (*parser).completeLater,
 	"declare":   declares(false),
 	"enable":    (*parser).enable,
 	"export":    declares(true),
@@ -60,17 +60,21 @@ var (
 // bind returns the commands of bind -x, which bash runs when the key is
 // pressed, and marks a key bound to a macro: text typed for the user, a
 // newline in it runs a command; bind -f reads bindings of both from a file.
+// Either is code kept for later.
 func (p *parser) bind(args []string, static []bool) []string {
 	if slices.Contains(static, false) {
 		p.mark(dynComputed)
+		p.deferred()
 		return nil
 	}
 	opts, ops := bindOpts.read(args)
 	if has(opts, "f") {
 		p.mark(dynComputed) // an inputrc: macros and commands of a file
+		p.deferred()
 	}
 	var code []string
 	for _, x := range values(opts, "x") {
+		p.deferred()
 		cmds := bindCommands(x.text)
 		if cmds == nil {
 			p.mark(dynComputed)
@@ -80,6 +84,7 @@ func (p *parser) bind(args []string, static []bool) []string {
 	for _, i := range ops {
 		if macro(args[i]) {
 			p.mark(dynComputed)
+			p.deferred()
 		}
 	}
 	return code
@@ -168,7 +173,7 @@ func (p *parser) complete(args []string, static []bool) []string {
 		case "C":
 			code = append(code, o.value)
 		case "W":
-			if strings.ContainsAny(o.value, "$`") || strings.Contains(o.value, "<(") || strings.Contains(o.value, ">(") {
+			if wordsRun(o.value) {
 				p.mark(dynComputed)
 			}
 		case "V":
@@ -176,6 +181,23 @@ func (p *parser) complete(args []string, static []bool) []string {
 		}
 	}
 	return code
+}
+
+// wordsRun tells whether bash may run code expanding a wordlist of
+// complete -W or compgen -W.
+func wordsRun(v string) bool {
+	return strings.ContainsAny(v, "$`") || strings.Contains(v, "<(") || strings.Contains(v, ">(")
+}
+
+// completeLater is complete, which keeps what it is given for later: the
+// command of -C, the function of -F and the wordlist of -W run when a word
+// is completed. compgen runs them at once.
+func (p *parser) completeLater(args []string, static []bool) []string {
+	opts, _ := completeOpts.read(args)
+	if slices.Contains(static, false) || has(opts, "C", "F") || slices.ContainsFunc(values(opts, "W"), func(w piece) bool { return wordsRun(w.text) }) {
+		p.deferred()
+	}
+	return p.complete(args, static)
 }
 
 // declares looks at the words of export (export) or of declare, local,

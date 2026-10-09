@@ -19,26 +19,26 @@ func TestParseSetters(t *testing.T) {
 		has     [][]string
 		dynamic []string
 	}{
-		{`bind -x '"\C-a": sudo ls'`, [][]string{sudoLs}, nil},
-		{`bind -x '"\C-a": "sudo ls"'`, [][]string{sudoLs}, nil},
-		{`bind -m vi -x'"\C-a":sudo ls'`, [][]string{sudoLs}, nil},
-		{`builtin bind -x '"\e:": sudo ls'`, [][]string{sudoLs}, nil},
+		{`bind -x '"\C-a": sudo ls'`, [][]string{sudoLs}, []string{"prompt"}},
+		{`bind -x '"\C-a": "sudo ls"'`, [][]string{sudoLs}, []string{"prompt"}},
+		{`bind -m vi -x'"\C-a":sudo ls'`, [][]string{sudoLs}, []string{"prompt"}},
+		{`builtin bind -x '"\e:": sudo ls'`, [][]string{sudoLs}, []string{"prompt"}},
 		// Bash 5.3 ends the key sequence at a blank, 5.2 at a colon.
-		{`bind -x '"\C-a" sudo ls #:x'`, [][]string{sudoLs, {"x"}}, nil},
-		{`bind -x "\"\C-a\": $cmd"`, nil, []string{"computed"}},
-		{`bind -x 'C-a: sudo ls'`, nil, []string{"computed"}},
-		{`bind '"\C-j": "sudo ls\n"'`, nil, []string{"computed"}},
-		{`bind 'C-j: "sudo ls\n"'`, nil, []string{"computed"}},
+		{`bind -x '"\C-a" sudo ls #:x'`, [][]string{sudoLs, {"x"}}, []string{"prompt"}},
+		{`bind -x "\"\C-a\": $cmd"`, nil, []string{"computed", "prompt"}},
+		{`bind -x 'C-a: sudo ls'`, nil, []string{"computed", "prompt"}},
+		{`bind '"\C-j": "sudo ls\n"'`, nil, []string{"computed", "prompt"}},
+		{`bind 'C-j: "sudo ls\n"'`, nil, []string{"computed", "prompt"}},
 		{`bind '"\e[A": history-search-backward'; bind 'set bell-style none'; bind -p; bind -X`, nil, nil},
 
-		{`complete -C 'sudo ls' x`, [][]string{sudoLs}, nil},
+		{`complete -C 'sudo ls' x`, [][]string{sudoLs}, []string{"prompt"}},
 		{`compgen -C 'sudo ls' x`, [][]string{sudoLs}, nil},
-		{`complete -o default -C'sudo ls' -- x`, [][]string{sudoLs}, nil},
-		{`complete -C "$c" x`, nil, []string{"computed"}},
+		{`complete -o default -C'sudo ls' -- x`, [][]string{sudoLs}, []string{"prompt"}},
+		{`complete -C "$c" x`, nil, []string{"computed", "prompt"}},
 		{`compgen -W '$(sudo ls)' x`, nil, []string{"computed"}},
-		{"complete -W '`sudo ls`' x", nil, []string{"computed"}},
+		{"complete -W '`sudo ls`' x", nil, []string{"computed", "prompt"}},
 		{`compgen -V PS1 -W x`, nil, []string{"prompt"}},
-		{`complete -F _x -W 'a b' x; compgen -c; complete -r x`, nil, nil},
+		{`complete -F _x -W 'a b' x; compgen -c; complete -r x`, nil, []string{"prompt"}},
 
 		{`mapfile -C 'sudo ls' -c 1 a < f`, [][]string{sudoLs}, nil},
 		{`readarray -t -C 'sudo ls' a < f`, [][]string{sudoLs}, nil},
@@ -115,7 +115,7 @@ func TestParseSetters(t *testing.T) {
 
 		{`bash -c 'export PATH=/tmp'`, nil, []string{"rebind"}},
 		{`eval 'hash -p /bin/rm ls'`, nil, []string{"rebind"}},
-		{`trap 'bind -x "\"\C-a\": sudo ls"' EXIT`, [][]string{sudoLs}, nil},
+		{`trap 'bind -x "\"\C-a\": sudo ls"' EXIT`, [][]string{sudoLs}, []string{"prompt"}},
 	} {
 		s, err := Parse(c.src, "", "")
 		if err != nil {

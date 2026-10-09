@@ -27,7 +27,7 @@ func TestParseWrites(t *testing.T) {
 		{`echo x >> ~/.bashrc`, []string{home + "/.bashrc"}, nil},
 		{`{ ls; } > out`, []string{"/w/out"}, nil},
 		{`while true; do ls; done >> out`, []string{"/w/out"}, nil},
-		{`f() { ls; } > /etc/x`, []string{"/etc/x"}, nil},
+		{`f() { ls; } > /etc/x`, []string{"/etc/x"}, []string{"prompt"}},
 		{`cat <> f`, []string{"/w/f"}, nil},
 		{`ls &> log`, []string{"/w/log"}, nil},
 		{`ls &>> log`, []string{"/w/log"}, nil},
@@ -77,7 +77,7 @@ func TestParseWrites(t *testing.T) {
 		{`echo $(echo x > /etc/x)`, []string{"/etc/x"}, nil},
 		{`ls | tee >(cat > /etc/x)`, []string{"/etc/x"}, nil},
 		{"bash <<'EOF'\necho x > /etc/x\nEOF", []string{"/etc/x"}, nil},
-		{`alias x='ls > /etc/x'`, []string{"/etc/x"}, nil},
+		{`alias x='ls > /etc/x'`, []string{"/etc/x"}, []string{"prompt"}},
 		{`bash -c 'cd /etc; echo x > passwd'`, nil, []string{"computed"}},
 	} {
 		s, err := Parse(c.src, "/w", home)

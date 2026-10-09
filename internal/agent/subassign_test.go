@@ -140,14 +140,13 @@ func TestScopedBashAssignments(t *testing.T) {
 	}
 	// The code of eval, a shell, trap, alias, su, flock, script and watch
 	// has its commands checked by the policy's parser, and its variables
-	// here.
+	// here. trap and alias keep their code for later, which the parser
+	// marks prompt, as it does in the user's shell: they are refused.
 	code := &bashScope{patterns: []string{"git *", "eval *", "bash *", "sh *", "trap *", "alias *", "su *",
 		"flock *", "script *", "watch *"}}
 	for _, cmd := range []string{
 		"eval git log",
 		"bash -c 'x=1; git log'",
-		"trap 'git log' EXIT",
-		"alias gl='git log'",
 		"flock /tmp/l -c 'git log'",
 		"watch 'git log'",
 	} {
@@ -167,6 +166,8 @@ func TestScopedBashAssignments(t *testing.T) {
 		"flock /tmp/l -c 'PATH=. git log'":   "sets PATH",
 		"script -q -c 'PATH=. git log'":      "sets PATH",
 		"watch 'git log; GIT_DIR=x git log'": "sets GIT_DIR",
+		"trap 'git log' EXIT":                "(prompt)",
+		"alias gl='git log'":                 "(prompt)",
 	} {
 		why := refused(code, cmd, dir, nil)
 		if why == "" || !strings.Contains(why, want) {

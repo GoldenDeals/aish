@@ -66,7 +66,9 @@ const (
 	// dynStdin is a shell reading its commands from stdin: echo … | bash.
 	dynStdin = "stdin"
 	// dynPrompt is an assignment to a variable the shell runs later: by
-	// =, by declare and its kin, or by a builtin such as read and printf -v.
+	// =, by declare and its kin, or by a builtin such as read and printf -v;
+	// and code the user's shell keeps for later: a trap, a function, an
+	// alias, bind -x, complete -C and -F (see liveNodes).
 	dynPrompt = "prompt"
 	// dynRebind makes a name of a command run another program or code:
 	// hash -p, enable, an assignment to PATH (see rebindVars) or to a
@@ -104,7 +106,7 @@ func parseIn(src string, sh shell) (Script, error) {
 	if cwd != "" {
 		p.line = &lines{sh: sh, at: map[*syntax.CallExpr]where{}}
 	}
-	err := p.parse(src, 0, false, sh.zsh)
+	err := p.parse(src, 0, false, true, sh.zsh)
 	s := Script{Commands: p.out, Remote: p.remotes, sites: p.settle()}
 	for _, t := range p.writes {
 		switch {
@@ -166,12 +168,17 @@ type parser struct {
 	// zshes are the zshes the line starts, and the code they run (see
 	// zshFor).
 	zshes zshes
+	// live tells that the command being looked at runs in the user's shell
+	// itself, which keeps what it defines for later (see liveNodes).
+	live bool
 }
 
-// snippet is code a line hands to a shell, here or on another machine.
+// snippet is code a line hands to a shell, here or on another machine;
+// live is code the user's shell runs itself: that of eval there, now, and
+// of trap, alias, bind -x and mapfile -C, later.
 type snippet struct {
-	src    string
-	remote bool
+	src          string
+	remote, live bool
 }
 
 // write is the file a redirection writes: path is absolute but not
@@ -185,8 +192,8 @@ func (p *parser) mark(kind string) { p.kinds[kind] = true }
 
 // parse parses src, the code of the zsh z, nil for bash: that of a zsh is
 // read as it may read it too (see zshShell), and so is the code it hands
-// on (see zshFor).
-func (p *parser) parse(src string, depth int, remote bool, z *zshShell) error {
+// on (see zshFor). live is code the user's shell runs (see liveNodes).
+func (p *parser) parse(src string, depth int, remote, live bool, z *zshShell) error {
 	if z != nil {
 		if kind := z.misreads(src); kind != "" {
 			p.mark(kind)
@@ -199,6 +206,10 @@ func (p *parser) parse(src string, depth int, remote bool, z *zshShell) error {
 		p.line.track(stmts)
 	}
 	var nested []snippet
+	var lives map[syntax.Node]bool
+	if live {
+		lives = liveNodes(stmts)
+	}
 	done := map[*syntax.CallExpr]bool{}
 	visit := func(n syntax.Node) bool {
 		p.evaluates(n)
@@ -208,11 +219,20 @@ func (p *parser) parse(src string, depth int, remote bool, z *zshShell) error {
 			// it runs reads from stdin.
 			if call, ok := n.Cmd.(*syntax.CallExpr); ok {
 				done[call] = true
+				p.live = lives[call]
 				nested = append(nested, p.placed(call, n.Redirs)...)
+				p.live = false
 			}
 		case *syntax.CallExpr:
 			if !done[n] {
+				p.live = lives[n]
 				nested = append(nested, p.placed(n, nil)...)
+				p.live = false
+			}
+		case *syntax.FuncDecl:
+			if lives[n] {
+				// Its body runs at every call of the name, after the line too.
+				p.mark(dynPrompt)
 			}
 		case *syntax.DeclClause:
 			p.decl(n)
@@ -233,7 +253,9 @@ func (p *parser) parse(src string, depth int, remote bool, z *zshShell) error {
 	}
 	nested, p.varCode = append(nested, p.varCode...), nil
 	for _, src := range p.takeEvals() {
-		nested = append(nested, snippet{src, remote})
+		// The $(…) of a subscript runs in a subshell, a ${ …; } in the
+		// shell: it is taken for the shell's.
+		nested = append(nested, snippet{src, remote, live})
 	}
 	if len(nested) > 0 && depth >= maxDepth {
 		// What is not parsed must not pass for checked.
@@ -243,7 +265,7 @@ func (p *parser) parse(src string, depth int, remote bool, z *zshShell) error {
 	// bash -c "'" fails and the bash -c after it runs all the same: an
 	// error in one piece of code leaves the others to be parsed.
 	for _, s := range nested {
-		if e := p.parse(s.src, depth+1, s.remote, p.zshFor(s.src, z)); err == nil {
+		if e := p.parse(s.src, depth+1, s.remote, s.live, p.zshFor(s.src, z)); err == nil {
 			err = e
 		}
 	}
@@ -330,12 +352,16 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 	}
 	var code []snippet
 	seen := map[snippet]bool{}
-	add := func(src string, remote bool) {
-		if s := (snippet{src, remote}); !seen[s] {
+	add := func(s snippet) {
+		if !seen[s] {
 			seen[s] = true
 			code = append(code, s)
 		}
 	}
+	// The call runs in the user's shell or not; a command behind it runs
+	// there only behind builtin and command.
+	live := p.live
+	defer func() { p.live = live }()
 	for argv != nil {
 		if p.remote {
 			p.remotes = append(p.remotes, len(p.out))
@@ -348,13 +374,22 @@ func (p *parser) call(call *syntax.CallExpr, redirs []*syntax.Redirect) []snippe
 		found := p.shellC(argv[:local], static[:local])
 		ran, far := p.runs(argv, static, split, local, redirs)
 		found, there = append(found, p.runBy(argv[:local], ran)...), append(there, far...)
-		found = append(found, p.program(argv, static, redirs)...)
-		for _, s := range append(found, here...) {
-			add(s, p.remote)
+		name := filepath.Base(argv[0])
+		p.live = live
+		kept := p.program(argv, static, redirs)
+		for _, s := range found {
+			add(snippet{src: s, remote: p.remote})
+		}
+		for _, s := range kept {
+			add(snippet{src: s, remote: p.remote, live: live && static[0] && shellCode[name]})
+		}
+		for _, s := range here {
+			add(snippet{src: s, remote: p.remote})
 		}
 		for _, s := range there {
-			add(s, true)
+			add(snippet{src: s, remote: true})
 		}
+		live = live && static[0] && (name == "builtin" || name == "command")
 		argv, static, split = p.next(argv, static, split)
 	}
 	return code
@@ -399,7 +434,9 @@ func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect
 		for i, a := range args {
 			if !st[i] {
 				p.mark(dynComputed)
+				p.deferred()
 			} else if _, v, ok := strings.Cut(a, "="); ok {
+				p.deferred()
 				code = append(code, v)
 			}
 		}
@@ -409,6 +446,11 @@ func (p *parser) program(argv []string, static []bool, redirs []*syntax.Redirect
 			args, st = args[1:], st[1:]
 		} else if len(args) > 0 && len(args[0]) > 1 && args[0][0] == '-' {
 			return nil // -l, -p: lists, sets nothing
+		}
+		// No code is kept when - resets the signals, '' ignores them or a
+		// lone word names the signal to reset.
+		if len(args) > 0 && (!st[0] || len(args) > 1 && args[0] != "-" && args[0] != "") {
+			p.deferred()
 		}
 		if slices.Contains(st, false) {
 			p.mark(dynComputed)

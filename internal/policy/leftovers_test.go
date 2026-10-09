@@ -29,7 +29,7 @@ func TestParseLeftovers(t *testing.T) {
 		{`a=(x '$(sudo ls)'); echo "${a[@]@P}"`, [][]string{sudoLs}, nil, []string{"computed"}, false},
 		{`declare -A h=([k]='$(sudo ls)'); echo "${h[k]@P}"`, [][]string{sudoLs}, nil, []string{"computed"}, false},
 		{`export y='$(sudo ls)'; echo "${y@P}"`, [][]string{sudoLs}, nil, []string{"computed"}, false},
-		{`f() { echo "${y@P}"; }; y='$(sudo ls)'; f`, [][]string{sudoLs}, nil, []string{"computed"}, false},
+		{`f() { echo "${y@P}"; }; y='$(sudo ls)'; f`, [][]string{sudoLs}, nil, []string{"computed", "prompt"}, false},
 		{`env y='$(sudo ls)' bash -c 'echo "${y@P}"'`, [][]string{sudoLs}, nil, []string{"computed"}, false},
 		{`y='$(sudo ls)'; eval 'echo "${y@P}"'`, [][]string{sudoLs}, nil, []string{"computed"}, false},
 		{`eval "y='\$(sudo ls)'"; echo "${y@P}"`, [][]string{sudoLs}, nil, []string{"computed"}, false},
@@ -45,7 +45,7 @@ func TestParseLeftovers(t *testing.T) {
 		{`echo "${PS1@P}"`, nil, nil, []string{"computed"}, false},
 		{`read y; echo "${y@P}"`, nil, nil, []string{"computed"}, false},
 		{`n=y; y='$(sudo ls)'; echo "${!n@P}"`, nil, nil, []string{"computed"}, false},
-		{`f() { echo "${1@P}"; }; f '$(sudo ls)'`, nil, nil, []string{"computed"}, false},
+		{`f() { echo "${1@P}"; }; f '$(sudo ls)'`, nil, nil, []string{"computed", "prompt"}, false},
 		{`y='${y@P}'; echo "${y@P}"`, nil, nil, []string{"computed"}, false},
 		// The other operators run no code of the value.
 		{`y='$(sudo ls)'; echo "${y@Q}" "${y@E}" "${y@A}" "${y@K}" "${y@a}" "${y@U}" "${y@u}" "${y@L}"`, nil, [][]string{sudoLs}, nil, false},
