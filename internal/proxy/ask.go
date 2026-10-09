@@ -77,13 +77,14 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	// echo of a Ctrl+C after them: wrapped, it would take a line the erase
 	// does not count.
 	cols, _ := p.size()
+	lead, lines := askLines(q)
 	sep := " "
-	if frameWidth(q[strings.LastIndexByte(q, '\n')+1:])+len(sep)+choicesWidth+len("^C") >= cols {
+	if frameWidth(lines[len(lines)-1])+len(sep)+choicesWidth+len("^C") >= cols {
 		sep = "\r\n"
 	}
-	drawn := q + sep + choices(pr.chosen())
+	drawn := strings.Join(lines, "\r\n") + sep + choices(pr.chosen())
 	pr.shown = strings.Split(strings.ReplaceAll(drawn, "\r\n", "\n"), "\n")
-	p.emit([]byte("\x1b[?25l" + drawn))
+	p.emit([]byte("\x1b[?25l" + lead + drawn))
 	p.mu.Unlock()
 	select {
 	case ans := <-pr.done:
@@ -127,6 +128,21 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	p.releaseKeys(&pr.guard)
 	p.syncPaste()
 	return "", err
+}
+
+// askLines are the lines of q, which the terminal draws one below the
+// other, and the line breaks q starts with, as \r\n. The reason of a
+// policy or a hook may break its lines with \n alone, or \r: the terminal
+// is raw, and without \r\n the line after the break would start where the
+// one before it ended, wrap to rows the erase does not count, or draw over
+// it. The breaks q starts with leave the line the cursor is on (aish yolo
+// after output short of a line's end): it is not the question's, and the
+// erase stops below it.
+func askLines(q string) (lead string, lines []string) {
+	q = strings.ReplaceAll(strings.ReplaceAll(q, "\r\n", "\n"), "\r", "\n")
+	rest := strings.TrimLeft(q, "\n")
+	lead = strings.Repeat("\r\n", len(q)-len(rest))
+	return lead, strings.Split(rest, "\n")
 }
 
 // askKey reads the answer to the open question from what the user typed
