@@ -22,6 +22,7 @@ type segment struct {
 	buf     *capture.Buffer
 	fold    *fold // agent commands only
 	cleared bool  // the command erased the screen
+	cols    int   // the terminal's width when the command began, see render
 
 	// last follows the line an agent command's output leaves open when it
 	// has no fold, as the fold does: the end of the command ends that line,
@@ -156,17 +157,35 @@ func (p *Proxy) finishFold(f *fold, exit int) {
 }
 
 // render is the text of a command's output, and whether the command was a
-// full-screen program as a whole. An interactive session (ssh, `kubectl
-// exec -it`) is its text, the prompts, commands and output in it, read
-// after it is over; each stretch of the alternate screen in it (vim, htop,
-// a remote tmux) is one line, capture.FullScreen. A command that left only
-// such a line is a full-screen program: its output is that line.
-func render(b *capture.Buffer) (string, bool) {
-	out := capture.Clean(b.Bytes())
+// full-screen program as a whole. The text is what the output left on a
+// terminal as wide as aish's, see capture.CleanScreen. Resized while the
+// command ran, it is the narrower of the widths at its start and at its
+// end: a row redrawn on a terminal narrower than the one it was drawn on
+// is drawn over the line it is in, on a wider one over lines above it.
+// An interactive session (ssh, `kubectl exec -it`) is its text, the
+// prompts, commands and output in it, read after it is over; each stretch
+// of the alternate screen in it (vim, htop, a remote tmux) is one line,
+// capture.FullScreen. A command that left only such a line is a
+// full-screen program: its output is that line. Called under p.mu.
+func (p *Proxy) render(seg *segment) (string, bool) {
+	cols := p.cols()
+	if seg.cols > 0 && (cols == 0 || seg.cols < cols) {
+		cols = seg.cols
+	}
+	out := seg.buf.Screen(cols)
 	if strings.TrimSpace(out) == capture.FullScreen {
 		return capture.FullScreen, true
 	}
 	return out, false
+}
+
+// cols is the terminal's width, 0 with no terminal: nothing wraps.
+func (p *Proxy) cols() int {
+	if p.size == nil {
+		return 0
+	}
+	w, _ := p.size()
+	return w
 }
 
 func (p *Proxy) wait(ctx context.Context, id string, timeout time.Duration) (rpc.Output, error) {

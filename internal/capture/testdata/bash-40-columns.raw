@@ -1,0 +1,31 @@
+[?2004h]0;user@remote: ~[1;32muser@remote[0m:[1;34m~[0m$ cd dir
+[?2004l[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo the quick brown fox jumps over the lazy dog[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cred bro[4@wn f[A]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ [C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C
+[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[K[K[Kcat
+[?2004lthe quick red brown fox jumps over the lazy cat
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ (reverse-i-search)`': [Kb': echo the quick red [7mb[27mrown fox jumps over the lazy cat[C[C[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cr': echo the quick re[1@d [7mbr[27m[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Co': echo the quick r[1@ed [7mbro[27m[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cw': echo the quick [1@red [7mbrow[27m[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cn': echo the quick[1@ red [7mbrown[27m[A]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo the quick red bro[8Pwn[A]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ [C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C
+[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C now
+[?2004lthe quick red brown fox jumps over the lazy cat now
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ (reverse-i-search)`': [Kl': echo the quick red brown fox jumps over the [7ml[27mazy cat now[Aa': echo the quick red brown fox jumps over the [7mla[27mzy cat now [A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Az': echo the quick red brown fox jumps over the [7mlaz[27my cat now[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Ay': echo the quick red brown fox jumps over the [7mlazy[27m cat now[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[A]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo the quick red bro[5Pwn fox jumps over the lazy cat now
+[K[A[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C
+[?2004lthe quick red brown fox jumps over the lazy cat now
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo 12345678901234567890
+[?2004l12345678901234567890
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[A[A[C[C[C[C[C
+
+[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[K[A[A[C
+
+[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[K[A[A[C[C
+
+[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[K[A[A[C[C[C
+
+
+[?2004lxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ ls -d sub
+sub1/           subdir-delta/
+sub2/           subdir-epsilon/
+subdir-alpha/   subdir-gamma/
+subdir-beta/    
+]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ ls -d subdir-alpha/
+[?2004lsubdir-alpha/
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ exit
+[?2004lexit

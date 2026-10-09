@@ -1,0 +1,20 @@
+[1m[7m%[27m[1m[0m                                        [0m[27m[24m[J[32muser@remote[39m:[34m~[39m% [K[?2004hccd dir[?2004l
+[1m[7m%[27m[1m[0m                                        [0m[27m[24m[J[32muser@remote[39m:[34m~/dir[39m% [K[?2004hlls -d sub
+sub1[27m/[27m          [27m  [27msubdir-delta[27m/[27m  [27m
+sub2[27m/[27m          [27m  [27msubdir-epsilon[27m/[27m
+subdir-alpha[27m/[27m  [27m  [27msubdir-gamma[27m/[27m  [27m
+[Jsubdir-beta[27m/[27m   [27m  [27m[J               [27m[4A[0m[27m[24m[39m[19Cls -d sub[K[39m1[1m/[0m
+[7msub1/          [27m  [27msubdir-delta[27m/[27m  [27m[K
+sub2[27m/[27m          [27m  [27msubdir-epsilon[27m/[27m[K
+subdir-alpha[27m/[27m  [27m  [27msubdir-gamma[27m/[27m  [27m[K
+[Jsubdir-beta[27m/[27m   [27m  [27m[J               [27m[4A[0m[27m[24m[39m[19Cls -d sub1[1m/[0m[K[39m
+[7msub1/          [27m  [27m[7msub1/          [27m  [27m[A[0m[27m[24m[39m[19Cls -d sub1[1m/[0m[K[39m2[1C
+sub1[27m/[27m          [27m  [27m[1B[7msub2/          [27m  [27m[A[A[0m[27m[24m[39m[19Cls -d sub2[1m/[0m[K[39m
+[J[A[30C[0m [?2004l
+[Jsub2
+[1m[7m%[27m[1m[0m                                        [0m[27m[24m[J[32muser@remote[39m:[34m~/dir[39m% [K[?2004heecho the quick brown  [Kffox jumps over the lazy dog[A[8D[5C[4C[6Crbrown fox jumps over the lazy dog[A[7Cebrown fox jumps over the lazy dog[A[7Cdbrown fox jumps over the lazy dog[A[7C brown fox jumps over the lazy dog[A[7C[1B   cat[?2004l
+the quick red brown fox jumps over the lazy cat
+[1m[7m%[27m[1m[0m                                        [0m[27m[24m[J[32muser@remote[39m:[34m~/dir[39m% [K[?2004h
+bck-i-search: _[K[A[4Cecho the quick red [4mb[24mrown fox jumps over the lazy cat
+bck-i-search: b_[K[A[A[22C[4mb[4mr[24mo[1B[14Cr_[A[A[21C[1C[4mr[4mo[24m[1B[15Co_[A[A[20C[1B[4mo[4mw[24m[1B[15Cw_[A[A[19C[1B[4mo[4mw[4mn[24m[1B[15Cn_[A[A[18C[24mb[24mro[24mw[24mn[1B[K[A[31C now[?2004l[1Bthe quick red brown fox jumps over the lazy cat now
+[1m[7m%[27m[1m[0m                                        [0m[27m[24m[J[32muser@remote[39m:[34m~/dir[39m% [K[?2004heexit[?2004l

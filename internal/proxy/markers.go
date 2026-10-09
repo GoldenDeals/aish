@@ -125,7 +125,7 @@ func (p *Proxy) marker(m Marker) {
 func (p *Proxy) cmdStart(cmd string) {
 	p.dropLine()
 	p.dropEdits() // neovim's diffs from before it are no one's
-	p.user = &segment{cmd: cmd, buf: capture.NewText(headCap, tailCap)}
+	p.user = &segment{cmd: cmd, buf: capture.NewText(headCap, tailCap), cols: p.cols()}
 }
 
 // askStart begins a request. Called under p.mu.
@@ -170,7 +170,7 @@ func (p *Proxy) closeTool() {
 // for the next `agent start`, which closes its call. Called under p.mu.
 func (p *Proxy) closeInterrupted() {
 	for id, seg := range p.agent {
-		out, tui := render(seg.buf)
+		out, tui := p.render(seg)
 		p.finish(id, rpc.Output{Output: out, Exit: 130, TUI: tui})
 		if seg.fold != nil {
 			p.finishFold(seg.fold, 130)
@@ -206,7 +206,7 @@ func (p *Proxy) recordUser(rc, cwd string) {
 		return // `aish status` and the like: the session told of itself
 	}
 	exit, _ := strconv.Atoi(rc)
-	out, tui := render(seg.buf)
+	out, tui := p.render(seg)
 	out, tui = p.withEdits(out, tui) // what it saved in neovim, editdiff.go
 	if seg.cleared && strings.TrimSpace(out) == "" {
 		return // `clear` itself: nothing left on the screen
@@ -222,7 +222,7 @@ func (p *Proxy) recordUser(rc, cwd string) {
 // p.mu.
 func (p *Proxy) agentCmdStart(payload string) {
 	id, cmd, _ := strings.Cut(payload, ";")
-	seg := &segment{cmd: cmd, buf: capture.NewText(headCap, tailCap)}
+	seg := &segment{cmd: cmd, buf: capture.NewText(headCap, tailCap), cols: p.cols()}
 	if p.hide {
 		seg.fold = newQuiet("❯ " + cmd)
 		if p.spin != nil {
@@ -261,6 +261,6 @@ func (p *Proxy) agentCmdEnd(payload string) {
 	} else if seg.last.text {
 		p.emit([]byte("\r\n"))
 	}
-	out, tui := render(seg.buf)
+	out, tui := p.render(seg)
 	p.finish(id, rpc.Output{Output: out, Exit: exit, Cwd: f[2], TUI: tui, Why: p.stopEnded(id)})
 }

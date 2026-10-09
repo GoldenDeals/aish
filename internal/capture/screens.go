@@ -54,15 +54,24 @@ func (b *Buffer) writeText(p []byte) {
 }
 
 // firstOf finds the first of seqs in data: where it starts and its length.
+// They all begin with \e[?, which it goes along: a search for each to the
+// end of data would make a stream of many screens quadratic.
 func firstOf(data []byte, seqs [][]byte) (int, int) {
-	at, n := -1, 0
-	for _, s := range seqs {
-		if i := bytes.Index(data, s); i >= 0 && (at < 0 || i < at) {
-			at, n = i, len(s)
+	for i := 0; ; i++ {
+		j := bytes.Index(data[i:], privateCSI)
+		if j < 0 {
+			return -1, 0
+		}
+		i += j
+		for _, s := range seqs {
+			if bytes.HasPrefix(data[i:], s) {
+				return i, len(s)
+			}
 		}
 	}
-	return at, n
 }
+
+var privateCSI = []byte("\x1b[?")
 
 // partial is the length of the longest end of data that begins one of seqs.
 func partial(data []byte, seqs [][]byte) int {
