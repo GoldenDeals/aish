@@ -175,7 +175,7 @@ func TestHandOffDynamic(t *testing.T) {
 // parsed out of it is judged as any command, and a plain one passes.
 func TestDynamicExample(t *testing.T) {
 	ctx := context.Background()
-	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
+	e, err := Load(ctx, filepath.Join("testdata", "default"), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -196,7 +196,7 @@ func TestCodeRunnersPolicy(t *testing.T) {
 	}
 	home, _ := links(t, nil)
 	t.Setenv("HOME", home)
-	example, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
+	example, err := Load(ctx, filepath.Join("testdata", "default"), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}

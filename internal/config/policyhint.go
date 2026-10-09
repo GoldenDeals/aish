@@ -41,7 +41,9 @@ func (p Policy) checkWriteHint() error {
 // both when the values are alike, or the global one when the project's
 // has none. The project's hints may name the global patterns, which the
 // check of the whole config sees to; its write_outside_home_hint must
-// explain its own write_outside_home, the one it is read with.
+// explain its own write_outside_home, the one it is read with. builtin
+// the project may turn on, not off: a cloned repository must not take
+// away the user's safety net.
 func layPolicy(g, pr Policy) (Policy, error) {
 	if err := pr.checkWriteHint(); err != nil {
 		return g, err
@@ -57,6 +59,7 @@ func layPolicy(g, pr Policy) (Policy, error) {
 		WriteOutsideHome:     stricter(g.WriteOutsideHome, pr.WriteOutsideHome),
 		Hints:                maps.Clone(g.Hints),
 		WriteOutsideHomeHint: g.WriteOutsideHomeHint,
+		Builtin:              g.Builtin || pr.Builtin,
 	}
 	for pat, text := range pr.Hints {
 		if out.Hints == nil {

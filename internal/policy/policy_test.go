@@ -65,7 +65,7 @@ func TestRulesWithoutCedar(t *testing.T) {
 
 func TestRulesAndCedar(t *testing.T) {
 	ctx := context.Background()
-	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{
+	e, err := Load(ctx, filepath.Join("testdata", "default"), Rules{
 		Deny: []string{"pacman *"},
 		Ask:  []string{"ls *", "git status"},
 	})
@@ -91,7 +91,7 @@ func TestRulesAndCedar(t *testing.T) {
 
 func TestSymlinkOutOfHome(t *testing.T) {
 	ctx := context.Background()
-	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
+	e, err := Load(ctx, filepath.Join("testdata", "default"), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}

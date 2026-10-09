@@ -10,6 +10,7 @@
 //	aish tasks [show ID]         the subagents in the background, or one's output so far
 //	aish policy [--agent NAME] [TOOL ARGS...]
 //	                             check the policies, or ask them about one call (of subagent NAME)
+//	aish policy --builtin        print the built-in policy
 //	aish trust [--revoke|--list] let the .aish.toml here run the repository's hooks and tools
 //	aish init bash|zsh           print the integration script of bash or zsh
 //	aish completion bash|zsh     print the Tab completion of aish for bash or zsh
@@ -73,6 +74,7 @@ var usage = `usage:
   aish policy [--agent NAME] [TOOL ARGS...]
                              check the policies, or ask them about one call (as
                              one of subagent NAME)
+  aish policy --builtin      print the built-in policy, to copy into policy_dir
   aish trust [--revoke|--list]
                              let the .aish.toml here run hooks and tools from the
                              repository, as it is now; or take that back; or list

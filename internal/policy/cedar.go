@@ -29,6 +29,8 @@ var schemaSrc []byte
 type Summary struct {
 	File     string // basename
 	Policies int
+	// Builtin is the built-in policy, not a file of policy_dir.
+	Builtin bool `json:",omitempty"`
 }
 
 type cedarChecker struct {
@@ -44,6 +46,26 @@ type cedarChecker struct {
 // <basename>:<n> so that two files do not collide on policy0, and
 // validates each against the schema.
 func loadCedar(files []string) (*cedarChecker, error) {
+	return compileCedar(files, readPolicy)
+}
+
+// readPolicy is the text of the policy file f.
+func readPolicy(f string) ([]byte, error) {
+	// A FIFO would keep the read waiting in open(2) for a writer on
+	// every request, and policy_dir of a project needs no trust.
+	if st, err := os.Stat(f); err == nil && !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("policy: %s: not a regular file", f)
+	}
+	src, err := os.ReadFile(f)
+	if err != nil {
+		return nil, fmt.Errorf("policy: %w", err)
+	}
+	return src, nil
+}
+
+// compileCedar is loadCedar of the files as read gives them: the built-in
+// policy is a text with the name of a file.
+func compileCedar(files []string, read func(string) ([]byte, error)) (*cedarChecker, error) {
 	var sch schema.Schema
 	if err := sch.UnmarshalCedar(schemaSrc); err != nil {
 		return nil, fmt.Errorf("policy: built-in schema: %w", err)
@@ -56,14 +78,9 @@ func loadCedar(files []string) (*cedarChecker, error) {
 	attrs := newHasNames(resolved)
 	c := &cedarChecker{ps: cedar.NewPolicySet(), files: files}
 	for _, f := range files {
-		// A FIFO would keep the read waiting in open(2) for a writer on
-		// every request, and policy_dir of a project needs no trust.
-		if st, err := os.Stat(f); err == nil && !st.Mode().IsRegular() {
-			return nil, fmt.Errorf("policy: %s: not a regular file", f)
-		}
-		src, err := os.ReadFile(f)
+		src, err := read(f)
 		if err != nil {
-			return nil, fmt.Errorf("policy: %w", err)
+			return nil, err
 		}
 		list, err := cedar.NewPolicyListFromBytes(f, src)
 		if err != nil {

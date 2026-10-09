@@ -29,7 +29,7 @@ func TestHandOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	example, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
+	example, err := Load(ctx, filepath.Join("testdata", "default"), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}

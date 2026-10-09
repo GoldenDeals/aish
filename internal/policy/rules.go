@@ -27,6 +27,10 @@ type Rules struct {
 	// them.
 	Hints                map[string]string
 	WriteOutsideHomeHint string
+	// Builtin puts the built-in Cedar policy in force (BuiltinText), a
+	// checker of its own next to the rules. It is not a rule: Len does
+	// not count it. Rules{} goes without it, the config by default with.
+	Builtin bool
 }
 
 // Len is the number of rules, for `aish policy`.

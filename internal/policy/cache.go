@@ -33,7 +33,8 @@ type compiled struct {
 // earlier. An error is not kept: no policies are in force to keep, and
 // the request that needs them is refused; the next one compiles anew.
 func (c *Cache) Engine(ctx context.Context, dir string, rules Rules) (*Engine, error) {
-	key := fmt.Sprintf("%q %q", dir, rules)
+	// %#v quotes the strings and sorts the hints, and takes Builtin too.
+	key := fmt.Sprintf("%q %#v", dir, rules)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if e, ok := c.engs[key]; ok {

@@ -150,6 +150,10 @@ type Policy struct {
 	// while the rule is: what it forbids and what to do instead.
 	Hints                map[string]string `toml:"hints"`
 	WriteOutsideHomeHint string            `toml:"write_outside_home_hint"`
+	// Builtin puts the built-in Cedar policy in force, a set of its own
+	// next to those of PolicyDir; true by default. A project may turn it
+	// on, not off (layPolicy).
+	Builtin bool `toml:"builtin"`
 }
 
 func Dir() string {
@@ -196,6 +200,7 @@ func Default() Config {
 		JournalIgnore:  []string{"*secret*", "env", "printenv", "cat *credentials*", "history"},
 		StateIgnore:    []string{"*TOKEN*", "*SECRET*", "*KEY*", "*PASSWORD*", "AWS_*"},
 		PolicyDir:      filepath.Join(Dir(), "policy"),
+		Policy:         Policy{Builtin: true},
 		HooksDir:       filepath.Join(Dir(), "hooks"),
 		HooksFail:      "allow",
 		ToolsDir:       filepath.Join(Dir(), "tools"),

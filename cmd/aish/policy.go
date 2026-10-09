@@ -21,7 +21,15 @@ import (
 // aish they are the proxy's, which the requests go by: an edit is checked
 // and put in force by `aish apply-config`. Outside, those on disk are
 // loaded, so that a validation error shows up right after editing a file.
+// --builtin prints the built-in policy, to copy into policy_dir.
 func policyCmd(cfg config.Config, args []string) int {
+	if len(args) > 0 && args[0] == "--builtin" {
+		if len(args) > 1 {
+			return fail(fmt.Errorf("usage: aish policy --builtin"))
+		}
+		fmt.Print(policy.BuiltinText)
+		return 0
+	}
 	agent, args, err := agentFlag(args)
 	if err != nil {
 		return fail(err)
@@ -124,10 +132,10 @@ func agentFlag(args []string) (string, []string, error) {
 	return name, args, nil
 }
 
-// policyLine says what policies are in force: the Cedar files of dir with
-// their policy counts, as Engine.Summary has them, and the [policy] rules,
-// global from config.toml and the rest from the project's file. `aish
-// policy` and `aish status` print it.
+// policyLine says what policies are in force: the built-in policy, the
+// Cedar files of dir with their policy counts, as Engine.Summary has them,
+// and the [policy] rules, global from config.toml and the rest from the
+// project's file. `aish policy` and `aish status` print it.
 func policyLine(summary []policy.Summary, dir string, global, total int, project string) string {
 	var list []string
 	for _, d := range filepath.SplitList(dir) {
@@ -136,7 +144,12 @@ func policyLine(summary []policy.Summary, dir string, global, total int, project
 	dirs := strings.Join(list, ", ")
 	n := 0
 	var files []string
+	builtin := ""
 	for _, s := range summary {
+		if s.Builtin {
+			builtin = fmt.Sprintf("built-in (%d), ", s.Policies)
+			continue
+		}
 		n += s.Policies
 		files = append(files, fmt.Sprintf("%s (%d)", s.File, s.Policies))
 	}
@@ -147,6 +160,7 @@ func policyLine(summary []policy.Summary, dir string, global, total int, project
 	case n > 1:
 		line = fmt.Sprintf("%d policies in %s: %s", n, dirs, strings.Join(files, ", "))
 	}
+	line = builtin + line
 	for _, r := range []struct {
 		n    int
 		from string
@@ -164,5 +178,5 @@ func policyLine(summary []policy.Summary, dir string, global, total int, project
 // rulesOf is the [policy] table of cfg as the policy package takes it.
 func rulesOf(cfg config.Config) policy.Rules {
 	return policy.Rules{Deny: cfg.Policy.Deny, Ask: cfg.Policy.Ask, WriteOutsideHome: cfg.Policy.WriteOutsideHome,
-		Hints: cfg.Policy.Hints, WriteOutsideHomeHint: cfg.Policy.WriteOutsideHomeHint}
+		Hints: cfg.Policy.Hints, WriteOutsideHomeHint: cfg.Policy.WriteOutsideHomeHint, Builtin: cfg.Policy.Builtin}
 }

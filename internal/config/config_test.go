@@ -80,7 +80,7 @@ write_outside_home = "ask"
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Policy{Deny: []string{"sudo *", "rm -rf /"}, Ask: []string{"apt install *"}, WriteOutsideHome: "ask"}
+	want := Policy{Deny: []string{"sudo *", "rm -rf /"}, Ask: []string{"apt install *"}, WriteOutsideHome: "ask", Builtin: true}
 	if !reflect.DeepEqual(cfg.Policy, want) {
 		t.Errorf("policy %+v, want %+v", cfg.Policy, want)
 	}

@@ -258,7 +258,7 @@ func TestShellStringExample(t *testing.T) {
 	ctx := context.Background()
 	home, _ := links(t, nil)
 	t.Setenv("HOME", home)
-	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
+	e, err := Load(ctx, filepath.Join("testdata", "default"), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}

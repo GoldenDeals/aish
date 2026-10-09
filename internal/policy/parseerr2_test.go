@@ -169,7 +169,7 @@ func TestRulesParseError(t *testing.T) {
 // its context, and the request without a command as before.
 func TestCedarParseError(t *testing.T) {
 	ctx := context.Background()
-	example, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
+	example, err := Load(ctx, filepath.Join("testdata", "default"), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}

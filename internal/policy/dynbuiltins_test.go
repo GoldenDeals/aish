@@ -147,7 +147,7 @@ func TestParseSettersError(t *testing.T) {
 // judged as any command.
 func TestSettersExample(t *testing.T) {
 	ctx := context.Background()
-	e, err := Load(ctx, filepath.Join("..", "..", "examples", "policy"), Rules{})
+	e, err := Load(ctx, filepath.Join("testdata", "default"), Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}

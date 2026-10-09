@@ -1,4 +1,6 @@
-// Example aish policy. Copy to ~/.config/aish/policy/.
+// The example policy of the parser's tests: once examples/policy/default.cedar,
+// whose rules are in the built-in policy now. The tests judge by it what
+// the parser makes of a line, so its rules and reasons stay as they were.
 // Cedar is default-deny: nothing is allowed without a permit. This permits
 // everything, then forbids the dangerous part; @ask asks instead of denying,
 // @reason is the text the model and the user see.
