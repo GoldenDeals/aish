@@ -72,7 +72,7 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	}
 	a := p.ag
 	if a == nil {
-		a = &agent.Agent{Journal: journal{p}, Shell: shell{p}, UI: &ui{p: p}}
+		a = &agent.Agent{Journal: journal{p}, Shell: shell{p}, UI: &ui{p: p}, Yolo: p.yoloOn}
 		p.ag = a
 	}
 	p.mu.Unlock()

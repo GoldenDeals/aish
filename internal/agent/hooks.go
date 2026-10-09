@@ -185,7 +185,7 @@ func (a *Agent) preTool(ctx context.Context, t tools.Tool, c session.ToolCall, i
 	}
 	v.args = cur.Args
 	if v.replaced {
-		again, err := a.Policy.Check(ctx, cur)
+		again, err := a.check(ctx, cur)
 		if err != nil {
 			return v, err
 		}

@@ -36,6 +36,7 @@ const (
 	MethodHistory = "history"
 	MethodClear   = "clear"
 	MethodModel   = "model"  // switch the model and its effort for this shell
+	MethodYolo    = "yolo"   // turn the checks of the agent's calls off or on for this shell, YoloParams
 	MethodFolds   = "folds"  // outputs kept since the request started
 	MethodTasks   = "tasks"  // the subagents in the background, or one's output
 	MethodResume  = "resume" // switch this shell to another session
@@ -118,6 +119,12 @@ type ModelParams struct {
 	Model   string `json:"model"`
 	Effort  string `json:"effort,omitempty"`
 	Window  int    `json:"window"` // 0: the proxy finds out
+}
+
+// YoloParams turn aish yolo on or off: while it is on, the agent's calls
+// and its subagents' go by the guard alone, till the shell exits.
+type YoloParams struct {
+	On bool `json:"on"`
 }
 
 // Applied is what `aish apply-config` put in force: Keys of config.toml

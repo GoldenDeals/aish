@@ -14,6 +14,7 @@ import (
 // config.toml selects (config.Root for its top level), the model and its
 // effort, colored by how full the context is.
 func (p *Proxy) statusText() (text, color string) {
+	defer func() { text = p.yoloStatus(text) }() // last, whatever the rest is
 	tokens, _ := p.contextTokens(p.sess.Entries())
 	text, color = p.model, "\x1b[2m"
 	if p.profile != p.defProfile {
@@ -67,6 +68,7 @@ func (p *Proxy) drawStatus() {
 		return // the prompt and the command need the room more
 	}
 	p.line = newInputLine(w, h, text, color)
+	p.paintYolo(p.line)
 	p.emit(p.line.draw())
 }
 

@@ -24,6 +24,7 @@
 //	aish context [--full]        how full the context is and with what; --full: the messages too
 //	aish model [PROFILE] [NAME] [EFFORT]
 //	                             list the models, switch this shell's profile, model or effort
+//	aish yolo [off]              turn the checks of the assistant's calls off till the shell exits, or on
 //	aish apply-config            put the config files as they are now in force for this shell
 //	aish expand                  print the outputs folded during the last request (Ctrl+O)
 //	aish agent start -- TEXT     (internal) hand a request to the agent in the proxy
@@ -85,6 +86,10 @@ var usage = `usage:
                              list the profiles and the models, or switch the
                              profile of config.toml, the model and/or the
                              effort (low … max, default) for this shell
+  aish yolo [off]            turn off the policies, the [policy] rules, the questions
+                             and the limits of the subagents' bash for the assistant
+                             till this shell exits (not the guard of aish trust,
+                             not the hooks); off turns them back on
   aish apply-config          put config.toml, .aish.toml, the policies and mcp.yaml,
                              as they are now, in force for this shell: aish reads
                              them as it starts and with this command only
@@ -157,6 +162,8 @@ func run(args []string) int {
 		return contextCmd(cfg, args[1:])
 	case "model":
 		return modelCmd(cfg, args[1:])
+	case "yolo":
+		return yoloCmd(args[1:])
 	case "resume":
 		return resumeCmd(conf, cfg, args[1:])
 	case "clear":

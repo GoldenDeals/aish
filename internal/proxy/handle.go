@@ -55,6 +55,9 @@ var handlers = map[string]handler{
 		}
 		return p.switchModel(mp)
 	}),
+	rpc.MethodYolo: decoded(func(p *Proxy, ctx context.Context, yp rpc.YoloParams) (any, error) {
+		return nil, p.setYolo(ctx, yp.On)
+	}),
 	rpc.MethodApplyConfig: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
 		return p.applyConfig(ctx, ap)
 	}),

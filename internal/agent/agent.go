@@ -124,6 +124,11 @@ type Agent struct {
 	Journal  Journal
 	Shell    Shell
 	UI       UI
+	// Yolo tells, as each call is checked, whether the user has the
+	// checks off (aish yolo): see yolo.go. Subagents get the function, not
+	// its value, so that one in the background follows the switch. nil
+	// is off.
+	Yolo func() bool
 
 	entries []session.Entry
 	sess    string // Journal.ID() the entries were read from
@@ -467,7 +472,7 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 	in.Server = tools.ServerOf(t)
 	in.Model = a.Cfg.Model
 	in.Agent = a.name
-	d, err := a.Policy.Check(ctx, in)
+	d, err := a.check(ctx, in)
 	if err != nil {
 		return false, err
 	}
@@ -476,6 +481,9 @@ func (a *Agent) call(ctx context.Context, c session.ToolCall) (handedOff bool, e
 		return false, err
 	}
 	d, args = v.Decision, v.args
+	if d.Action == policy.Ask && a.yolo() {
+		d = policy.Decision{Action: policy.Allow} // asks nobody, a hook's ask too
+	}
 	h, toShell := t.(tools.HandsOff)
 	var cmd string
 	var hasCmd bool

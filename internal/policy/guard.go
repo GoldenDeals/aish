@@ -45,6 +45,16 @@ func (guardChecker) Check(_ context.Context, in Input) (Decision, error) {
 	return Decision{Action: Allow}, nil
 }
 
+// Guard is the verdict of the guard alone: what the agent's calls go by
+// while the user has the policies off (aish yolo). No policy, rule or
+// answer of the user lifts it, so every engine has it, a nil one too.
+func (e *Engine) Guard(ctx context.Context, in Input) (Decision, error) {
+	if e != nil && e.agent != "" {
+		in.Agent = e.agent
+	}
+	return guardChecker{}.Check(ctx, in)
+}
+
 // guarded is where the trust file lives, resolved and as spelled.
 type guarded struct {
 	// file is trusted.json and its directory: moved away and back, the

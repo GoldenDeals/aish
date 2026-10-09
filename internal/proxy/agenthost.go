@@ -40,6 +40,7 @@ type agentHost struct {
 	cancelGen uint64             // agent_cancel calls so far
 	overhead  int                // the agent's Overhead after the last request
 	project   string             // the .aish.toml of the last request, "" if none
+	yolo      bool               // aish yolo is on: see yolo.go
 
 	policies     policy.Cache
 	untrusted    map[string]bool // the project files tellUntrusted told of

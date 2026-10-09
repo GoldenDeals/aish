@@ -341,12 +341,13 @@ type subRun struct {
 	scope  *bashScope
 	pol    *policy.Engine
 	ex     tools.Exec
+	yolo   func() bool // the host's Yolo: asked at each call, not taken now
 }
 
 // prepSub takes what subagent d needs to work on prompt in the host's
 // shell situation.
 func (a *Agent) prepSub(d subagent.Def, prompt string) *subRun {
-	s := &subRun{def: d, prompt: prompt, cfg: a.Cfg, prov: a.Provider, pol: a.Policy.Subagent(d.Name), ex: a.exec}
+	s := &subRun{def: d, prompt: prompt, cfg: a.Cfg, prov: a.Provider, pol: a.Policy.Subagent(d.Name), ex: a.exec, yolo: a.Yolo}
 	s.cfg.SystemPrompt = subNote + "\n\n" + d.Prompt
 	if d.Model != "" && d.Model != s.cfg.Model {
 		// The host's effort and window are its model's: another one may
@@ -366,7 +367,7 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
 	}
 	j := &memJournal{id: "sub:" + s.def.Name}
 	sh := &subShell{}
-	child := &Agent{Cfg: s.cfg, Provider: s.prov, Tools: s.reg, Policy: s.pol, Journal: j, Shell: sh, UI: subUI{out}, name: s.def.Name}
+	child := &Agent{Cfg: s.cfg, Provider: s.prov, Tools: s.reg, Policy: s.pol, Journal: j, Shell: sh, UI: subUI{out}, Yolo: s.yolo, name: s.def.Name}
 	ex := s.ex
 	if ex.Shell != "" && ex.Shell != "bash" {
 		// Its commands run in a bash of their own (runCommand), not in the
@@ -380,7 +381,8 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
 			break
 		}
 		var o rpc.Output
-		if why := refused(s.scope, cmd, ex.Dir, ex.Env); why != "" {
+		// The scope of its file is a check too: aish yolo lifts it.
+		if why := refused(s.scope, cmd, ex.Dir, ex.Env); why != "" && !child.yolo() {
 			fmt.Fprintf(out, "%s  ✗ %s%s\n", red, why, reset)
 			o = rpc.Output{Output: "not run: " + why, Exit: 126, Cwd: ex.Dir}
 		} else {
