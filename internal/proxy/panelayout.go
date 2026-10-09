@@ -8,6 +8,7 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
+	"github.com/GoldenDeals/aish/internal/agent"
 	"github.com/GoldenDeals/aish/internal/capture"
 )
 
@@ -20,13 +21,23 @@ var paneSep = func() string {
 	return "|"
 }()
 
+// paneBrief is how many rows of its task a pane shows at most, under its
+// header: a third of the pane's at most, the rest is the output's.
+const paneBrief = 3
+
 // pane is one subagent's output while it runs.
 type pane struct {
-	title string
-	buf   *capture.Buffer // bounded: a chatty subagent must not grow forever
-	tail  []byte          // the end of it from the start of a line: what the pane shows
-	exit  int             // -1 while it runs
-	done  bool
+	title  string
+	prompt string          // the task it was given
+	buf    *capture.Buffer // bounded: a chatty subagent must not grow forever
+	tail   []byte          // the end of it from the start of a line: what the pane shows
+	exit   int             // -1 while it runs
+	done   bool
+	// start is when it got its turn, zero while it is queued; end when it
+	// was done.
+	start, end time.Time
+	calls      int  // the tool calls it made, told as it is done
+	partial    bool // max_steps stopped it: its exit is 0, but no ok
 }
 
 // panes is the layout of live subagent outputs on the alternate screen.
@@ -60,8 +71,12 @@ func (pn *pane) write(b []byte) {
 
 func (pn *pane) state() string {
 	switch {
+	case !pn.done && pn.start.IsZero():
+		return "queued"
 	case !pn.done:
 		return "running"
+	case pn.exit == 0 && pn.partial:
+		return "partial"
 	case pn.exit == 0:
 		return "ok"
 	case pn.exit == 130:
@@ -89,14 +104,86 @@ func (pn *pane) rows(w, h int) []string {
 	return out[max(0, len(out)-h):]
 }
 
+// brief is the first rows of the task, at most n of them w columns wide,
+// its lines run together: what the pane is at, as its header says who. A
+// task longer than that ends in "…"; Ctrl+O has it whole.
+func (pn *pane) brief(w, n int) []string {
+	text := strings.Join(strings.Fields(pn.prompt), " ")
+	if w <= 0 || n <= 0 || text == "" {
+		return nil
+	}
+	rows := wrap(text, w)
+	if len(rows) > n {
+		rows = rows[:n]
+		rows[n-1] = runewidth.Truncate(rows[n-1]+" …", w, "…")
+	}
+	return rows
+}
+
+// foldTitle is the title of the pane's fold in Ctrl+O: its state follows,
+// unless ok, as in its summary.
+func (pn *pane) foldTitle() string {
+	if s := pn.state(); s != "ok" {
+		return pn.title + " (" + s + ")"
+	}
+	return pn.title
+}
+
+// fold is what Ctrl+O shows of the pane: its task, quoted, above its
+// output text. "" when it has neither.
+func (pn *pane) fold(text string) string {
+	task := capture.Clean([]byte(agent.QuoteTask(pn.prompt)))
+	switch {
+	case task == "":
+		return text
+	case text == "":
+		return task
+	}
+	return task + "\n\n" + text
+}
+
+// took is how long a pane ran, as a person writes it: 12s, 2m30s, 1h5m.
+func took(d time.Duration) string {
+	d = d.Round(time.Second)
+	if d >= time.Hour {
+		d = d.Round(time.Minute)
+	}
+	s := d.String()
+	if t, ok := strings.CutSuffix(s, "m0s"); ok {
+		s = t + "m"
+	}
+	if t, ok := strings.CutSuffix(s, "h0m"); ok {
+		s = t + "h"
+	}
+	return s
+}
+
 // summary is the line a pane leaves below the call once the layout is
-// gone; text is its whole output.
+// gone; text is its whole output. It tells how long the subagent ran and
+// how many calls it made, unless it never started.
 func (pn *pane) summary(text string) string {
 	mark := paneFail + "✗" + reset
-	if pn.done && pn.exit == 0 {
+	switch pn.state() {
+	case "ok":
 		mark = paneOK + "✓" + reset
+	case "partial":
+		mark = panePartial + "!" + reset
 	}
 	var parts []string
+	if !pn.start.IsZero() {
+		end := pn.end
+		if end.IsZero() {
+			end = time.Now() // not done yet: a second Ctrl+C let the request go
+		}
+		parts = append(parts, took(end.Sub(pn.start)))
+	}
+	switch pn.calls {
+	case 0:
+	case 1:
+		parts = append(parts, "1 call")
+	default:
+		parts = append(parts, fmt.Sprintf("%d calls", pn.calls))
+	}
 	switch n := strings.Count(strings.TrimSpace(text), "\n") + 1; {
 	case strings.TrimSpace(text) == "":
 		parts = append(parts, "no output")
@@ -108,7 +195,7 @@ func (pn *pane) summary(text string) string {
 	if s := pn.state(); s != "ok" {
 		parts = append(parts, s)
 	}
-	if text != "" {
+	if pn.fold(text) != "" {
 		parts = append(parts, "ctrl+o to expand")
 	}
 	return fmt.Sprintf("  %s %s  %s(%s)%s", mark, pn.title, dim, strings.Join(parts, " · "), reset)
@@ -192,9 +279,9 @@ func (ps *panes) render() []byte {
 	return b.Bytes()
 }
 
-// drawPane draws pane i in c: its header, then the tail of its output. A
-// pane zoomed has the keys in its header, and the mark of aish yolo, as
-// there is no status bar then.
+// drawPane draws pane i in c: its header, the first rows of its task dim,
+// then the tail of its output. A pane zoomed has the keys in its header,
+// and the mark of aish yolo, as there is no status bar then.
 func (ps *panes) drawPane(b *bytes.Buffer, i int, c cell) {
 	if c.w <= 0 || c.h <= 0 {
 		return // a screen too small for all of them
@@ -204,22 +291,25 @@ func (ps *panes) drawPane(b *bytes.Buffer, i int, c cell) {
 	if c.x+c.w < ps.w {
 		w, sep = c.w-1, dim+paneSep+reset
 	}
-	head := fmt.Sprintf(" %d %s  %s", i+1, pn.title, pn.state())
-	if ps.zoom == i {
-		head += "   0 grid  q detach  ctrl+c stop"
-	}
 	mark, room := "", w
 	if ps.zoom == i {
 		mark, room = yoloBarMark(ps.yolo, w)
 	}
-	rows := pn.rows(w, c.h-1)
+	head := paneHead(i, pn.title, pn.state(), room)
+	if ps.zoom == i {
+		head += "   0 grid  q detach  ctrl+c stop"
+	}
+	brief := pn.brief(w, min(paneBrief, (c.h-1)/3))
+	rows := pn.rows(w, c.h-1-len(brief))
 	for r := range c.h {
 		fmt.Fprintf(b, "\x1b[%d;%dH", c.y+r+1, c.x+1)
 		switch {
 		case r == 0:
 			b.WriteString(reverse + cellText(head, room) + reset + mark)
-		case r-1 < len(rows):
-			b.WriteString(cellText(rows[r-1], w))
+		case r-1 < len(brief):
+			b.WriteString(dim + cellText(brief[r-1], w) + reset)
+		case r-1-len(brief) < len(rows):
+			b.WriteString(cellText(rows[r-1-len(brief)], w))
 		default:
 			b.WriteString(strings.Repeat(" ", w))
 		}
@@ -227,14 +317,45 @@ func (ps *panes) drawPane(b *bytes.Buffer, i int, c cell) {
 	}
 }
 
-// bar is the status line below the grid.
-func (ps *panes) bar() string {
-	n := len(ps.list)
-	what, keys := fmt.Sprintf("%d subagents", n), fmt.Sprintf("1-%d", min(n, 9))
-	if n == 1 {
-		what, keys = "1 subagent", "1"
+// paneHead is the header of pane i, room columns wide: its number, title
+// and state. The title gives way, not the state: what changes.
+func paneHead(i int, title, state string, room int) string {
+	num := fmt.Sprintf(" %d ", i+1)
+	if fit := room - runewidth.StringWidth(num) - 2 - runewidth.StringWidth(state); runewidth.StringWidth(title) > fit {
+		title = runewidth.Truncate(title, max(fit, 1), "…")
 	}
-	return fmt.Sprintf(" %s   %s zoom  0 grid  q detach  ctrl+c stop", what, keys)
+	return num + title + "  " + state
+}
+
+// bar is the status line below the grid: how many of the subagents run,
+// wait their turn and are done.
+func (ps *panes) bar() string {
+	var running, queued, done int
+	for _, pn := range ps.list {
+		switch {
+		case pn.done:
+			done++
+		case pn.start.IsZero():
+			queued++
+		default:
+			running++
+		}
+	}
+	var what []string
+	for _, c := range []struct {
+		n    int
+		what string
+	}{{running, "running"}, {queued, "queued"}, {done, "done"}} {
+		if c.n > 0 {
+			what = append(what, fmt.Sprintf("%d %s", c.n, c.what))
+		}
+	}
+	n := len(ps.list)
+	keys := fmt.Sprintf("1-%d", min(n, 9))
+	if n == 1 {
+		keys = "1"
+	}
+	return fmt.Sprintf(" %s   %s zoom  0 grid  q detach  ctrl+c stop", strings.Join(what, " · "), keys)
 }
 
 // key handles what was typed while the layout is shown and reports whether

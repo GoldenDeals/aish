@@ -367,20 +367,35 @@ type panesUI struct {
 }
 
 type fakePane struct {
-	u     *panesUI
-	title string
-	mu    sync.Mutex
-	out   bytes.Buffer
-	exit  *int
+	u       *panesUI
+	title   string
+	prompt  string
+	mu      sync.Mutex
+	out     bytes.Buffer
+	exit    *int
+	calls   int
+	partial bool
 }
 
-func (u *panesUI) Pane(title string) Live {
+func (u *panesUI) Pane(title, prompt string) Pane {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	p := &fakePane{u: u, title: title}
+	p := &fakePane{u: u, title: title, prompt: prompt}
 	u.panes = append(u.panes, p)
 	u.events = append(u.events, "pane "+title)
 	return p
+}
+
+func (p *fakePane) Start() {
+	p.u.mu.Lock()
+	defer p.u.mu.Unlock()
+	p.u.events = append(p.u.events, "start "+p.title)
+}
+
+func (p *fakePane) Outcome(calls int, partial bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls, p.partial = calls, partial
 }
 
 func (u *panesUI) ClosePanes() {

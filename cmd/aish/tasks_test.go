@@ -34,6 +34,18 @@ func TestPrintTasks(t *testing.T) {
 	if b.String() != "\x1b[2m(no subagents in the background)\x1b[0m\n" {
 		t.Errorf("none: %q", b.String())
 	}
+
+	// The description of a task goes with its subagent.
+	b.Reset()
+	printTasks(&b, []rpc.Task{
+		{ID: "bg1", Agent: "reviewer", Desc: "check the diff", State: "running", Prompt: "Review"},
+		{ID: "bg2", Agent: "x", State: "queued", Prompt: "Other"},
+	}, 0)
+	want = "\x1b[1mbg1\x1b[0m  reviewer: check the diff  running  Review\n" +
+		"\x1b[1mbg2\x1b[0m  x                         queued   Other\n"
+	if b.String() != want {
+		t.Errorf("with a description\n%q\nwant\n%q", b.String(), want)
+	}
 }
 
 // aish tasks asks the proxy for the list, aish tasks show for one; other
@@ -91,6 +103,19 @@ func TestPrintTask(t *testing.T) {
 	b.Reset()
 	printTask(&b, rpc.Task{ID: "bg1", Agent: "a", State: "ok", Output: "line\nlast"})
 	if want := "\x1b[0m\x1b[36mbg1 a (ok)\x1b[0m\nline\nlast\n\x1b[0m"; b.String() != want {
+		t.Errorf("printed %q, want %q", b.String(), want)
+	}
+
+	// The task, whole and dim, above the output; the title has its
+	// description.
+	b.Reset()
+	printTask(&b, rpc.Task{ID: "bg1", Agent: "a", Desc: "look", State: "ok", Prompt: "look at\nthe \x1b[31mdiff", Output: "line"})
+	if want := "\x1b[0m\x1b[36mbg1 a: look (ok)\x1b[0m\n\x1b[2m> look at\n> the diff\x1b[0m\n\nline\n\x1b[0m"; b.String() != want {
+		t.Errorf("printed %q, want %q", b.String(), want)
+	}
+	b.Reset()
+	printTask(&b, rpc.Task{ID: "bg1", Agent: "a", State: "running", Prompt: "look"})
+	if want := "\x1b[0m\x1b[36mbg1 a (running)\x1b[0m\n\x1b[2m> look\x1b[0m\n\x1b[0m\x1b[2m(no output)\x1b[0m\n"; b.String() != want {
 		t.Errorf("printed %q, want %q", b.String(), want)
 	}
 }

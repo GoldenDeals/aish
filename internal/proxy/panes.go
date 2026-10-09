@@ -10,13 +10,16 @@ import (
 
 // The subagents of a task call run at once, and each gets a pane of its
 // own on the alternate screen, tiled as tmux tiles them: a header with its
-// name and state, the tail of its output below. Meanwhile the screen is
-// the layout's, as it is the viewer's while that is open: the output of
-// the shell and of the agent waits in p.held (holding). The layout opens
-// once the subagents have run paneDelay, and the call closes it when all
-// of them are done: the screen comes back, a line per subagent sums it up
-// below the call, and its whole output is kept for Ctrl+O. Subagents done
-// sooner leave only those lines.
+// title and state, the first words of its task below, then the tail of its
+// output. The call opens the panes of all its subagents at once, those
+// queued past maxParallel too, so the grid is laid out once for all of
+// them and stays as they start. Meanwhile the screen is the layout's, as
+// it is the viewer's while that is open: the output of the shell and of
+// the agent waits in p.held (holding). The layout opens once the
+// subagents have run paneDelay, and the call closes it when all of them
+// are done: the screen comes back, a line per subagent sums it up below
+// the call, and its task and whole output are kept for Ctrl+O. Subagents
+// done sooner leave only those lines.
 
 const (
 	paneMinWidth = 20                    // the narrowest column the grid makes
@@ -26,8 +29,9 @@ const (
 	panesOpen  = "\x1b[?1049h\x1b[?25l"
 	panesClose = "\x1b[?1049l\x1b[?25h"
 
-	paneOK   = "\x1b[32m"
-	paneFail = "\x1b[31m"
+	paneOK      = "\x1b[32m"
+	paneFail    = "\x1b[31m"
+	panePartial = "\x1b[33m"
 )
 
 // paneDelay is how long the subagents of a call run before the layout
@@ -37,11 +41,12 @@ var paneDelay = 150 * time.Millisecond
 
 var _ agent.Panes = (*ui)(nil)
 
-// Pane opens a pane for a subagent of the task call; the first one sets
-// the layout to open once paneDelay is over. While the viewer has the
-// screen, the layout waits for Ctrl+O; without a terminal there is nothing
-// to draw it on, and the outputs are only kept and summed up at the end.
-func (u *ui) Pane(title string) agent.Live {
+// Pane opens a pane for a subagent of the task call, queued till it
+// starts; the first one sets the layout to open once paneDelay is over.
+// While the viewer has the screen, the layout waits for Ctrl+O; without a
+// terminal there is nothing to draw it on, and the outputs are only kept
+// and summed up at the end.
+func (u *ui) Pane(title, prompt string) agent.Pane {
 	p := u.p
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -57,7 +62,7 @@ func (u *ui) Pane(title string) agent.Live {
 			})
 		}
 	}
-	pn := &pane{title: oneLine(title), buf: capture.NewBuffer(foldRawCap, foldRawCap), exit: -1}
+	pn := &pane{title: oneLine(title), prompt: prompt, buf: capture.NewBuffer(foldRawCap, foldRawCap), exit: -1}
 	ps.list = append(ps.list, pn)
 	if ps.shown {
 		p.drawPanes()
@@ -92,6 +97,28 @@ func (w *paneWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
+// Start marks the pane running: its subagent got its turn.
+func (w *paneWriter) Start() {
+	p := w.p
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if w.pn.done || !w.pn.start.IsZero() {
+		return
+	}
+	w.pn.start = time.Now()
+	if p.panes == w.ps && w.ps.shown {
+		p.drawPanes()
+	}
+}
+
+// Outcome keeps the number of tool calls for the summary, and whether the
+// answer is partial: the pane is not ok then.
+func (w *paneWriter) Outcome(calls int, partial bool) {
+	w.p.mu.Lock()
+	defer w.p.mu.Unlock()
+	w.pn.calls, w.pn.partial = calls, partial
+}
+
 // Finish marks the pane done. The layout stays for the call to close:
 // the subagents past maxParallel come as the first ones end.
 func (w *paneWriter) Finish(exit int) {
@@ -101,7 +128,7 @@ func (w *paneWriter) Finish(exit int) {
 	if w.pn.done {
 		return
 	}
-	w.pn.exit, w.pn.done = exit, true
+	w.pn.exit, w.pn.done, w.pn.end = exit, true, time.Now()
 	if p.panes == w.ps && w.ps.shown {
 		p.drawPanes()
 	}
@@ -196,8 +223,8 @@ func (t *console) detachPanes() {
 }
 
 // closePanes ends the layout: the screen comes back with what it held, a
-// line per pane sums it up below the call, and its output goes to the
-// folds. Once the request is over (a second Ctrl+C let the shell go back
+// line per pane sums it up below the call, and its task and output go to
+// the folds. Once the request is over (a second Ctrl+C let the shell go back
 // to its prompt before the subagents stopped) the prompt is on the screen,
 // and the outputs are only kept. Called under p.mu.
 func (p *Proxy) closePanes() {
@@ -226,8 +253,8 @@ func (p *Proxy) closePanes() {
 		if p.asking {
 			p.emit([]byte(pn.summary(text) + "\r\n"))
 		}
-		if text != "" {
-			p.folds = append(p.folds, Fold{Title: pn.title, Text: text})
+		if f := pn.fold(text); f != "" {
+			p.folds = append(p.folds, Fold{Title: pn.foldTitle(), Text: f})
 		}
 	}
 }

@@ -60,7 +60,7 @@ func (a *Agent) BackgroundTask(id string) (rpc.Task, error) {
 
 // task is j as `aish tasks` lists it. Called under the set's mu.
 func (j *bgJob) task() rpc.Task {
-	return rpc.Task{ID: j.id, Agent: j.name, State: j.state, Prompt: j.prompt}
+	return rpc.Task{ID: j.id, Agent: j.name, Desc: j.desc, State: j.state, Prompt: j.prompt}
 }
 
 func (o *bgOutput) bytes() []byte {

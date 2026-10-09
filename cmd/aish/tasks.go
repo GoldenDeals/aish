@@ -10,6 +10,8 @@ import (
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
+	"github.com/GoldenDeals/aish/internal/agent"
+	"github.com/GoldenDeals/aish/internal/capture"
 	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
@@ -48,8 +50,9 @@ func tasksCmd(args []string) int {
 	return 0
 }
 
-// printTasks lays the list out in columns: id, subagent, state and as much
-// of the task's first line as width leaves (all of it when 0).
+// printTasks lays the list out in columns: id, subagent with the
+// description of its task, state and as much of the task's first line as
+// width leaves (all of it when 0).
 func printTasks(w io.Writer, list []rpc.Task, width int) {
 	if len(list) == 0 {
 		fmt.Fprintln(w, "\x1b[2m(no subagents in the background)\x1b[0m")
@@ -58,11 +61,11 @@ func printTasks(w io.Writer, list []rpc.Task, width int) {
 	idW, agentW, stateW := 0, 0, 0
 	for _, t := range list {
 		idW = max(idW, runewidth.StringWidth(t.ID))
-		agentW = max(agentW, runewidth.StringWidth(t.Agent))
+		agentW = max(agentW, runewidth.StringWidth(agent.TaskTitle(t.Agent, t.Desc)))
 		stateW = max(stateW, runewidth.StringWidth(t.State))
 	}
 	for _, t := range list {
-		head := runewidth.FillRight(t.ID, idW) + "  " + runewidth.FillRight(t.Agent, agentW) + "  " +
+		head := runewidth.FillRight(t.ID, idW) + "  " + runewidth.FillRight(agent.TaskTitle(t.Agent, t.Desc), agentW) + "  " +
 			runewidth.FillRight(t.State, stateW) + "  "
 		task, _, _ := strings.Cut(strings.TrimSpace(t.Prompt), "\n")
 		task = strings.Join(strings.Fields(task), " ")
@@ -73,9 +76,19 @@ func printTasks(w io.Writer, list []rpc.Task, width int) {
 	}
 }
 
-// printTask prints one with its output, as `aish expand` prints a fold.
+// printTask prints one with its task, dim, and its output, as `aish
+// expand` prints a fold.
 func printTask(w io.Writer, t rpc.Task) {
-	printFold(w, rpc.Fold{Title: fmt.Sprintf("%s %s (%s)", t.ID, t.Agent, t.State), Text: t.Output})
+	text := t.Output
+	// The model's or the user's text, printed whole: no sequence of its
+	// own reaches the terminal.
+	if q := agent.QuoteTask(capture.Clean([]byte(t.Prompt))); q != "" {
+		text = "\x1b[2m" + q + "\x1b[0m\n"
+		if t.Output != "" {
+			text += "\n" + t.Output
+		}
+	}
+	printFold(w, rpc.Fold{Title: fmt.Sprintf("%s %s (%s)", t.ID, agent.TaskTitle(t.Agent, t.Desc), t.State), Text: text})
 	if t.Output == "" {
 		fmt.Fprintln(w, "\x1b[2m(no output)\x1b[0m")
 	}

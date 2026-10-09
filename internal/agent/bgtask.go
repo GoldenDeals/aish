@@ -74,6 +74,7 @@ type bgSet struct {
 
 type bgJob struct {
 	id, name string
+	desc     string // of its task in the call, for aish tasks
 	prompt   string
 	state    string
 	reply    string
@@ -228,7 +229,7 @@ func (s *bgSet) add(runs []*subRun, user bool) []*bgJob {
 	for i, r := range runs {
 		s.n++
 		j := &bgJob{
-			id: "bg" + strconv.Itoa(s.n), name: r.def.Name, prompt: r.prompt, state: bgQueued, run: r,
+			id: "bg" + strconv.Itoa(s.n), name: r.def.Name, desc: r.desc, prompt: r.prompt, state: bgQueued, run: r,
 			done: make(chan struct{}), out: &bgOutput{buf: capture.NewBuffer(subCapture, subCapture)}, user: user,
 		}
 		j.ctx, j.cancel = bgContext(r.limit)

@@ -93,8 +93,8 @@ func TestYoloPanesBar(t *testing.T) {
 	for _, yolo := range []bool{false, true} {
 		p, out, u, _ := paneProxy(t)
 		p.yolo = yolo
-		u.Pane("one")
-		u.Pane("two")
+		startPane(u, "one")
+		startPane(u, "two")
 		due(p)
 		scr := lastPanes(t, out.String(), w, h)
 		covered(t, scr)
@@ -102,7 +102,7 @@ func TestYoloPanesBar(t *testing.T) {
 		if strings.HasSuffix(row, " "+yoloMark) != yolo {
 			t.Errorf("yolo %v: bar %q", yolo, row)
 		}
-		if !strings.HasPrefix(row, " 2 subagents   1-2 zoom") {
+		if !strings.HasPrefix(row, " 2 running   1-2 zoom") {
 			t.Errorf("yolo %v: bar %q", yolo, row)
 		}
 
@@ -122,7 +122,7 @@ func TestYoloPanesBar(t *testing.T) {
 	// second Ctrl+C let the shell back to its prompt.
 	p, out, u, _ := paneProxy(t)
 	p.yolo = true
-	u.Pane("one")
+	startPane(u, "one")
 	due(p)
 	p.asking = false
 	p.fg = func() (int, error) { return syscall.Getpgrp(), nil }

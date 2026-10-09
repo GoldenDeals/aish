@@ -117,8 +117,8 @@ func TestPasteBrackets(t *testing.T) {
 		}},
 		{"panes", func(t *testing.T) (*Proxy, func(*testing.T, string), func()) {
 			p, _, u, _ := paneProxy(t)
-			u.Pane("one")
-			u.Pane("two")
+			u.Pane("one", "")
+			u.Pane("two", "")
 			due(p)
 			return p, func(t *testing.T, shell string) {
 				if shell != "" || !p.panes.shown || p.panes.zoom != -1 {

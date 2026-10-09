@@ -92,11 +92,13 @@ type TasksParams struct {
 
 // Task is a subagent in the background: its id (bg1), the subagent, its
 // state (queued, running, ok, error, cancelled) and the task it was
-// given. Output, what it has shown so far as plain text, comes only for
-// the one asked for.
+// given, with the few words of the call that describe it, if any. Output,
+// what it has shown so far as plain text, comes only for the one asked
+// for.
 type Task struct {
 	ID     string `json:"id"`
 	Agent  string `json:"agent"`
+	Desc   string `json:"desc,omitempty"`
 	State  string `json:"state"`
 	Prompt string `json:"prompt,omitempty"`
 	Output string `json:"output,omitempty"`

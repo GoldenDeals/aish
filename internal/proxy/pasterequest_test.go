@@ -245,7 +245,7 @@ func TestPasteModeReaders(t *testing.T) {
 
 	// The panes.
 	p, term, u, _ := paneProxy(t)
-	u.Pane("alpha")
+	u.Pane("alpha", "")
 	due(p)
 	if s := term.String(); !strings.HasPrefix(s, panesOpen) || pasteModeOf(s) != "on" {
 		t.Errorf("the panes opened with %q", s)

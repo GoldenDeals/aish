@@ -326,9 +326,9 @@ type workPanes struct {
 	panes Panes
 }
 
-func (u workPanes) Pane(title string) Live {
+func (u workPanes) Pane(title, prompt string) Pane {
 	u.g.close()
-	return u.panes.Pane(title)
+	return u.panes.Pane(title, prompt)
 }
 
 func (u workPanes) ClosePanes() { u.panes.ClosePanes() }

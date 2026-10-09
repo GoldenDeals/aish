@@ -53,13 +53,29 @@ const (
 // shows them one after another: a second Live of the UI at once would take
 // the place of the first.
 type Panes interface {
-	// Pane is the live output of a subagent of the call.
-	Pane(title string) Live
+	// Pane is the live output of a subagent of the call, titled title,
+	// prompt the task it was given. The call opens all of its panes at
+	// once, the queued ones too, so that a layout of them has a place for
+	// each from the start and does not change as they start.
+	Pane(title, prompt string) Pane
 	// ClosePanes ends the panes of the call once all its subagents are
 	// done. The Finish of the last one running would not do: those past
 	// maxParallel start as the first ones end, and between them the panes
 	// would close and open again.
 	ClosePanes()
+}
+
+// Pane is a subagent's live output, queued until Start: those past
+// maxParallel wait for the first ones to end. One that never starts, the
+// call interrupted, is finished all the same.
+type Pane interface {
+	Live
+	// Start tells that the subagent runs now.
+	Start()
+	// Outcome tells, before Finish, how many tool calls it made, and
+	// whether max_steps stopped it with a partial answer: a Finish(0)
+	// that is no ok.
+	Outcome(calls int, partial bool)
 }
 
 // AddSubagents registers the task tool for the subagents found in the
@@ -95,7 +111,7 @@ func (*taskTool) Streaming() bool { return true }
 func (*taskTool) Args() []tools.Arg {
 	return []tools.Arg{
 		{Name: "tasks", Type: "array", Required: true,
-			Desc: `Tasks to run in parallel, as JSON: [{"agent": NAME, "prompt": TEXT}, …]`},
+			Desc: `Tasks to run in parallel, as JSON: [{"agent": NAME, "description": "3-5 WORDS", "prompt": TEXT}, …]`},
 		{Name: "background", Type: "boolean", Flag: true, Desc: bgArgDesc},
 	}
 }
@@ -115,6 +131,7 @@ func (t *taskTool) Desc() string {
 		"- Write file paths as they are: the subagent reads the files itself. " +
 		"@file and /skill in a prompt attach nothing.\n" +
 		"- Independent tasks go into one call, so that they run at once.\n" +
+		"- Give each task a description of 3-5 words: the user tells the subagents at work apart by it.\n" +
 		"- The answers come back to you, not to the user: tell the user what matters in them.\n" +
 		"- With background, the call returns at once, a line \"started ID (NAME)\" for each subagent, and they work on " +
 		"while you go on. Use it when you do not need the answers for your next step and the work takes minutes: " +
@@ -136,7 +153,9 @@ func (t *taskTool) Schema() map[string]any {
 	task := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"agent":  map[string]any{"type": "string", "enum": names, "description": "The subagent to run"},
+			"agent": map[string]any{"type": "string", "enum": names, "description": "The subagent to run"},
+			"description": map[string]any{"type": "string",
+				"description": "A short (3-5 word) description of the task, which the user sees it by"},
 			"prompt": map[string]any{"type": "string", "description": "The task, with everything the subagent needs to know"},
 		},
 		"required": []string{"agent", "prompt"},
@@ -180,6 +199,7 @@ func taskList(args map[string]any) []any {
 type subJob struct {
 	def    subagent.Def
 	prompt string
+	desc   string // the few words of the call that tell it apart, see taskTitles
 }
 
 // jobs reads the tasks of a call. A mistake in any of them fails the call
@@ -208,7 +228,7 @@ func (t *taskTool) jobs(args map[string]any) ([]subJob, error) {
 		if strings.TrimSpace(prompt) == "" {
 			return nil, fmt.Errorf("tasks[%d]: empty prompt for %s", i, name)
 		}
-		out = append(out, subJob{t.a.subs[k], prompt})
+		out = append(out, subJob{t.a.subs[k], prompt, taskDesc(m)})
 	}
 	return out, nil
 }
@@ -233,6 +253,7 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 	runs := make([]*subRun, len(jobs))
 	for i, j := range jobs {
 		runs[i] = a.prepSub(j.def, j.prompt)
+		runs[i].desc = j.desc
 	}
 	if inBackground(args) {
 		for _, r := range runs {
@@ -241,7 +262,7 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 		return a.background().start(runs, live)
 	}
 	nameRuns(ctx, runs)
-	var open func(title string) Live
+	var open func(title, prompt string) Pane
 	if p, ok := a.UI.(Panes); ok {
 		open = p.Pane
 		defer p.ClosePanes()
@@ -256,25 +277,34 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 		partial bool
 		err     error
 	}
+	titles := taskTitles(jobs)
+	// All at once, in the order of the call: panes and sections come in
+	// that order, and the queued ones are seen waiting.
+	panes := make([]Pane, len(jobs))
+	for i, j := range jobs {
+		panes[i] = open(titles[i], j.prompt)
+	}
 	res := make([]result, len(jobs))
 	slots := make(chan struct{}, maxParallel)
 	var wg sync.WaitGroup
-	// Started in the order of the call, so that panes and sections come in
-	// that order too.
-	for i, j := range jobs {
+	for i, w := range panes {
 		select {
 		case slots <- struct{}{}:
 		case <-ctx.Done():
 		}
 		if ctx.Err() != nil {
+			for _, w := range panes[i:] {
+				w.Finish(130) // never started
+			}
 			break
 		}
-		w := open(j.def.Name)
+		w.Start()
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-slots }()
 			reply, partial, err := runSafe(ctx, runs[i], w)
+			w.Outcome(runs[i].calls, partial && err == nil)
 			switch {
 			case err == nil:
 				w.Finish(0)
@@ -292,9 +322,9 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 		return "", err
 	}
 	blocks := make([]string, len(jobs))
-	for i, j := range jobs {
+	for i := range jobs {
 		status, text := outcome(res[i].reply, res[i].partial, res[i].err)
-		blocks[i] = block(j.def.Name, status, text)
+		blocks[i] = block(titles[i], status, text)
 	}
 	return strings.Join(blocks, "\n\n"), nil
 }
@@ -347,6 +377,7 @@ const subNote = "# Subagent\n" +
 type subRun struct {
 	def    subagent.Def
 	prompt string
+	desc   string // of its task in the call, "" when it has none
 	cfg    config.Config
 	prov   llm.Provider
 	err    error // making prov failed: the subagent's error, not the call's
@@ -365,6 +396,9 @@ type subRun struct {
 	// id tells this run from the others of the subagent to its hooks:
 	// see subid.go.
 	id string
+	// calls is how many tool calls it made, once runSub is over: the
+	// summary of its pane tells them.
+	calls int
 }
 
 // prepSub takes what subagent d needs to work on prompt in the host's
@@ -418,6 +452,9 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, bool, error) {
 		}
 		sh.done(id, o)
 		err = child.Resume(ctx, id, o.Exit, ex)
+	}
+	for _, e := range j.es {
+		s.calls += len(e.ToolCalls)
 	}
 	reply, partial := subAnswer(j.es, s.cfg.MaxSteps, s.cfg.MaxOutputBytes)
 	return reply, partial, err
@@ -953,16 +990,17 @@ type relay struct {
 
 // section is one subagent's output in a relay.
 type section struct {
-	r     *relay
-	title string
-	held  bytes.Buffer
-	done  bool
+	r      *relay
+	title  string
+	prompt string
+	held   bytes.Buffer
+	done   bool
 }
 
-func (r *relay) add(title string) Live {
+func (r *relay) add(title, prompt string) Pane {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	s := &section{r: r, title: title}
+	s := &section{r: r, title: title, prompt: prompt}
 	r.secs = append(r.secs, s)
 	if r.cur == len(r.secs)-1 {
 		r.begin(s)
@@ -976,6 +1014,9 @@ func (r *relay) begin(s *section) {
 		r.write([]byte("\n"))
 	}
 	r.write(fmt.Appendf(nil, "%s── %s%s\n", bold, s.title, reset))
+	if q := QuoteTask(s.prompt); q != "" {
+		r.write(fmt.Appendf(nil, "%s%s%s\n", dim, q, reset))
+	}
 	r.write(s.held.Bytes())
 	s.held.Reset()
 }
@@ -998,6 +1039,12 @@ func (s *section) Write(b []byte) (int, error) {
 	}
 	return len(b), nil
 }
+
+// A section is drawn in its turn, not as its subagent starts, and the
+// call's output it is part of is all the summary there is: a partial
+// answer says so there itself, in the line of max_steps.
+func (*section) Start()            {}
+func (*section) Outcome(int, bool) {}
 
 func (s *section) Finish(int) {
 	r := s.r

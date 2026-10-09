@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -84,15 +85,23 @@ func text(scr [][]rune, c cell) []string {
 	return out
 }
 
+// newPanes is a layout of w×h whose panes run, each with its output.
 func newPanes(w, h int, outs ...string) *panes {
 	ps := &panes{zoom: -1}
 	ps.resize(w, h)
 	for i, o := range outs {
-		pn := &pane{title: fmt.Sprintf("p%d", i+1), buf: capture.NewBuffer(foldRawCap, foldRawCap), exit: -1}
+		pn := &pane{title: fmt.Sprintf("p%d", i+1), buf: capture.NewBuffer(foldRawCap, foldRawCap), exit: -1, start: time.Now()}
 		pn.write([]byte(o))
 		ps.list = append(ps.list, pn)
 	}
 	return ps
+}
+
+// startPane opens a pane for a subagent, without a task, that runs.
+func startPane(u *ui, title string) agent.Pane {
+	w := u.Pane(title, "")
+	w.Start()
+	return w
 }
 
 // The grid is as square as the panes fit, the cells cover the screen but
@@ -175,9 +184,10 @@ func TestPaneFrame(t *testing.T) {
 			t.Errorf("row %d: %q between the panes", y, r)
 		}
 	}
-	// A header longer than the cell is cut; nothing runs into the next cell.
+	// A title longer than the cell is cut, not the state; nothing runs
+	// into the next cell.
 	right := text(scr, cells[1])
-	if want := " 2 " + strings.Repeat("t", 37); right[0] != want {
+	if want := " 2 " + strings.Repeat("t", 27) + "…  running"; right[0] != want {
 		t.Errorf("long header %q", right[0])
 	}
 	if !slices.Equal(right[1:4], []string{"b1", "b2", ""}) {
@@ -195,7 +205,7 @@ func TestPaneFrame(t *testing.T) {
 	if !slices.Equal(bottom[:4], []string{" 3 p3  running", long[:80], long[80:], "cend"}) {
 		t.Errorf("p3 %q", bottom[:4])
 	}
-	if bar := strings.TrimRight(string(scr[23]), " "); bar != " 3 subagents   1-3 zoom  0 grid  q detach  ctrl+c stop" {
+	if bar := strings.TrimRight(string(scr[23]), " "); bar != " 3 running   1-3 zoom  0 grid  q detach  ctrl+c stop" {
 		t.Errorf("status bar %q", bar)
 	}
 
@@ -256,18 +266,116 @@ func TestPaneOutput(t *testing.T) {
 	}
 }
 
-// The header tells the state: running, ok, interrupted, or the exit code.
+// The header tells the state: queued, running, ok, interrupted, or the
+// exit code; the bar counts them.
 func TestPaneState(t *testing.T) {
-	ps := newPanes(80, 24, "x", "y", "z", "w")
+	ps := newPanes(80, 24, "x", "y", "z", "w", "v")
 	ps.list[1].exit, ps.list[1].done = 0, true
 	ps.list[2].exit, ps.list[2].done = 2, true
 	ps.list[3].exit, ps.list[3].done = 130, true
+	ps.list[4].start = time.Time{}
 	scr := screenOf(t, ps.render(), 80, 24)
-	_, _, cells := grid(4, 80, 24)
-	for i, want := range []string{" 1 p1  running", " 2 p2  ok", " 3 p3  rc 2", " 4 p4  interrupted"} {
+	_, _, cells := grid(5, 80, 24)
+	for i, want := range []string{" 1 p1  running", " 2 p2  ok", " 3 p3  rc 2", " 4 p4  interrupted", " 5 p5  queued"} {
 		c := cells[i]
 		if got := strings.TrimRight(string(scr[c.y][c.x:c.x+c.w-1]), " "); got != want {
 			t.Errorf("header %q, want %q", got, want)
+		}
+	}
+	if bar := string(scr[23]); !strings.HasPrefix(bar, " 1 running · 1 queued · 3 done   1-5 zoom") {
+		t.Errorf("status bar %q", bar)
+	}
+}
+
+// All the panes of a call are there from the start, those past
+// maxParallel queued: the grid is laid out for all of them, and their
+// cells stay as the queued one starts. The first rows of the task are
+// under the header, dim, wrapped between words.
+func TestPanesQueued(t *testing.T) {
+	p, out, u, _ := paneProxy(t)
+	var ws []agent.Pane
+	for i := range 5 {
+		ws = append(ws, u.Pane(fmt.Sprintf("runner #%d", i+1), fmt.Sprintf("job %d: look at the files of\npart %d and tell what is there", i+1, i+1)))
+	}
+	for _, w := range ws[:4] {
+		w.Start()
+	}
+	due(p)
+	_, _, cells := grid(5, 80, 24)
+	heads := func() []string {
+		scr := lastPanes(t, out.String(), 80, 24)
+		covered(t, scr)
+		var hs []string
+		for _, c := range cells {
+			hs = append(hs, text(scr, c)[0])
+		}
+		return append(hs, strings.TrimRight(string(scr[23]), " "))
+	}
+	got := heads()
+	want := []string{" 1 runner #1  running", " 2 runner #2  running", " 3 runner #3  running", " 4 runner #4  running", " 5 runner #5  queued",
+		" 4 running · 1 queued   1-5 zoom  0 grid  q detach  ctrl+c stop"}
+	for i := range want {
+		if !strings.HasPrefix(got[i], want[i]) {
+			t.Errorf("before: %q, want %q", got[i], want[i])
+		}
+	}
+	// The fourth is 25 columns wide, but for the line between the panes.
+	scr := lastPanes(t, out.String(), 80, 24)
+	c := cells[3]
+	if brief := text(scr, cell{c.x, c.y, c.w - 1, c.h})[1:5]; !slices.Equal(brief, []string{"job 4: look at the files", "of part 4 and tell what", "is there", ""}) {
+		t.Errorf("the task of the fourth %q", brief)
+	}
+	if brief := text(scr, cells[4])[1:4]; !slices.Equal(brief, []string{"job 5: look at the files of part 5 and tell what is", "there", ""}) {
+		t.Errorf("the task of the queued one %q", brief)
+	}
+	s := out.String()
+	if !strings.Contains(s[strings.LastIndex(s, "\x1b[?7l"):], dim+"job 5: look at the") {
+		t.Error("the task is not dim")
+	}
+
+	ws[0].Finish(0)
+	ws[4].Start()
+	got = heads()
+	want = []string{" 1 runner #1  ok", " 2 runner #2  running", " 3 runner #3  running", " 4 runner #4  running", " 5 runner #5  running",
+		" 4 running · 1 done   1-5 zoom"}
+	for i := range want {
+		if !strings.HasPrefix(got[i], want[i]) {
+			t.Errorf("after: %q, want %q", got[i], want[i])
+		}
+	}
+	for _, w := range ws[1:] {
+		w.Finish(0)
+	}
+	u.ClosePanes()
+}
+
+// A pane shows the first rows of its task, its lines run together and
+// wrapped between words, "…" at the end of the last row when there is
+// more; Ctrl+O has it whole and quoted above the output. The summary
+// tells how long it ran as a person writes it.
+func TestPaneTask(t *testing.T) {
+	pn := &pane{prompt: "Look at the diff\n\nof main, then tell\x1b[31m what is wrong"}
+	if got := pn.brief(12, 3); !slices.Equal(got, []string{"Look at the", "diff of", "main, then …"}) {
+		t.Errorf("brief %q", got)
+	}
+	if got := pn.brief(80, 3); !slices.Equal(got, []string{"Look at the diff of main, then tell [31m what is wrong"}) {
+		t.Errorf("one row %q", got)
+	}
+	if got := pn.brief(10, 0); got != nil {
+		t.Errorf("no room %q", got)
+	}
+	if got := pn.fold("out"); got != "> Look at the diff\n>\n> of main, then tell what is wrong\n\nout" {
+		t.Errorf("fold %q", got)
+	}
+	if got := (&pane{prompt: " \n"}).fold(""); got != "" {
+		t.Errorf("fold of nothing %q", got)
+	}
+	for d, want := range map[time.Duration]string{
+		400 * time.Millisecond: "0s", 12*time.Second + 600*time.Millisecond: "13s", 2*time.Minute + 30*time.Second: "2m30s",
+		3 * time.Minute: "3m", time.Hour + 5*time.Minute + 20*time.Second: "1h5m", 2 * time.Hour: "2h",
+	} {
+		if got := took(d); got != want {
+			t.Errorf("%v took %q, want %q", d, got, want)
 		}
 	}
 }
@@ -318,7 +426,7 @@ func TestPaneKeys(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
 	p.folds = []Fold{{Title: "❯ ls", Text: "a\nb\n"}}
 	for _, name := range []string{"one", "two", "three"} {
-		u.Pane(name)
+		startPane(u, name)
 	}
 	due(p)
 	ps := p.panes
@@ -376,14 +484,27 @@ func TestPaneKeys(t *testing.T) {
 }
 
 // While the layout is shown, the agent's and the shell's output waits, and
-// comes once the screen is back, before the summaries; the output of each
-// pane goes to the folds, and Ctrl+O shows them.
+// comes once the screen is back, before the summaries, which tell how long
+// each ran and how many calls it made; the task and the output of each
+// pane go to the folds, and Ctrl+O shows them. A partial answer is no ok:
+// it has a mark and a state of its own, in the fold's title too.
 func TestPaneClose(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
-	a, b := u.Pane("alpha"), u.Pane("beta")
+	a, b, c := u.Pane("alpha: check the diff", "look at\nthe diff\n"), startPane(u, "beta"), startPane(u, "gamma")
+	a.Start()
+	p.mu.Lock()
+	a.(*paneWriter).pn.start = time.Now().Add(-12 * time.Second)
+	p.mu.Unlock()
+	a.Outcome(3, false)
 	due(p)
 	a.Write([]byte("found\nit\n"))
 	b.Write([]byte("oops\n"))
+	c.Write([]byte("half\n"))
+	c.Outcome(30, true)
+	c.Finish(0)
+	if !strings.Contains(out.String(), " 3 gamma  partial") {
+		t.Errorf("partial pane: %q", out.String())
+	}
 	p.mu.Lock()
 	p.emit([]byte("held"))
 	p.mu.Unlock()
@@ -391,7 +512,7 @@ func TestPaneClose(t *testing.T) {
 		t.Fatal("the output went over the layout")
 	}
 	a.Finish(0)
-	if p.panes == nil || !strings.Contains(out.String(), " 1 alpha  ok") {
+	if p.panes == nil || !strings.Contains(out.String(), " 1 alpha: check the diff  ok") {
 		t.Fatalf("one pane done: %q", out.String())
 	}
 	b.Finish(1)
@@ -407,12 +528,15 @@ func TestPaneClose(t *testing.T) {
 		t.Fatalf("the screen did not come back: %q", s)
 	}
 	want := "held" +
-		"  " + paneOK + "✓" + reset + " alpha  " + dim + "(2 lines · ctrl+o to expand)" + reset + "\r\n" +
-		"  " + paneFail + "✗" + reset + " beta  " + dim + "(1 line · rc 1 · ctrl+o to expand)" + reset + "\r\n"
+		"  " + paneOK + "✓" + reset + " alpha: check the diff  " + dim + "(12s · 3 calls · 2 lines · ctrl+o to expand)" + reset + "\r\n" +
+		"  " + paneFail + "✗" + reset + " beta  " + dim + "(0s · 1 line · rc 1 · ctrl+o to expand)" + reset + "\r\n" +
+		"  " + panePartial + "!" + reset + " gamma  " + dim + "(0s · 30 calls · 1 line · partial · ctrl+o to expand)" + reset + "\r\n"
 	if got := s[i+len(panesClose):]; got != want {
 		t.Errorf("after the layout\n got %q\nwant %q", got, want)
 	}
-	if want := []Fold{{Title: "alpha", Text: "found\nit"}, {Title: "beta", Text: "oops"}}; !slices.Equal(p.folds, want) {
+	want2 := []Fold{{Title: "alpha: check the diff", Text: "> look at\n> the diff\n\nfound\nit"}, {Title: "beta (rc 1)", Text: "oops"},
+		{Title: "gamma (partial)", Text: "half"}}
+	if !slices.Equal(p.folds, want2) {
 		t.Errorf("folds %q", p.folds)
 	}
 	p.key([]byte{ctrlO})
@@ -431,7 +555,7 @@ func TestPaneBehindViewer(t *testing.T) {
 		t.Fatal("no viewer")
 	}
 	out.reset()
-	w := u.Pane("alpha")
+	w := startPane(u, "alpha")
 	w.Write([]byte("x\n"))
 	due(p)
 	if p.panes.shown || out.String() != "" {
@@ -462,7 +586,7 @@ func TestPaneBehindViewer(t *testing.T) {
 // drawn once the time is over.
 func TestPaneRedraw(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
-	w := u.Pane("alpha")
+	w := startPane(u, "alpha")
 	due(p)
 	defer u.ClosePanes()
 	defer w.Finish(0)
@@ -496,8 +620,8 @@ func TestPaneResize(t *testing.T) {
 	}
 
 	p, out, u, size := paneProxy(t)
-	u.Pane("alpha")
-	u.Pane("beta")
+	startPane(u, "alpha")
+	startPane(u, "beta")
 	due(p)
 	out.reset()
 	*size = [2]int{50, 10}
@@ -509,7 +633,7 @@ func TestPaneResize(t *testing.T) {
 func TestPaneNoTerminal(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
 	p.size = nil
-	w := u.Pane("alpha")
+	w := startPane(u, "alpha")
 	w.Write([]byte("x\n"))
 	due(p)
 	if p.panes.shown {
@@ -517,7 +641,7 @@ func TestPaneNoTerminal(t *testing.T) {
 	}
 	w.Finish(0)
 	u.ClosePanes()
-	if s := out.String(); s != "  "+paneOK+"✓"+reset+" alpha  "+dim+"(1 line · ctrl+o to expand)"+reset+"\r\n" {
+	if s := out.String(); s != "  "+paneOK+"✓"+reset+" alpha  "+dim+"(0s · 1 line · ctrl+o to expand)"+reset+"\r\n" {
 		t.Errorf("terminal %q", s)
 	}
 	if len(p.folds) != 1 {
@@ -529,7 +653,7 @@ func TestPaneNoTerminal(t *testing.T) {
 // there. The shell gone, the screen comes back all the same.
 func TestPaneAfterRequest(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
-	w := u.Pane("alpha")
+	w := startPane(u, "alpha")
 	due(p)
 	w.Write([]byte("x\n"))
 	p.asking = false
@@ -540,7 +664,7 @@ func TestPaneAfterRequest(t *testing.T) {
 	}
 
 	p, out, u, _ = paneProxy(t)
-	w = u.Pane("alpha")
+	w = startPane(u, "alpha")
 	due(p)
 	p.restoreScreen()
 	if s := out.String(); !strings.Contains(s, panesClose) || p.panes != nil {
@@ -556,14 +680,15 @@ func TestPaneAfterRequest(t *testing.T) {
 }
 
 // The subagents past maxParallel start as the first ones end: the layout
-// stays between them, all done for a moment, and goes once the call ends
-// it, with one summary block for all of them.
+// stays between them, the others done and the fifth queued for a moment,
+// and goes once the call ends it, with one summary block for all of them.
 func TestPanesStayForTheCall(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
-	var ws []agent.Live
+	var ws []agent.Pane
 	for i := range 4 {
-		ws = append(ws, u.Pane(fmt.Sprintf("s%d", i+1)))
+		ws = append(ws, startPane(u, fmt.Sprintf("s%d", i+1)))
 	}
+	w := u.Pane("s5", "")
 	due(p)
 	for _, w := range ws {
 		w.Finish(0)
@@ -571,7 +696,7 @@ func TestPanesStayForTheCall(t *testing.T) {
 	if !panesShown(p) || strings.Contains(out.String(), panesClose) || strings.Contains(out.String(), "✓") {
 		t.Fatalf("the layout closed before the fifth: %q", out.String())
 	}
-	w := u.Pane("s5")
+	w.Start()
 	w.Write([]byte("x\n"))
 	w.Finish(0)
 	if !panesShown(p) || strings.Contains(out.String(), "✓") {
@@ -588,9 +713,9 @@ func TestPanesStayForTheCall(t *testing.T) {
 	}
 	var want strings.Builder
 	for i := range 5 {
-		what := "no output"
+		what := "0s · no output"
 		if i == 4 {
-			what = "1 line · ctrl+o to expand"
+			what = "0s · 1 line · ctrl+o to expand"
 		}
 		fmt.Fprintf(&want, "  %s✓%s s%d  %s(%s)%s\r\n", paneOK, reset, i+1, dim, what, reset)
 	}
@@ -606,13 +731,13 @@ func TestPanesStayForTheCall(t *testing.T) {
 // alternate screen: the layout would only flash. Nor does it open later.
 func TestPaneShortSubagent(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
-	w := u.Pane("alpha")
+	w := startPane(u, "alpha")
 	w.Write([]byte("x\n"))
 	time.Sleep(10 * time.Millisecond)
 	w.Finish(0)
 	u.ClosePanes()
 	time.Sleep(paneDelay + 50*time.Millisecond)
-	want := "  " + paneOK + "✓" + reset + " alpha  " + dim + "(1 line · ctrl+o to expand)" + reset + "\r\n"
+	want := "  " + paneOK + "✓" + reset + " alpha  " + dim + "(0s · 1 line · ctrl+o to expand)" + reset + "\r\n"
 	if s := out.String(); s != want {
 		t.Errorf("terminal %q, want %q", s, want)
 	}
@@ -626,7 +751,7 @@ func TestPaneShortSubagent(t *testing.T) {
 func TestPaneDelay(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
 	start := time.Now()
-	w := u.Pane("alpha")
+	w := startPane(u, "alpha")
 	if s := out.String(); s != "" {
 		t.Fatalf("opened at once: %q", s)
 	}
@@ -645,7 +770,7 @@ func TestPaneDelay(t *testing.T) {
 	u.ClosePanes()
 
 	p, out, u, _ = paneProxy(t)
-	w = u.Pane("alpha")
+	w = startPane(u, "alpha")
 	if got := p.key([]byte{ctrlO}); len(got) != 0 || !panesShown(p) || !strings.HasPrefix(out.String(), panesOpen) {
 		t.Fatalf("Ctrl+O: passed %q, terminal %q", got, out.String())
 	}
@@ -665,7 +790,7 @@ func TestPaneCallInterrupted(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
 	p.at = &statusAt{col: 20, cols: 80}
 	live := u.Live("⚙ task alpha")
-	w := u.Pane("alpha")
+	w := startPane(u, "alpha")
 	due(p)
 	p.output([]byte("^C"))
 	w.Finish(130)
@@ -688,7 +813,7 @@ func TestPaneCallShown(t *testing.T) {
 	p, out, u, _ := paneProxy(t)
 	p.foldLines = 3
 	live := u.Live("⚙ task alpha")
-	w := u.Pane("alpha")
+	w := startPane(u, "alpha")
 	due(p)
 	p.output([]byte("bg job"))
 	w.Finish(0)
@@ -712,12 +837,18 @@ func (g paneGated) Complete(ctx context.Context, req llm.Request, onText func(st
 	return g.scripted.Complete(ctx, req, onText)
 }
 
+// scoutSummary is the line the pane of scout leaves below the call: how
+// long it ran is the machine's.
+var scoutSummary = regexp.MustCompile(`^\r\n  ` + regexp.QuoteMeta(paneOK+"✓"+reset+" scout: find the files  "+dim+"(") +
+	`\d+s` + regexp.QuoteMeta(" · 1 line · ctrl+o to expand)"+reset) + `\r\n`)
+
 // scoutCall is a request whose agent hands "look" to the subagent scout,
 // which finds two files. Its requests to the model go through gate.
 func scoutCall(t *testing.T, gate func(*Proxy, llm.Request)) (*Proxy, *terminal) {
 	t.Helper()
 	prov := &scripted{replies: []*llm.Response{
-		{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "task", Args: json.RawMessage(`{"tasks":[{"agent":"scout","prompt":"look around"}]}`)}}},
+		{ToolCalls: []llm.ToolCall{{ID: "c1", Name: "task",
+			Args: json.RawMessage(`{"tasks":[{"agent":"scout","description":"find  the\nfiles","prompt":"look around"}]}`)}}},
 		{Text: "found two files"},
 		{Text: "all done"},
 	}}
@@ -738,7 +869,7 @@ func scoutCall(t *testing.T, gate func(*Proxy, llm.Request)) (*Proxy, *terminal)
 	if _, err := call(t, p, rpc.MethodAgentStart, rpc.AgentParams{Text: "look", Cwd: cwd}); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.folds) != 1 || p.folds[0].Title != "scout" || !strings.Contains(p.folds[0].Text, "found two files") {
+	if len(p.folds) != 1 || p.folds[0].Title != "scout: find the files" || p.folds[0].Text != "> look around\n\nfound two files" {
 		t.Errorf("folds %q", p.folds)
 	}
 	if p.panes != nil || p.tool != nil {
@@ -774,13 +905,12 @@ func TestPanesOfTaskCall(t *testing.T) {
 	if !strings.Contains(s[:open], "task scout") {
 		t.Errorf("the call is not before the layout: %q", s[:open])
 	}
-	if !strings.Contains(s[open:end], " 1 scout  running") {
+	if !strings.Contains(s[open:end], " 1 scout: find the files  running") || !strings.Contains(s[open:end], dim+"look around") {
 		t.Errorf("the layout %q", s[open:end])
 	}
 	after := s[end+len(panesClose):]
-	want := "\r\n  " + paneOK + "✓" + reset + " scout  " + dim + "(1 line · ctrl+o to expand)" + reset + "\r\n"
-	if !strings.HasPrefix(after, want) || !strings.Contains(after, "all done") {
-		t.Errorf("after the layout\n got %q\nwant %q…", after, want)
+	if !scoutSummary.MatchString(after) || !strings.Contains(after, "all done") {
+		t.Errorf("after the layout\n got %q\nwant %v…", after, scoutSummary)
 	}
 	if strings.Contains(s, "no output") {
 		t.Errorf("the call has a status of its own: %q", s)
@@ -799,9 +929,8 @@ func TestPanesOfQuickTaskCall(t *testing.T) {
 		t.Fatalf("the alternate screen: %q", s)
 	}
 	at := strings.Index(s, "task scout")
-	want := "\r\n  " + paneOK + "✓" + reset + " scout  " + dim + "(1 line · ctrl+o to expand)" + reset + "\r\n"
-	sum := strings.Index(s, want)
-	if at < 0 || sum < at || !strings.Contains(s[sum:], "all done") || strings.Contains(s, "no output") {
+	sum := strings.Index(s, "\r\n  "+paneOK+"✓")
+	if at < 0 || sum < at || !scoutSummary.MatchString(s[sum:]) || !strings.Contains(s[sum:], "all done") || strings.Contains(s, "no output") {
 		t.Errorf("terminal %q", s)
 	}
 }
