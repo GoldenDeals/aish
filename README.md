@@ -18,15 +18,42 @@ main.go:12: undefined: foo
 
 ## Установка
 
+Из клона репозитория; нужен Go (версия — в `go.mod`):
+
 ```sh
-go install github.com/GoldenDeals/aish/cmd/aish@latest
+git clone https://github.com/GoldenDeals/aish && cd aish
+./install.sh
 ```
 
-Бинарь ляжет в `$(go env GOPATH)/bin` — этот каталог должен быть в `PATH`. Собрать из клона
-репозитория:
+`install.sh` собирает aish и ставит его текущему пользователю — без `sudo`; `~/.bashrc`, `~/.zshrc` и конфиг он не
+трогает:
+
+- бинарь — `~/.local/bin/aish`; `PREFIX=…` ставит его в `$PREFIX/bin`, `BINDIR=…` — прямо в этот каталог;
+- дополнение команды `aish` — `~/.local/share/bash-completion/completions/aish` (его сам находит bash-completion) и
+  `~/.local/share/zsh/site-functions/_aish` (этот каталог надо добавить в `fpath` до `compinit`); оба — под
+  `$XDG_DATA_HOME`, если он задан;
+- примеры из `examples/` — в `~/.config/aish/examples/` (под `$XDG_CONFIG_HOME`, если он задан). Там они ничего не
+  делают: политика, хук или инструмент работает, только когда его скопировали в `~/.config/aish/policy/`,
+  `hooks/<событие>/` или `tools/`.
+
+В конце скрипт печатает, что делать дальше: как включить дополнение и примеры и как запускать aish вместо shell'а.
+Повторный запуск — например, после `git pull` — обновляет aish: бинарь и дополнение заменяются, если изменились, а
+пример, который уже есть, не перезаписывается.
+
+Пакет для Arch — `aish-git`, сборка `master` с GitHub (не локального клона):
 
 ```sh
-go build -o ~/.local/bin/aish ./cmd/aish
+cd packaging/arch && makepkg -si
+```
+
+Он ставит `/usr/bin/aish`, дополнение для bash и zsh и примеры в `/usr/share/aish/examples/`, а при установке печатает,
+как их скопировать и как запускать aish вместо shell'а. Собранную версию `makepkg` вписывает в `pkgver` файла
+`PKGBUILD` — так у пакетов `-git` заведено.
+
+Или `go install` — бинарь ляжет в `$(go env GOPATH)/bin`, этот каталог должен быть в `PATH`:
+
+```sh
+go install github.com/GoldenDeals/aish/cmd/aish@latest
 ```
 
 Запуск:
@@ -38,15 +65,21 @@ aish --resume                  # продолжить последнюю
 aish resume                    # выбрать сессию из списка
 ```
 
-Чтобы aish открывался в каждом новом терминале, сделай его командой терминала или допиши в конец
-`~/.bashrc`:
+Чтобы aish открывался в каждом новом терминале, сделай `aish` командой терминала (в настройках профиля) или допиши в
+конец `~/.bashrc` (`~/.zshrc`):
 
 ```sh
-[[ -z $AISH_SOCK && $- == *i* ]] && exec aish
+[[ -z ${AISH_SOCK-} && $- == *i* ]] && command -v aish >/dev/null && exec aish
 ```
 
+Shell, который запускает aish, читает тот же файл и строку пропускает: в нём задан `$AISH_SOCK`. `$- == *i*` не пускает
+aish в скрипты, а `command -v` не даёт `exec` закрыть терминал, если aish нет. aish запускает bash и из `~/.zshrc`;
+zsh — см. «zsh» ниже. Если aish не запустился (например, сломан конфиг), терминал закроется сразу — открой его с
+`bash --norc` и поправь. Login shell'ом (`chsh`) aish не делай: `ssh host команда` и `scp` запускают его с `-c`, а
+этого он не умеет.
+
 Под aish Tab дополняет подкоманды `aish` сам (см. «Команда или вопрос?»). Для shell без aish
-дополнение команды `aish` печатает `aish completion bash|zsh`:
+дополнение команды `aish` ставят `install.sh` и пакет; после `go install` его печатает `aish completion bash|zsh`:
 
 ```sh
 # bash: файл найдёт bash-completion; без него — source <(aish completion bash) в ~/.bashrc

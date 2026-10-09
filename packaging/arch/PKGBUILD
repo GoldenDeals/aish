@@ -1,0 +1,70 @@
+# aish from master on GitHub, built from source: cd packaging/arch && makepkg -si.
+# makepkg writes the version it built into pkgver below.
+
+pkgname=aish-git
+_pkgname=aish
+pkgver=r263.7a79a29
+pkgrel=1
+pkgdesc='LLM agent inside your live bash or zsh'
+arch=('x86_64' 'aarch64')
+url='https://github.com/GoldenDeals/aish'
+license=('MIT')
+depends=('bash' 'glibc')
+makedepends=('git' 'go')
+optdepends=('zsh: to run zsh instead of bash'
+            'bash-completion: Tab completion of the aish command in bash')
+provides=('aish')
+conflicts=('aish')
+install=aish-git.install
+source=("$_pkgname::git+$url.git")
+sha256sums=('SKIP')
+
+pkgver() {
+	cd "$_pkgname"
+	# No tags: the number of commits and the commit.
+	printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+# The flags of the Arch Go package guidelines; the modules go to srcdir,
+# not to the builder's ~/go.
+_goenv() {
+	export GOPATH="$srcdir/gopath"
+	export CGO_CPPFLAGS="$CPPFLAGS"
+	export CGO_CFLAGS="$CFLAGS"
+	export CGO_CXXFLAGS="$CXXFLAGS"
+	export CGO_LDFLAGS="$LDFLAGS"
+	export GOFLAGS='-buildmode=pie -trimpath -ldflags=-linkmode=external -mod=readonly -modcacherw'
+}
+
+prepare() {
+	cd "$_pkgname"
+	_goenv
+	go mod download -x
+}
+
+build() {
+	cd "$_pkgname"
+	_goenv
+	mkdir -p build
+	go build -o build/aish ./cmd/aish
+	build/aish completion bash >build/aish.bash
+	build/aish completion zsh >build/_aish
+}
+
+check() {
+	cd "$_pkgname"
+	_goenv
+	go test ./...
+}
+
+package() {
+	cd "$_pkgname"
+	install -Dm755 build/aish -t "$pkgdir/usr/bin"
+	install -Dm644 build/aish.bash "$pkgdir/usr/share/bash-completion/completions/aish"
+	install -Dm644 build/_aish -t "$pkgdir/usr/share/zsh/site-functions"
+	install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+	# Not in ~/.config/aish: a package writes no home, and a policy, a hook or
+	# a tool there works at once. aish-git.install tells how to copy them.
+	install -d "$pkgdir/usr/share/$_pkgname"
+	cp -r --no-preserve=ownership examples "$pkgdir/usr/share/$_pkgname/"
+}

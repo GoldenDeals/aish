@@ -1,0 +1,30 @@
+# What install.sh prints at its end, for a package that writes no home.
+
+post_install() {
+	cat <<'EOF'
+==> The examples of aish are in /usr/share/aish/examples and do nothing there.
+    To use one, copy it to the directory of its kind under ~/.config/aish;
+    each file tells at its top what it does:
+      /usr/share/aish/examples/policy/*.cedar   ->  ~/.config/aish/policy/
+      /usr/share/aish/examples/hooks/EVENT/*    ->  ~/.config/aish/hooks/EVENT/
+      /usr/share/aish/examples/tools/*          ->  ~/.config/aish/tools/
+    e.g.
+      mkdir -p ~/.config/aish/tools && cp /usr/share/aish/examples/tools/weather ~/.config/aish/tools/
+    Hooks and tools work from the next request, a policy from the next aish
+    or, in a running one, after aish apply-config.
+==> Start aish with a key of the model's API in the environment
+    (AISH_API_KEY, ANTHROPIC_API_KEY or OPENAI_API_KEY):
+      aish
+==> To run aish in place of your shell, either make aish the command of your
+    terminal emulator (in its profile settings), or add this line at the end
+    of ~/.bashrc (~/.zshrc for zsh):
+      [[ -z ${AISH_SOCK-} && $- == *i* ]] && command -v aish >/dev/null && exec aish
+    The shell aish starts reads that file too and skips the line: AISH_SOCK is
+    set there. $- == *i* keeps aish out of scripts; command -v keeps exec from
+    closing the terminal once aish is removed. aish starts bash; for zsh,
+    see https://github.com/GoldenDeals/aish#zsh. Should aish fail to start
+    (a broken config, say), the terminal closes at once: open one with
+    bash --norc to fix it. Do not make aish your login shell (chsh): ssh with
+    a command and scp run that with -c, which aish does not take.
+EOF
+}
