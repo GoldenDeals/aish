@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,16 +15,12 @@ import (
 	"github.com/GoldenDeals/aish/internal/tools"
 )
 
-// systemPrompt is assembled from Claude Code's system prompt (v2.1.286, as
-// published in github.com/Piebald-AI/claude-code-system-prompts) adapted to
-// aish's tools and live shell.
-//
-//go:embed system.md
-var systemPrompt string
-
+// system is the host's system prompt: its sections (prompt.go), the
+// environment, then extra — what the tools, the policy and the user's
+// system_prompt add.
 func system(env, extra string) string {
 	var b strings.Builder
-	b.WriteString(systemPrompt)
+	b.WriteString(sections(hostSections))
 	b.WriteString("\n\n# Environment\n")
 	b.WriteString(env)
 	if extra != "" {

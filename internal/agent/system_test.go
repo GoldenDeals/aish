@@ -6,15 +6,23 @@ import (
 )
 
 // TestSystemNoCdIntoCwd keeps the rule against cd'ing into the directory the
-// shell is already in: systemPrompt is rebuilt from time to time from
-// someone else's prompt, which has no such rule, and losing it would go
+// shell is already in: the system prompt's text began as someone else's
+// prompt, which has no such rule, and losing it in a rewrite would go
 // unnoticed.
 func TestSystemNoCdIntoCwd(t *testing.T) {
-	for _, line := range strings.Split(systemPrompt, "\n") {
+	if !hasCdRule(system("", "")) {
+		t.Error("no list item of the system prompt tells not to cd into the cwd the shell is already in")
+	}
+}
+
+// hasCdRule tells whether a list item of prompt tells not to cd into the
+// cwd the shell is already in.
+func hasCdRule(prompt string) bool {
+	for _, line := range strings.Split(prompt, "\n") {
 		if strings.HasPrefix(line, " - ") && strings.Contains(line, "`cd") &&
 			strings.Contains(line, "already in") && strings.Contains(line, "cwd") {
-			return
+			return true
 		}
 	}
-	t.Error("no list item of the system prompt tells not to cd into the cwd the shell is already in")
+	return false
 }
