@@ -45,6 +45,7 @@ const (
 	MethodAgentResume = "agent_resume"
 	MethodAgentCancel = "agent_cancel"
 	MethodCompact     = "compact"
+	MethodRecap       = "recap" // retell the whole session on the screen
 	MethodMCPList     = "mcp_list"
 	MethodMCPCall     = "mcp_call"
 	MethodMCPStatus   = "mcp_status"

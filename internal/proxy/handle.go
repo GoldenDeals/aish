@@ -84,6 +84,9 @@ var handlers = map[string]handler{
 	rpc.MethodCompact: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
 		return nil, p.compact(ctx, ap)
 	}),
+	rpc.MethodRecap: decoded(func(p *Proxy, ctx context.Context, ap rpc.AgentParams) (any, error) {
+		return nil, p.recap(ctx, ap)
+	}),
 	rpc.MethodAgentCancel: func(p *Proxy, _ context.Context, _ json.RawMessage) (any, error) {
 		p.cancelRequest()
 		return nil, nil

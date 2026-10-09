@@ -31,7 +31,7 @@ import (
 var (
 	inForceCmds = map[string]bool{"context": true, "hooks": true, "mcp": true, "model": true, "policy": true,
 		"resume": true, "session": true, "skills": true, "status": true, "tool": true}
-	configless = map[string]bool{"agent": true, "agents": true, "clear": true, "compact": true, "expand": true, "new": true, "tasks": true}
+	configless = map[string]bool{"agent": true, "agents": true, "clear": true, "compact": true, "expand": true, "new": true, "recap": true, "tasks": true}
 )
 
 // byProxy tells whether, inside aish, the command of args goes by the

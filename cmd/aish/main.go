@@ -19,6 +19,7 @@
 //	aish clear [save [NAME]]     start a new session; the current one is dropped unless saved
 //	aish new [NAME]              start a new session that is saved
 //	aish compact [FOCUS]         replace the session with a summary
+//	aish recap                   retell the whole session on the screen
 //	aish status                  the model and the settings
 //	aish context [--full]        how full the context is and with what; --full: the messages too
 //	aish model [PROFILE] [NAME] [EFFORT]
@@ -75,6 +76,7 @@ var usage = `usage:
                              saved, as NAME if given
   aish new [NAME]            start a new session that is saved, as NAME if given
   aish compact [FOCUS]       replace the session with its summary (FOCUS: what to keep)
+  aish recap                 retell the whole session, on the screen only
   aish status                show the model and the settings
   aish context [--full]      show the context size and what fills it, by kind of
                              entry and by tool; --full also prints the messages
@@ -147,6 +149,8 @@ func run(args []string) int {
 		return sessionCmd(cfg, args[1:])
 	case "compact":
 		return compactCmd(args[1:])
+	case "recap":
+		return recapCmd(args[1:])
 	case "status":
 		return statusCmd(cfg)
 	case "context":
