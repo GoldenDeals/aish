@@ -53,7 +53,7 @@ func TestFind(t *testing.T) {
 
 	got, problems := Find(sub)
 	m := byName(got)
-	if len(m) != 4 || m["unnamed"].Desc == "" || m["mine"].Project || m["renamed"].Project {
+	if len(m) != 6 || m["unnamed"].Desc == "" || m["mine"].Project || m["renamed"].Project {
 		t.Fatalf("from sub: %+v", got)
 	}
 	// A note without a frontmatter is not a subagent, not a broken one.
@@ -70,7 +70,7 @@ func TestFind(t *testing.T) {
 	if s := m["renamed"]; s.Root != filepath.Join(home, ".claude") || s.Prompt != "You are renamed." {
 		t.Errorf("renamed: %+v", s)
 	}
-	if got[0].Name != "mine" {
+	if got[0].Name != "Explore" || got[2].Name != "mine" {
 		t.Errorf("not sorted: %+v", got)
 	}
 	want := map[string]string{

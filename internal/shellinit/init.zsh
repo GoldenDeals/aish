@@ -208,7 +208,8 @@ __aish_is_skill() {
 }
 
 # __aish_is_agent: is there a subagent named $1 here? The roots are those of
-# subagent.Find (internal/subagent), as in init.bash.
+# subagent.Find (internal/subagent), aish's own subagents the farthest, as in
+# init.bash.
 __aish_is_agent() {
 	emulate -L zsh
 	local n d MATCH MBEGIN MEND match mbegin mend
@@ -222,7 +223,8 @@ __aish_is_agent() {
 		__aish_agent_file "$d/.claude/agents/$n.md" && return 0
 		d=${d%/*}
 	done
-	__aish_agent_file "/.claude/agents/$n.md"
+	__aish_agent_file "/.claude/agents/$n.md" && return 0
+	[[ $n == (general-purpose|Explore) ]]
 }
 
 # __aish_agent_file: does the file $1 start with a frontmatter, as
@@ -916,7 +918,7 @@ __aish_comp_skill() {
 }
 
 # __aish_comp_agent completes NAME of a line "&NAME text" with the subagents
-# of __aish_is_agent's roots.
+# of __aish_is_agent's roots, aish's own too.
 __aish_comp_agent() {
 	emulate -L zsh -o extendedglob
 	local d f
@@ -934,6 +936,7 @@ __aish_comp_agent() {
 			[[ $f == [A-Za-z0-9_-](#c1,64) ]] && names+=("$f")
 		done
 	done
+	names+=(general-purpose Explore)
 	compadd -Q -- ${(u)names}
 }
 

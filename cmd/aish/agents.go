@@ -21,10 +21,6 @@ func agentsCmd(_ config.Config, args []string) int {
 	}
 	cwd, _ := os.Getwd()
 	found, problems := subagent.Find(cwd)
-	if len(found) == 0 && len(problems) == 0 {
-		fmt.Println("no subagents in ~/.claude/agents, ~/.config/aish/agents or .claude/agents")
-		return 0
-	}
 	nameW, srcW, modelW, toolsW := 0, 0, 0, 0
 	for _, d := range found {
 		nameW = max(nameW, runewidth.StringWidth(d.Name))
@@ -88,8 +84,12 @@ func agentTools(d subagent.Def) string {
 	return strings.Join(parts, "  ")
 }
 
-// agentSource is where a subagent comes from: ~/.claude, ./.claude, ../.claude.
+// agentSource is where a subagent comes from: ~/.claude, ./.claude,
+// ../.claude, built-in for aish's own.
 func agentSource(d subagent.Def, cwd string) string {
+	if d.Builtin {
+		return "built-in"
+	}
 	if !d.Project {
 		return home(d.Root)
 	}

@@ -176,10 +176,10 @@ func TestComplete(t *testing.T) {
 		{words: []string{"model", "root", ""}, want: append([]string{"m-top"}, anthropic...)},
 		{words: []string{"model", "work", "m-work", ""}, want: anthropic},
 		{words: []string{"model", "work", "m-work", "high", ""}},
-		{words: []string{"policy", "--agent", ""}, want: []string{"reviewer"}},
-		{words: []string{"policy", "--agent", "=", ""}, want: []string{"reviewer"}},          // bash: --agent=
-		{words: []string{"policy", "--agent=r"}, want: []string{"--agent=reviewer"}},         // zsh
-		{words: []string{"policy", "--agent=reviewer", ""}, has: []string{"bash", "deploy"}}, // any tool
+		{words: []string{"policy", "--agent", ""}, want: []string{"Explore", "general-purpose", "reviewer"}},                       // aish's own too
+		{words: []string{"policy", "--agent", "=", ""}, want: []string{"Explore", "general-purpose", "reviewer"}},                  // bash: --agent=
+		{words: []string{"policy", "--agent=r"}, want: []string{"--agent=Explore", "--agent=general-purpose", "--agent=reviewer"}}, // zsh
+		{words: []string{"policy", "--agent=reviewer", ""}, has: []string{"bash", "deploy"}},                                       // any tool
 		{words: []string{"policy", "--agent", "reviewer", "-"}, want: []string{"--agent"}},
 		{words: []string{"tool", ""}, has: []string{"read_file", "deploy"}, not: []string{"bash"}},
 		{words: []string{"tool", "read_file", ""}},

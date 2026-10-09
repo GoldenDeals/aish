@@ -41,9 +41,11 @@ func TestAgentsLimits(t *testing.T) {
 		t.Fatalf("code %d: %s", code, out)
 	}
 	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
-	if len(lines) != 4 {
+	// aish's own, Explore and general-purpose, sort before the files'.
+	if len(lines) != 6 {
 		t.Fatalf("lines %q", lines)
 	}
+	lines = lines[2:]
 	if l := lines[0]; !strings.Contains(l, "disallowed: Bash, Write, Edit  mode: plan") || strings.Contains(l, "tools:") {
 		t.Errorf("nobash: %q", l)
 	}

@@ -67,30 +67,33 @@ func bashQuoted(s string) string {
 }
 
 // TestSpawnTyped types "&NAME text" at a bash prompt: aish agent spawn gets
-// NAME and the text, and no request starts (ask-start); a name with no
-// subagent, a README's, or no text gets a hint and calls nothing. History
-// has the lines as typed.
+// NAME and the text, of a file's subagent or of aish's own, which has no
+// file, and no request starts (ask-start); a name with no subagent, a
+// README's, one of aish's own in another case, or no text gets a hint and
+// calls nothing. History has the lines as typed.
 func TestSpawnTyped(t *testing.T) {
 	rc := agentFiles + "printf '#!/bin/sh\\nprintf \"%%s\\\\n\" \"$*\" >>\"$HOME/called\"\\n' >stub; chmod +x stub\n" +
 		"AISH_BIN=$HOME/stub\ncd proj\n"
 	dir, out := typed(t, "", rc, ": >../ready\r",
 		"&code-reviewer check x\r", "&nope x\r", "&README x\r", "&code-reviewer\r", "&spec-writer  go on \r",
-		"history >../hist\r")
+		"&Explore find x\r", "&explore x\r", "&general-purpose do y\r", "history >../hist\r")
 	called, _ := os.ReadFile(filepath.Join(dir, "called"))
-	if want := "agent spawn code-reviewer -- check x\nagent spawn spec-writer -- go on\n"; string(called) != want {
+	if want := "agent spawn code-reviewer -- check x\nagent spawn spec-writer -- go on\n" +
+		"agent spawn Explore -- find x\nagent spawn general-purpose -- do y\n"; string(called) != want {
 		t.Errorf("called %q, want %q", called, want)
 	}
 	if strings.Contains(out, ";ask-start") {
 		t.Errorf("a request started:\n%q", out)
 	}
 	for _, hint := range []string{"aish: no subagent nope here; aish agents lists them\n",
-		"aish: no subagent README here", "aish: what is code-reviewer to do? &code-reviewer TEXT\n"} {
+		"aish: no subagent README here", "aish: what is code-reviewer to do? &code-reviewer TEXT\n",
+		"aish: no subagent explore here"} {
 		if !strings.Contains(out, hint) {
 			t.Errorf("no hint %q:\n%q", hint, out)
 		}
 	}
 	hist, _ := os.ReadFile(filepath.Join(dir, "hist"))
-	for _, line := range []string{"&code-reviewer check x", "&nope x", "&code-reviewer", "&spec-writer  go on"} {
+	for _, line := range []string{"&code-reviewer check x", "&nope x", "&code-reviewer", "&spec-writer  go on", "&Explore find x"} {
 		if !regexp.MustCompile(`(?m)^ *\d+ +` + regexp.QuoteMeta(line) + `$`).Match(hist) {
 			t.Errorf("history has no %q:\n%s", line, hist)
 		}
@@ -122,27 +125,30 @@ func TestZshRouteSpawn(t *testing.T) {
 // TestZshSpawnTyped: TestSpawnTyped in zsh, Enter and all.
 func TestZshSpawnTyped(t *testing.T) {
 	steps := []zstep{{prompts: 1}}
-	for i, keys := range []string{"&code-reviewer check x\r", "&nope x\r", "&README x\r", "&code-reviewer\r", "&spec-writer  go on \r", "fc -ln 1 >../hist\r"} {
+	for i, keys := range []string{"&code-reviewer check x\r", "&nope x\r", "&README x\r", "&code-reviewer\r", "&spec-writer  go on \r",
+		"&Explore find x\r", "&explore x\r", "&general-purpose do y\r", "fc -ln 1 >../hist\r"} {
 		steps = append(steps, zstep{prompts: i + 1, keys: keys})
 	}
 	steps = append(steps, zstep{file: "hist"})
 	rc := agentFiles + "cd proj\n"
 	dir, out := zshTyped(t, rc, steps...)
 	called, _ := os.ReadFile(filepath.Join(dir, "called"))
-	if want := "agent spawn code-reviewer -- check x\nagent spawn spec-writer -- go on\n"; string(called) != want {
+	if want := "agent spawn code-reviewer -- check x\nagent spawn spec-writer -- go on\n" +
+		"agent spawn Explore -- find x\nagent spawn general-purpose -- do y\n"; string(called) != want {
 		t.Errorf("called %q, want %q", called, want)
 	}
 	if strings.Contains(out, ";ask-start") {
 		t.Errorf("a request started:\n%q", out)
 	}
 	for _, hint := range []string{"aish: no subagent nope here; aish agents lists them",
-		"aish: no subagent README here", "aish: what is code-reviewer to do? &code-reviewer TEXT"} {
+		"aish: no subagent README here", "aish: what is code-reviewer to do? &code-reviewer TEXT",
+		"aish: no subagent explore here"} {
 		if !strings.Contains(out, hint) {
 			t.Errorf("no hint %q:\n%q", hint, out)
 		}
 	}
 	hist, _ := os.ReadFile(filepath.Join(dir, "hist"))
-	for _, line := range []string{"&code-reviewer check x", "&nope x", "&code-reviewer", "&spec-writer  go on"} {
+	for _, line := range []string{"&code-reviewer check x", "&nope x", "&code-reviewer", "&spec-writer  go on", "&Explore find x"} {
 		if !regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(line) + `$`).Match(hist) {
 			t.Errorf("history has no %q:\n%s", line, hist)
 		}
@@ -151,10 +157,12 @@ func TestZshSpawnTyped(t *testing.T) {
 
 // spawnTabCases are those both shells complete alike: the subagents after
 // an & that starts the line, of this directory and the home's, not the
-// README; @path after the name, as in a request.
+// README, and aish's own; @path after the name, as in a request.
 var spawnTabCases = []tabCase{
 	{"&code-\t", "&code-reviewer "},
 	{"&spec-w\t", "&spec-writer "},
+	{"&Expl\t", "&Explore "},
+	{"&general\t", "&general-purpose "},
 	{"&README\t", "&README"},
 	{"&code-reviewer @ma\t", "&code-reviewer @main.go "},
 }
@@ -167,7 +175,7 @@ func TestCompleteAgentBash(t *testing.T) {
 	rc := strings.Replace(compHome, "cd proj\n", "", 1) + agentFiles + "cd proj\nAISH_BIN=$HOME/stub\n" +
 		`bind -x '"\C-xd": printf "%s\n" "$READLINE_LINE" >>"$HOME/line"; READLINE_LINE='` + "\n"
 	cases := append([]tabCase{
-		{"&\t", "&"},                  // three of them
+		{"&\t", "&"},                  // five of them
 		{"&ech\t", "&echo "},          // a command's start: the subagent echoer is not offered
 		{"code-\t", "code-reviewer "}, // bash does not see that no & is there
 	}, spawnTabCases...)
@@ -175,8 +183,8 @@ func TestCompleteAgentBash(t *testing.T) {
 	for _, c := range cases {
 		keys = append(keys, c.keys+"\x18d")
 	}
-	keys = append(keys, "cd ../other\r", "&\t\x18d")
-	cases = append(cases, tabCase{"&\t", "&spec-writer "}) // the home's alone
+	keys = append(keys, "cd ../other\r", "&spec-\t\x18d", "&code-\t\x18d")
+	cases = append(cases, tabCase{"&spec-\t", "&spec-writer "}, tabCase{"&code-\t", "&code-"}) // the home's alone
 	dir, _ := typed(t, "", rc+"printf -- '---\\nname: echoer\\ndescription: E\\n---\\nE.\\n' >.claude/agents/echoer.md\n", keys...)
 	lines, _ := os.ReadFile(filepath.Join(dir, "line"))
 	got := strings.Split(string(lines), "\n")
@@ -193,15 +201,16 @@ func TestCompleteAgentZsh(t *testing.T) {
 	zshPath(t)
 	rc := strings.Replace(zshComp(true), "cd proj\n", "", 1) + agentFiles + "cd proj\n"
 	cases := append([]tabCase{
-		{"&\t", "&"}, // two of them
+		{"&\t", "&"}, // four of them
 		{"ls &code-\t", "ls &code-"},
 	}, spawnTabCases...)
 	steps := []zstep{{prompts: 1}}
 	for _, c := range cases {
 		steps = append(steps, zstep{keys: c.keys + "\x18d"})
 	}
-	steps = append(steps, zstep{keys: "cd ../other\r"}, zstep{prompts: 2, keys: "&\t\x18d"}, zstep{keys: ": >../done\r"}, zstep{file: "done"})
-	cases = append(cases, tabCase{"&\t", "&spec-writer "})
+	steps = append(steps, zstep{keys: "cd ../other\r"}, zstep{prompts: 2, keys: "&spec-\t\x18d"}, zstep{keys: "&code-\t\x18d"},
+		zstep{keys: ": >../done\r"}, zstep{file: "done"})
+	cases = append(cases, tabCase{"&spec-\t", "&spec-writer "}, tabCase{"&code-\t", "&code-"}) // the home's alone
 	dir, _ := zshTyped(t, rc, steps...)
 	lines, _ := os.ReadFile(filepath.Join(dir, "line"))
 	got := strings.Split(string(lines), "\n")

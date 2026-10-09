@@ -1,9 +1,10 @@
 // Package subagent reads Claude Code's subagent definitions: .md files in an
 // agents directory, a frontmatter with the name, when to delegate to it, the
 // tools it may and may not use, its permission mode and the model, then the
-// subagent's system prompt. They are only files the agent builds a nested
-// run from; this package runs nothing and caches nothing, as there are a
-// few of them, read once per request.
+// subagent's system prompt. Beside them are aish's own, general-purpose and
+// Explore (builtin.go), which a file of the same name replaces. They are
+// only what the agent builds a nested run from; this package runs nothing
+// and caches nothing, as there are a few of them, read once per request.
 package subagent
 
 import (
@@ -49,16 +50,18 @@ type Def struct {
 	Root string
 	// Project subagents come from .claude of cwd or a directory above it.
 	Project bool
+	// Builtin is one of aish's own (builtin.go), with no File and no Root.
+	Builtin bool
 }
 
 // Problem is what is wrong with one file.
 type Problem struct{ Path, Msg string }
 
-// Find returns the subagents that apply in cwd, by name: the user's from
-// ~/.claude/agents and ~/.config/aish/agents, then those from .claude/agents
-// of every directory from / down to cwd. A nearer subagent replaces a
-// farther one of the same name. With an empty cwd only the user's are
-// looked for.
+// Find returns the subagents that apply in cwd, by name: aish's own, the
+// user's from ~/.claude/agents and ~/.config/aish/agents, then those from
+// .claude/agents of every directory from / down to cwd. A nearer subagent
+// replaces a farther one of the same name, and aish's own are the farthest.
+// With an empty cwd only aish's and the user's are looked for.
 func Find(cwd string) ([]Def, []Problem) {
 	home, _ := os.UserHomeDir()
 	type root struct {
@@ -79,6 +82,9 @@ func Find(cwd string) ([]Def, []Problem) {
 		}
 	}
 	byName := map[string]Def{}
+	for _, d := range builtins() {
+		byName[d.Name] = d
+	}
 	var problems []Problem
 	// ~/.claude is also the .claude of $HOME on the way to cwd.
 	seen := map[string]bool{}

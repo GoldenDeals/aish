@@ -178,7 +178,8 @@ __aish_is_skill() {
 
 # __aish_is_agent: is there a subagent named $1 here? The roots are those of
 # subagent.Find (internal/subagent), by file name, as __aish_is_skill has
-# those of skills.Find.
+# those of skills.Find, and the farthest of them is aish's own subagents
+# (builtin.go), which have no file.
 __aish_is_agent() {
 	local n d
 	n=$1
@@ -191,7 +192,8 @@ __aish_is_agent() {
 		__aish_agent_file "$d/.claude/agents/$n.md" && return 0
 		d=${d%/*}
 	done
-	__aish_agent_file "/.claude/agents/$n.md"
+	__aish_agent_file "/.claude/agents/$n.md" && return 0
+	[[ $n == general-purpose || $n == Explore ]]
 }
 
 # __aish_agent_file: does the file $1 start with a frontmatter, as
@@ -992,6 +994,7 @@ __aish_comp_skill() {
 # and a word typed at the start of a line comes the same. So the subagents
 # come for an empty word, which -I gets only after such a separator, and
 # for a word no command starts: one that does is the command's, as before.
+# aish's own subagents come with those of the files.
 __aish_comp_agent() {
 	local __aish_n __aish_w __aish_f
 	__aish_n=$1
@@ -1020,6 +1023,9 @@ __aish_comp_agent() {
 			done
 		done
 	)
+	for __aish_f in general-purpose Explore; do
+		[[ $__aish_f != "$__aish_n"* || " ${COMPREPLY[*]-} " == *" $__aish_f "* ]] || COMPREPLY+=("$__aish_f")
+	done
 	((${#COMPREPLY[@]} > 0)) || return 1
 	if [[ -n $__aish_n ]] && compgen -c -- "$__aish_n" >/dev/null; then
 		COMPREPLY=()
