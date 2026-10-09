@@ -107,6 +107,12 @@ func (p *Proxy) status() rpc.Status {
 			st.InputTokens += e.InputTokens
 			st.CachedTokens += e.CachedTokens
 			st.OutputTokens += e.OutputTokens
+		case session.KindUsage:
+			if u := e.Usage; u != nil {
+				st.SubInputTokens += u.Input
+				st.SubCachedTokens += u.Cached
+				st.SubOutputTokens += u.Output
+			}
 		}
 	}
 	for _, e := range es {

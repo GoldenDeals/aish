@@ -224,12 +224,17 @@ type Status struct {
 	// Since the last compact: the user's commands and requests.
 	Commands int `json:"commands"`
 	Requests int `json:"requests"`
-	// Over the whole journal.
+	// Over the whole journal; the tokens are of the host's turns.
 	ToolCalls    int `json:"tool_calls"`
 	Compacts     int `json:"compacts"`
 	InputTokens  int `json:"input_tokens"`
 	CachedTokens int `json:"cached_tokens"`
 	OutputTokens int `json:"output_tokens"`
+	// Over the whole journal, what the turns of subagents cost
+	// (session.KindUsage): the session's spend, no part of its context.
+	SubInputTokens  int `json:"sub_input_tokens,omitempty"`
+	SubCachedTokens int `json:"sub_cached_tokens,omitempty"`
+	SubOutputTokens int `json:"sub_output_tokens,omitempty"`
 }
 
 type ResumeParams struct {

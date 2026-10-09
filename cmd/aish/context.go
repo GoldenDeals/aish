@@ -73,8 +73,11 @@ func contextCmd(cfg config.Config, args []string) int {
 	row("used", ctx)
 	row("compact_at", compactAt(cfg.CompactAt, window))
 	row("entries", fmt.Sprintf("%d commands, %d requests since the last compact", st.Commands, st.Requests))
-	row("session", fmt.Sprintf("%d tool calls, %d compacts, %s in (%s cached) / %s out tokens spent",
-		st.ToolCalls, st.Compacts, session.Short(st.InputTokens), session.Short(st.CachedTokens), session.Short(st.OutputTokens)))
+	spent, subs := spend(st)
+	row("session", spent)
+	if subs != "" {
+		row("subagents", subs)
+	}
 	dir := info.Dir
 	if dir == "" { // a proxy started by an older aish
 		dir = cfg.SessionsDir
@@ -113,6 +116,21 @@ func contextSize(es []session.Entry, cfg config.Config, st rpc.Status) (size ses
 		window = st.Window
 	}
 	return session.Tokens(es, cfg.MaxOutputBytes, st.Overhead), window
+}
+
+// spend is the session row of aish context, the tokens of the host's
+// turns and of its subagents' together, as aish stats counts the session's
+// spend, and the subagents row, their part of it: "" without any. The tool
+// calls are the host's: those of subagents are not in the journal.
+func spend(st rpc.Status) (all, subs string) {
+	in, cached, out := st.InputTokens+st.SubInputTokens, st.CachedTokens+st.SubCachedTokens, st.OutputTokens+st.SubOutputTokens
+	all = fmt.Sprintf("%d tool calls, %d compacts, %s in (%s cached) / %s out tokens spent",
+		st.ToolCalls, st.Compacts, session.Short(in), session.Short(cached), session.Short(out))
+	if st.SubInputTokens > 0 || st.SubOutputTokens > 0 {
+		subs = fmt.Sprintf("of those, %s in (%s cached) / %s out",
+			session.Short(st.SubInputTokens), session.Short(st.SubCachedTokens), session.Short(st.SubOutputTokens))
+	}
+	return all, subs
 }
 
 // contextArgs reads aish context [--full].
