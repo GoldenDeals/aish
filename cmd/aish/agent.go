@@ -76,7 +76,6 @@ func request(method string, params rpc.AgentParams) int {
 		case err := <-done:
 			switch {
 			case interrupted:
-				fmt.Fprintln(os.Stderr, "\x1b[2m[interrupted]\x1b[0m")
 				return 130
 			case err != nil:
 				return fail(err)
