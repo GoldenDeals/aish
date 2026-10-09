@@ -177,8 +177,12 @@ func Named(list []Info) []Info {
 	return named
 }
 
-// List returns the sessions in dir, the most recent first.
-func List(dir string) ([]Info, error) {
+// List returns the sessions in dir, the most recent first, but bare ones
+// the user did not name: there is nothing in them to resume.
+func List(dir string) ([]Info, error) { return listing(dir, false) }
+
+// listing is List, with the bare sessions too if all.
+func listing(dir string, all bool) ([]Info, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*.jsonl"))
 	if err != nil {
 		return nil, err
@@ -192,7 +196,9 @@ func List(dir string) ([]Info, error) {
 		info := Info{ID: id, Open: isOpen(dir, id)}
 		info.Name = readName(filepath.Join(dir, id+".name"))
 		info.AutoName = readName(titlePath(dir, id))
-		summarize(dir, id, &info)
+		if bare := summarize(dir, id, &info); bare && info.Name == "" && !all {
+			continue
+		}
 		list = append(list, info)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Modified.After(list[j].Modified) })

@@ -149,7 +149,8 @@ func New(dir string) (*Session, error) {
 }
 
 // Latest opens the most recently modified session in dir that no other
-// aish has open, as newestClosed finds it: no journal but that one is read.
+// aish has open and List shows, as newestClosed finds it: of the other
+// journals at most the start is read.
 func Latest(dir string) (*Session, error) {
 	if id := newestClosed(dir); id != "" {
 		return Load(dir, id)

@@ -10,9 +10,10 @@ import (
 
 // newestClosed is the session of dir whose journal was modified last of
 // those no aish has open, "" if there is none: the first of List that is
-// not Open. It goes by stat and the locks alone, the newest first, and
-// stops at the first one closed: List would summarize every session, its
-// journal or <id>.info, for --resume to open just one.
+// not Open. It goes by stat and the locks, the newest first, and stops at
+// the first one closed that is not hidden, which reads the start of its
+// journal: List would summarize every session, its journal or <id>.info,
+// for --resume to open just one.
 func newestClosed(dir string) string {
 	files, err := os.ReadDir(dir)
 	if err != nil {
@@ -37,7 +38,7 @@ func newestClosed(dir string) string {
 	}
 	slices.SortStableFunc(found, func(a, b journal) int { return b.modified.Compare(a.modified) })
 	for _, j := range found {
-		if !isOpen(dir, j.id) {
+		if !isOpen(dir, j.id) && !hidden(dir, j.id) {
 			return j.id
 		}
 	}

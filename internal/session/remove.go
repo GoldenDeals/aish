@@ -52,14 +52,14 @@ func remove(dir, id string) (found bool, err error) {
 }
 
 // Prune removes the sessions not modified for ttl and returns their IDs;
-// open ones are kept. ttl 0 takes every session that is not open, a
-// negative one none: sessions_ttl = "0", which is off, is the caller's to
-// tell from --older 0d.
+// open ones are kept, bare ones List leaves out are not. ttl 0 takes every
+// session that is not open, a negative one none: sessions_ttl = "0", which
+// is off, is the caller's to tell from --older 0d.
 func Prune(dir string, ttl time.Duration) ([]string, error) {
 	if ttl < 0 {
 		return nil, nil
 	}
-	list, err := List(dir)
+	list, err := listing(dir, true)
 	if err != nil {
 		return nil, err
 	}

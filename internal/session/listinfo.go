@@ -20,7 +20,7 @@ import (
 
 // infoVersion is bumped when what the file holds, or how it is found,
 // changes: a file of another version is stale.
-const infoVersion = 1
+const infoVersion = 2
 
 func infoPath(dir, id string) string { return filepath.Join(dir, id+".info") }
 
@@ -50,6 +50,7 @@ type infoFile struct {
 	Journal  *stamp `json:"journal,omitempty"`
 	Last     string `json:"last,omitempty"`
 	Requests int    `json:"requests,omitempty"`
+	Bare     bool   `json:"bare,omitempty"` // see bare
 	State    *stamp `json:"state,omitempty"`
 	Cwd      string `json:"cwd,omitempty"`
 	Profile  string `json:"profile,omitempty"`
@@ -59,12 +60,13 @@ type infoFile struct {
 
 // summarize fills in what info has from the session's journal and state:
 // from <id>.info for a file as it saw it, else from the file, and keeps
-// what it read there for the next List.
-func summarize(dir, id string, info *Info) {
+// what it read there for the next List. It tells whether the session is
+// bare.
+func summarize(dir, id string, info *Info) bool {
 	journal := filepath.Join(dir, id+".jsonl")
 	fi, err := os.Stat(journal)
 	if err != nil {
-		return // removed since the glob
+		return false // removed since the glob
 	}
 	info.Modified = fi.ModTime()
 	c := readInfo(dir, id)
@@ -73,8 +75,9 @@ func summarize(dir, id string, info *Info) {
 	// differs from its stamp the next time.
 	if js := stampOf(fi); c.Journal == nil || *c.Journal != js {
 		last, n, err := requests(journal)
-		c.Journal, c.Last, c.Requests, changed = nil, last, n, true
-		if err == nil {
+		b, berr := bare(journal)
+		c.Journal, c.Last, c.Requests, c.Bare, changed = nil, last, n, b, true
+		if err == nil && berr == nil {
 			c.Journal = &js
 		}
 	}
@@ -104,6 +107,7 @@ func summarize(dir, id string, info *Info) {
 	if changed {
 		writeInfo(dir, id, c)
 	}
+	return c.Bare
 }
 
 // readInfo is the session's <id>.info, nothing known when there is none
