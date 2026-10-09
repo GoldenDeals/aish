@@ -32,6 +32,7 @@ type viewer struct {
 	scrolled bool
 	timer    *time.Timer // the next viewFrame; nil for a viewer of the tests
 	yolo     bool        // the bar has the mark of aish yolo, see yolo.go
+	keyAt    time.Time   // the user's last key here, or the opening: see askIdle
 }
 
 // viewPart is a fold as the viewer shows it: its lines, the title's first,
@@ -48,7 +49,7 @@ type viewPart struct {
 }
 
 func newViewer(folds []Fold, w, h int) *viewer {
-	v := &viewer{w: max(w, 10), h: max(h, 2)}
+	v := &viewer{w: max(w, 10), h: max(h, 2), keyAt: time.Now()}
 	v.set(folds)
 	if n := len(v.start); n > 0 {
 		// The most recent output first, under its request's line if it is
@@ -350,6 +351,7 @@ var viewerKeys = []struct {
 
 // key handles input while the viewer is open and reports whether to close.
 func (v *viewer) key(in []byte) (closed bool) {
+	v.keyAt = time.Now()
 	top := v.top
 	for len(in) > 0 {
 		matched := false

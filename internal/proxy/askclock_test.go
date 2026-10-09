@@ -280,7 +280,7 @@ func TestAskClockPauseInAll(t *testing.T) {
 	lookOften(t)
 	var mu sync.Mutex
 	hid := true
-	c := &askClock{mu: &mu, hidden: func() bool { return hid }, left: 300 * time.Millisecond, pause: 400 * time.Millisecond, out: make(chan struct{})}
+	c := &askClock{mu: &mu, hidden: func() bool { return hid }, seen: time.Now, left: 300 * time.Millisecond, pause: 400 * time.Millisecond, out: make(chan struct{})}
 	start := time.Now()
 	mu.Lock()
 	c.sync()
@@ -302,4 +302,134 @@ func TestAskClockPauseInAll(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the time never ran out")
 	}
+}
+
+// idleFor has the user count as gone from a viewer without a key for d.
+func idleFor(t *testing.T, d time.Duration) {
+	t.Helper()
+	idle := askIdle
+	t.Cleanup(func() { askIdle = idle })
+	askIdle = d
+}
+
+// askOver opens a question with d to answer and the viewer over it with
+// Ctrl+O, and tells when the viewer opened.
+func askOver(t *testing.T, p *Proxy, d time.Duration) (chan askResult, time.Time) {
+	t.Helper()
+	ctx := agent.WithAnswerTime(context.Background(), d)
+	res := make(chan askResult, 1)
+	go func() {
+		ans, err := p.askUser(ctx, "allow?")
+		res <- askResult{ans, err}
+	}()
+	waitOpen(t, p, func() bool { return p.ask != nil })
+	viewOver(t, p)
+	return res, time.Now()
+}
+
+// endedIn waits for the question of res to end with no answer and tells
+// how long after since it did.
+func endedIn(t *testing.T, res chan askResult, since time.Time) time.Duration {
+	t.Helper()
+	select {
+	case r := <-res:
+		took := time.Since(since)
+		if r.ans != "" || !errors.Is(r.err, context.DeadlineExceeded) {
+			t.Errorf("answered %q, %v", r.ans, r.err)
+		}
+		return took
+	case <-time.After(5 * time.Second):
+		t.Fatal("the question never ended")
+	}
+	return 0
+}
+
+// A viewer without a key is one the user left: the time of the question
+// under it, 100ms, stands 150ms (askIdle) after Ctrl+O and then goes on,
+// the question ending there with No some 250ms after the viewer opened,
+// not after the 10 minutes of askPause.
+func TestAskClockViewerLeft(t *testing.T) {
+	lookOften(t)
+	idleFor(t, 150*time.Millisecond)
+	p, out := termProxy(t)
+	res, opened := askOver(t, p, 100*time.Millisecond)
+	if took := endedIn(t, res, opened); took < 230*time.Millisecond || took > 2*time.Second {
+		t.Errorf("the question ended %v after the viewer opened, want 250ms", took)
+	}
+	if locked(p, func() bool { return p.ask != nil || p.view == nil }) {
+		t.Fatal("the question stayed open, or the viewer went with it")
+	}
+	closeViewer(t, p)
+	if s := out.String(); !strings.Contains(s, "No (no answer in 100ms)") {
+		t.Errorf("terminal %q", s)
+	}
+}
+
+// Keys in the viewer keep the user there: scrolling every 50ms, the time
+// of the question, 100ms, stands all of askPause, 600ms, past the 150ms
+// of askIdle, and the question ends some 700ms after the viewer opened.
+func TestAskClockViewerKeys(t *testing.T) {
+	lookOften(t)
+	idleFor(t, 150*time.Millisecond)
+	pauseFor(t, 600*time.Millisecond)
+	p, _ := termProxy(t)
+	res, opened := askOver(t, p, 100*time.Millisecond)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+			p.key([]byte("jk")[i%2 : i%2+1])
+		}
+	}()
+	time.Sleep(450 * time.Millisecond)
+	if !locked(p, func() bool { return p.ask != nil }) {
+		t.Fatal("the question ended under the viewer the user scrolls")
+	}
+	if took := endedIn(t, res, opened); took < 650*time.Millisecond || took > 2*time.Second {
+		t.Errorf("the question ended %v after the viewer opened, want 700ms", took)
+	}
+	if locked(p, func() bool { return p.view == nil }) {
+		t.Fatal("the viewer went with the question")
+	}
+}
+
+// A question opening under a viewer left goes from the start, as a run of
+// them comes while nobody answers; a key there has it stand again. The
+// time, 200ms, goes 100ms, stands 150ms from the key and goes on: the
+// question ends some 350ms after it opened.
+func TestAskClockOpensUnderViewerLeft(t *testing.T) {
+	lookOften(t)
+	idleFor(t, 150*time.Millisecond)
+	p, _ := termProxy(t)
+	viewOver(t, p)
+	time.Sleep(200 * time.Millisecond) // the user gone from it
+
+	ctx := agent.WithAnswerTime(context.Background(), 100*time.Millisecond)
+	res := make(chan askResult, 1)
+	start := time.Now()
+	go func() {
+		ans, err := p.askUser(ctx, "allow?")
+		res <- askResult{ans, err}
+	}()
+	if took := endedIn(t, res, start); took > 220*time.Millisecond {
+		t.Errorf("the question ended %v after it opened, want 100ms, not 250ms", took)
+	}
+
+	ctx = agent.WithAnswerTime(context.Background(), 200*time.Millisecond)
+	start = time.Now()
+	go func() {
+		ans, err := p.askUser(ctx, "allow?")
+		res <- askResult{ans, err}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	p.key([]byte("k"))
+	if took := endedIn(t, res, start); took < 300*time.Millisecond || took > 2*time.Second {
+		t.Errorf("the question ended %v after it opened, want 350ms", took)
+	}
+	closeViewer(t, p)
 }
