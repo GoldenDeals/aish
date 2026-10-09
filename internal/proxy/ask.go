@@ -12,6 +12,9 @@ import (
 type prompt struct {
 	yes  bool
 	done chan string
+	// shown are the lines the question takes on the screen with its
+	// choices, which an interrupt erases.
+	shown []string
 }
 
 // choices is the block of answers drawn after the question: the one chosen
@@ -44,7 +47,8 @@ func (pr *prompt) chosen() string {
 }
 
 // askUser prints q with Yes and No after it and waits for the user to pick
-// one, or for ctx: Ctrl+C goes to the shell, which stops the request.
+// one, or for ctx: Ctrl+C goes to the shell, which stops the request, and
+// the question goes off the screen as a form does, the echo of ^C with it.
 // ctx past its deadline is no answer in time: the question is left with
 // No, as if chosen, and the cause of ctx. Without a terminal there is
 // nothing to draw the choices on.
@@ -62,13 +66,17 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	p.ask = pr
 	p.syncPaste() // a paste is no answer
 	// The choices end short of the last column: there the cursor would
-	// stay on it, and stepping back from it would miss by one.
+	// stay on it, and stepping back from it would miss by one. So does the
+	// echo of a Ctrl+C after them: wrapped, it would take a line the erase
+	// does not count.
 	cols, _ := p.size()
 	sep := " "
-	if frameWidth(q[strings.LastIndexByte(q, '\n')+1:])+len(sep)+choicesWidth >= cols {
+	if frameWidth(q[strings.LastIndexByte(q, '\n')+1:])+len(sep)+choicesWidth+len("^C") >= cols {
 		sep = "\r\n"
 	}
-	p.emit([]byte("\x1b[?25l" + q + sep + choices(pr.chosen())))
+	drawn := q + sep + choices(pr.chosen())
+	pr.shown = strings.Split(strings.ReplaceAll(drawn, "\r\n", "\n"), "\n")
+	p.emit([]byte("\x1b[?25l" + drawn))
 	p.mu.Unlock()
 	select {
 	case ans := <-pr.done:
@@ -96,6 +104,13 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 				end += " (" + why.Error() + ")"
 			}
 			end += "\x1b[K\r\n"
+		} else {
+			// Interrupted: the terminal echoed ^C as it signalled the
+			// client, which only then asks to stop, so the echo is on the
+			// screen already and goes with the question, as with a form.
+			// The prompt starts where the question did, below the call.
+			cols, _ := p.size()
+			end = (&openForm{shown: pr.shown}).erase(cols)
 		}
 		p.emit([]byte(end + "\x1b[?25h"))
 		p.syncPaste()
@@ -162,8 +177,8 @@ func (p *Proxy) askKey(b []byte) []byte {
 			p.ask = nil
 			return append(pass, b[i+1:]...)
 		case 0x03:
-			// Interrupts the request, like anywhere else: nothing is chosen.
-			p.emit([]byte(back + choices("")))
+			// Interrupts the request, like anywhere else; the question
+			// goes when it ends, see askUser.
 			pass = append(pass, c)
 		case ctrlO:
 			if folds := p.viewFolds(); len(folds) > 0 {

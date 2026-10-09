@@ -213,10 +213,9 @@ func TestAgentCancel(t *testing.T) {
 // was typed after the answer.
 func TestAskKey(t *testing.T) {
 	const (
-		yes   = "\x1b[7m[ Yes ]\x1b[27m   No  "
-		no    = "  Yes   \x1b[7m[ No ]\x1b[27m"
-		plain = "  Yes     No  "
-		back  = "\x1b[14D" // to the start of the choices, as wide whichever is chosen
+		yes  = "\x1b[7m[ Yes ]\x1b[27m   No  "
+		no   = "  Yes   \x1b[7m[ No ]\x1b[27m"
+		back = "\x1b[14D" // to the start of the choices, as wide whichever is chosen
 	)
 	sess, err := session.New(t.TempDir())
 	if err != nil {
@@ -297,7 +296,7 @@ func TestAskKey(t *testing.T) {
 	if got := p.key([]byte{0x03}); !bytes.Equal(got, []byte{0x03}) {
 		t.Errorf("Ctrl+C did not reach the shell: %q", got)
 	}
-	want += back + plain // interrupted, not answered
+	// Ctrl+C draws nothing: its request takes the question off the screen.
 	if got := p.key([]byte("\rls\n")); string(got) != "ls\n" {
 		t.Errorf("what followed the answer was lost: %q", got)
 	}
