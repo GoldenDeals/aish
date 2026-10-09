@@ -31,7 +31,7 @@ typeset -g __aish_nonce=
 
 # The config's [route], key=value lines from the proxy.
 typeset -g __aish_route_capital=true __aish_route_not_found=false __aish_route_suffix= __aish_route_min_words=2
-typeset -g __aish_route_expand=true
+typeset -g __aish_route_expand=false
 if [[ -n ${AISH_RUN-} && -f $AISH_RUN/route ]]; then
 	while IFS= read -r __aish_l; do
 		case ${__aish_l%%=*} in

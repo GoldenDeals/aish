@@ -8,10 +8,11 @@ import (
 
 // TestExpand checks the text a request reaches the model with: $VAR,
 // ${...} and $(...) expanded by the shell, as typed after the ? prefix or
-// with expand off. Double quotes and backticks stay text, single quotes
-// keep what is in them (TestExpandSingleQuotes), a backslash keeps one
-// dollar, text that does not parse is kept as typed, and nothing of the
-// expansion stays in the shell. A line for bash is bash's to expand.
+// with expand off, as it is by default. Double quotes and backticks stay
+// text, single quotes keep what is in them (TestExpandSingleQuotes), a
+// backslash keeps one dollar, text that does not parse is kept as typed,
+// and nothing of the expansion stays in the shell. A line for bash is
+// bash's to expand.
 func TestExpand(t *testing.T) {
 	const (
 		on  = "capital=true\nnot_found=true\nsuffix=?\nmin_words=2\nexpand=true\n"
@@ -55,6 +56,11 @@ func TestExpand(t *testing.T) {
 			{"Say $V now", "__aish_ask 'Say $V now'"},
 			{"What is $(echo hi)?", "__aish_ask 'What is $(echo hi)?'"},
 		}},
+		// Off by default.
+		{"", []struct{ in, want string }{
+			{"Say $V now", "__aish_ask 'Say $V now'"},
+			{"What is $(echo hi)?", "__aish_ask 'What is $(echo hi)?'"},
+		}},
 	} {
 		var script strings.Builder
 		for _, c := range tc.cases {
@@ -84,7 +90,7 @@ func TestExpandAsk(t *testing.T) {
 	const bashrc = `V=one AISH_BIN=fake
 fake() { [[ $2 == start ]] && printf 'sent %s\x1f' "$4"; }`
 	ask := "__aish_fresh=1; READLINE_LINE=" + quote("Say $V now") + "; __aish_route; __aish_redraw=0; eval \"$READLINE_LINE\"; printf '%s\\x1f' \"$(history 1)\"\n"
-	got := routed(t, "", bashrc, ask+"V=two\n"+ask)
+	got := routed(t, expandOn, bashrc, ask+"V=two\n"+ask)
 	want := []string{"sent Say one now", "Say $V now", "sent Say two now", "Say $V now"}
 	if len(got) < len(want) {
 		t.Fatalf("got %q, want %q", got, want)
@@ -106,7 +112,7 @@ func TestUnechoExpanded(t *testing.T) {
 	in := "Log: $(printf 'the first line of the log\\nthe second line')"
 	script := "PS1='> '; COLUMNS=40; __aish_fresh=1; READLINE_LINE=" + quote(in) +
 		"; __aish_route; printf '%s\\x1f' \"$READLINE_LINE\"; eval \"__aish_unecho ${READLINE_LINE#__aish_ask }\"; printf '\\x1f'\n"
-	out := routed(t, "", "", script)
+	out := routed(t, expandOn, "", script)
 	if len(out) < 2 {
 		t.Fatalf("output %q", out)
 	}

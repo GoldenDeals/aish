@@ -51,7 +51,7 @@ func seteShell(t *testing.T, bashrc, script string, env ...string) (string, stri
 		".bashrc":   bashrc,
 		"rc":        RCFile(),
 		"run/nonce": "N\n",
-		"run/route": "",
+		"run/route": expandOn,
 	}
 	for name, s := range files {
 		p := filepath.Join(dir, name)

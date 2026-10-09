@@ -186,7 +186,7 @@ func Default() Config {
 		SessionsDir:    filepath.Join(dataDir(), "sessions"),
 		SessionsTTL:    "0",
 		MCPConfig:      filepath.Join(Dir(), "mcp.yaml"),
-		Route:          Route{Capital: true, NotFound: true, Suffix: "?", MinWords: 2, Expand: true},
+		Route:          Route{Capital: true, NotFound: true, Suffix: "?", MinWords: 2},
 	}
 }
 

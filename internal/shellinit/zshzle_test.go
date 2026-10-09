@@ -41,7 +41,7 @@ func zshTyped(t *testing.T, zshrc string, steps ...zstep) (string, string) {
 		filepath.Join(run, "zsh", ".zshenv"): ZshEnv,
 		filepath.Join(run, "zsh", ".zshrc"):  ZshRC(),
 		filepath.Join(run, "nonce"):          "N0NCE\n",
-		filepath.Join(run, "route"):          "",
+		filepath.Join(run, "route"):          expandOn,
 		filepath.Join(run, "next.cmd"):       "",
 		filepath.Join(dir, ".zshrc"):         "PS1='> '\n" + zshrc,
 		stub:                                 "#!/bin/sh\necho \"$@\" >>\"$HOME/called\"\n",

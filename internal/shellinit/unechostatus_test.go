@@ -30,7 +30,7 @@ func TestUnechoStatus(t *testing.T) {
 			files := map[string]string{
 				init:                        Bash,
 				filepath.Join(run, "nonce"): "N\n",
-				filepath.Join(run, "route"): "",
+				filepath.Join(run, "route"): expandOn,
 			}
 			for p, s := range files {
 				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

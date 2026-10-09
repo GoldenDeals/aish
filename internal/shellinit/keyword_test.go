@@ -36,7 +36,7 @@ func TestKeywordRoute(t *testing.T) {
 		script.WriteString("__aish_fresh=1; READLINE_LINE=" + quote(c.in) + "; __aish_route; " + printLine + "\n")
 	}
 	script.WriteString("[[ $- == *k* ]] && printf 'k on'\n")
-	got := routed(t, "", "set -k\nV=world\nmyfn() { :; }", script.String())
+	got := routed(t, expandOn, "set -k\nV=world\nmyfn() { :; }", script.String())
 	for i, c := range cases {
 		if i >= len(got) {
 			t.Fatalf("missing output for %q (got %q)", c.in, got)
@@ -63,7 +63,7 @@ func TestKeyword(t *testing.T) {
 	files := map[string]string{
 		init:                               Bash,
 		filepath.Join(run, "nonce"):        "N\n",
-		filepath.Join(run, "route"):        "",
+		filepath.Join(run, "route"):        expandOn,
 		filepath.Join(dir, "sub", ".keep"): "",
 	}
 	for p, s := range files {

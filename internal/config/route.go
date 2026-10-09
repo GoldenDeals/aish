@@ -15,6 +15,7 @@ type Route struct {
 	Suffix   string `toml:"suffix"`
 	MinWords int    `toml:"min_words"`
 	// Expand lets the shell expand $VAR, ${...} and $(...) in a request
-	// before it is sent; the ? prefix sends the line as typed.
+	// before it is sent; the ? prefix sends the line as typed. Off by
+	// default: $(...) in a request, a pasted one too, would run.
 	Expand bool `toml:"expand"`
 }

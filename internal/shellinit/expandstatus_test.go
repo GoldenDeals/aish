@@ -33,7 +33,7 @@ fake() { [[ $2 == start ]] && printf 'sent %s\x1f' "$4"; }`
 		script.WriteString(c.cmd + "\n" + c.in + "\n")
 	}
 	var got []string
-	for _, s := range routed(t, "", bashrc, script.String()) {
+	for _, s := range routed(t, expandOn, bashrc, script.String()) {
 		if _, sent, ok := strings.Cut(s, "sent "); ok {
 			got = append(got, sent)
 		}
@@ -68,7 +68,7 @@ func TestExpandInterrupt(t *testing.T) {
 			files := map[string]string{
 				init:                        Bash,
 				filepath.Join(run, "nonce"): "N\n",
-				filepath.Join(run, "route"): "",
+				filepath.Join(run, "route"): expandOn,
 			}
 			for p, s := range files {
 				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {

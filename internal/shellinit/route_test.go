@@ -9,6 +9,10 @@ import (
 	"testing"
 )
 
+// expandOn is the route of tests that expand a request: [route] expand is
+// off by default, the rest stays init.bash's.
+const expandOn = "expand=true\n"
+
 // routed runs script in an interactive bash that loaded bashrc, then
 // init.bash with $AISH_RUN/route holding route, in a home of its own so
 // that no skill of the machine is found. It returns the output, markers

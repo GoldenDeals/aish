@@ -33,7 +33,7 @@ __aish_nonce=
 # The config's [route], key=value lines from the proxy. Without the file,
 # the rule from before it: a capital letter, nothing else.
 __aish_route_capital=true __aish_route_not_found=false __aish_route_suffix= __aish_route_min_words=2
-__aish_route_expand=true
+__aish_route_expand=false
 if [[ -n ${AISH_RUN-} && -f $AISH_RUN/route ]]; then
 	while IFS= read -r __aish_l; do
 		case ${__aish_l%%=*} in
