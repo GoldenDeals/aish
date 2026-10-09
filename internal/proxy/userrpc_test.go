@@ -146,7 +146,7 @@ func TestUserOnly(t *testing.T) {
 
 	resume := req(rpc.MethodResume, rpc.ResumeParams{ID: other})
 	clr := req(rpc.MethodClear, rpc.ClearParams{})
-	newSess := req(rpc.MethodClear, rpc.ClearParams{SaveNew: true})
+	newSess := req(rpc.MethodClear, rpc.ClearParams{Name: "work"})
 	model := req(rpc.MethodModel, rpc.ModelParams{Model: "m2"})
 	// The handler wrote them; the test reads them once the client is gone.
 	now := func() (id, model string, saved bool) {
@@ -215,7 +215,10 @@ func TestUserOnly(t *testing.T) {
 		t.Errorf("aish clear left session %s, saved %v", sid, saved)
 	}
 	expect(calls(group, newSess), rpc.MethodClear+": <nil>")
-	if sid, _, saved := now(); !saved {
-		t.Errorf("aish new left session %s unsaved", sid)
+	p.mu.Lock()
+	sid, name := p.sess.ID, p.sess.Name()
+	p.mu.Unlock()
+	if name != "work" {
+		t.Errorf("aish new left session %s named %q", sid, name)
 	}
 }

@@ -8,34 +8,22 @@ import (
 	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
-// parseClear reads `aish clear [save [NAME]]`, NAME being the rest of the
-// arguments: `aish clear save log triage` needs no quotes.
-func parseClear(args []string) (rpc.ClearParams, error) {
-	switch {
-	case len(args) == 0:
-		return rpc.ClearParams{}, nil
-	case args[0] != "save" || len(args) > 1 && strings.HasPrefix(args[1], "-"):
-		return rpc.ClearParams{}, errors.New("usage: aish clear [save [NAME]]")
-	}
-	return rpc.ClearParams{Save: true, Name: strings.Join(args[1:], " ")}, nil
-}
-
-// clearCmd starts a new session that is not saved, saving the current one
-// first if asked.
+// clearCmd starts a new session; the one left stays on disk, as every
+// session with entries does, for aish resume.
 func clearCmd(args []string) int {
-	cp, err := parseClear(args)
-	if err != nil {
-		return fail(err)
+	if len(args) > 0 {
+		return fail(errors.New("usage: aish clear (aish new NAME starts a session with a name)"))
 	}
-	return startOver(cp)
+	return startOver(rpc.ClearParams{})
 }
 
-// newCmd starts a new session that is saved from its first entry.
+// newCmd starts a new session named as the rest of the arguments say:
+// `aish new log triage` needs no quotes.
 func newCmd(args []string) int {
 	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		return fail(errors.New("usage: aish new [NAME]"))
 	}
-	return startOver(rpc.ClearParams{SaveNew: true, NewName: strings.Join(args, " ")})
+	return startOver(rpc.ClearParams{Name: strings.Join(args, " ")})
 }
 
 // startOver has the proxy start this shell's session over and tells what
@@ -63,19 +51,19 @@ func startOver(cp rpc.ClearParams) int {
 }
 
 // startedOver is the line startOver prints: old is the session left, info
-// the new one.
+// the new one. One left without entries is not on disk: there was nothing
+// to keep.
 func startedOver(cp rpc.ClearParams, old, info rpc.Info) string {
-	switch {
-	case cp.SaveNew && cp.NewName != "":
-		return fmt.Sprintf("new session %s (%s, saved)", cp.NewName, info.SessionID)
-	case cp.SaveNew:
-		return fmt.Sprintf("new session %s (saved)", info.SessionID)
-	case cp.Save && cp.Name != "":
-		return fmt.Sprintf("saved %s as %s, new session %s", old.SessionID, cp.Name, info.SessionID)
-	case cp.Save:
-		return fmt.Sprintf("saved %s, new session %s", old.SessionID, info.SessionID)
-	case old.Saved:
-		return fmt.Sprintf("left %s, new session %s", old.SessionID, info.SessionID)
+	next := "new session " + info.SessionID
+	if cp.Name != "" {
+		next = fmt.Sprintf("new session %s (%s)", cp.Name, info.SessionID)
 	}
-	return fmt.Sprintf("dropped %s, new session %s", old.SessionID, info.SessionID)
+	if !old.Saved {
+		return next
+	}
+	left := old.SessionID
+	if old.Name != "" {
+		left = fmt.Sprintf("%s (%s)", old.Name, old.SessionID)
+	}
+	return fmt.Sprintf("left %s, %s", left, next)
 }

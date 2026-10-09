@@ -9,7 +9,6 @@ import (
 
 	"github.com/GoldenDeals/aish/internal/rpc"
 	"github.com/GoldenDeals/aish/internal/session"
-	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
 // Erasing the screen cuts the journal for the model; the session stays.
@@ -36,6 +35,8 @@ func TestClearedMarksJournal(t *testing.T) {
 	}
 }
 
+// `aish clear` and `aish new NAME` leave the session on disk, as it is,
+// and start one that is on disk from its first entry.
 func TestClearCommand(t *testing.T) {
 	dir := t.TempDir()
 	sess, err := session.New(dir)
@@ -62,86 +63,66 @@ func TestClearCommand(t *testing.T) {
 	}
 	ls := session.Entry{Kind: session.KindShell, Cmd: "ls"}
 
-	// Plain `aish clear` of an unsaved session drops it.
-	sess.Append(ls)
-	old := sess.ID
+	// A session without entries has nothing to leave on disk.
+	empty := p.sess.ID
 	info, err := run("")
-	if err != nil || info.SessionID == old || info.Saved || sess.Saved() || sess.Len() != 0 {
+	if err != nil || info.SessionID == empty || info.Saved || p.sess.Len() != 0 {
 		t.Fatalf("clear: %+v %v", info, err)
 	}
-	for _, ext := range []string{".jsonl", ".state", ".name", ".lock"} {
-		if exists(old, ext) {
-			t.Errorf("the dropped session left %s", ext)
-		}
+	if found, _ := filepath.Glob(filepath.Join(dir, empty+".*")); len(found) > 0 {
+		t.Errorf("an empty session left %v", found)
 	}
 	if b, _ := os.ReadFile(restore); string(b) != "cd /srv\nexport 'AISH_SESSION="+info.SessionID+"'\n" {
 		t.Errorf("restore.bash %q", b)
 	}
 
-	if _, err := run(`{"save":true}`); err == nil {
-		t.Error("saved an empty session")
+	// One with entries stays, unlocked, for aish resume.
+	p.sess.Append(ls, session.Entry{Kind: session.KindUser, Text: "hi"})
+	left := p.sess.ID
+	if !exists(left, ".jsonl") || !exists(left, ".lock") {
+		t.Fatal("the first entry did not put the session on disk")
 	}
-
-	// `aish clear save NAME` keeps the journal, the shell and the name.
-	p.model, p.effort = "m", "high"
-	p.base = &shellstate.State{Vars: map[string]string{}}
-	p.cur = &shellstate.State{Vars: map[string]string{"X": `declare -- X="1"`}, Cwd: "/srv"}
-	sess.Append(ls, session.Entry{Kind: session.KindUser, Text: "hi"})
-	old = sess.ID
-	info, err = run(`{"save":true,"name":"probe"}`)
-	if err != nil || info.SessionID == old || info.Saved {
-		t.Fatalf("clear save: %+v %v", info, err)
+	info, err = run("")
+	if err != nil || info.SessionID == left || info.Saved || p.sess.Len() != 0 {
+		t.Fatalf("clear: %+v %v", info, err)
 	}
-	if o, err := session.Load(dir, old); err != nil || len(o.Entries()) != 2 {
-		t.Errorf("saved journal: %v", err)
+	if o, err := session.Load(dir, left); err != nil || len(o.Entries()) != 2 {
+		t.Errorf("the journal left: %v", err)
 	}
-	st, err := session.LoadState(dir, old)
-	if err != nil || st.Model != "m" || st.Effort != "high" || st.Shell.Cwd != "/srv" || st.Shell.Vars["X"] == "" {
-		t.Errorf("saved state %+v %v", st, err)
-	}
-	if b, _ := os.ReadFile(filepath.Join(dir, old+".name")); strings.TrimSpace(string(b)) != "probe" {
-		t.Errorf("name %q", b)
-	}
-	if exists(old, ".lock") {
-		t.Error("the saved session is still locked")
+	if exists(left, ".lock") {
+		t.Error("the session left is still locked")
 	}
 
 	// A taken name changes nothing.
-	sess.Append(ls)
-	id := sess.ID
-	for _, params := range []string{`{"save_new":true,"new_name":"probe"}`, `{"new_name":"probe"}`, `{"save":true,"name":"probe"}`} {
-		if _, err := run(params); err == nil || sess.ID != id || sess.Len() != 1 || sess.Saved() {
-			t.Errorf("%s: %v, %s with %d entries", params, err, sess.ID, sess.Len())
-		}
+	if err := session.Rename(dir, left, "probe"); err != nil {
+		t.Fatal(err)
+	}
+	p.sess.Append(ls)
+	id := p.sess.ID
+	if _, err := run(`{"name":"probe"}`); err == nil || p.sess.ID != id || p.sess.Len() != 1 {
+		t.Errorf("a taken name: %v, %s with %d entries", err, p.sess.ID, p.sess.Len())
 	}
 
-	// `aish new NAME` makes the next session a saved one.
-	info, err = run(`{"save_new":true,"new_name":"work"}`)
-	if err != nil || info.SessionID == id || !info.Saved || !sess.Saved() {
+	// `aish new NAME` names the next session, on disk with its first entry.
+	info, err = run(`{"name":"work"}`)
+	if err != nil || info.SessionID == id || info.Name != "work" || info.Saved {
 		t.Fatalf("new: %+v %v", info, err)
 	}
-	if !exists(info.SessionID, ".name") || !exists(info.SessionID, ".lock") {
-		t.Error("the new session is not named or not locked")
+	if exists(info.SessionID, ".name") || exists(info.SessionID, ".lock") {
+		t.Error("a session without entries is on disk")
 	}
-	sess.Append(ls)
-	if o, err := session.Load(dir, info.SessionID); err != nil || len(o.Entries()) != 1 {
+	p.sess.Append(ls)
+	if !exists(info.SessionID, ".lock") {
+		t.Error("the new session is not locked")
+	}
+	if o, err := session.Load(dir, info.SessionID); err != nil || len(o.Entries()) != 1 || o.Name() != "work" {
 		t.Errorf("the new session's journal: %v", err)
 	}
 
-	// Plain `aish clear` of a saved session leaves its files, unlocked.
-	saved := info.SessionID
-	if info, err = run(""); err != nil || info.Saved {
-		t.Fatalf("clear of a saved session: %+v %v", info, err)
-	}
-	if !exists(saved, ".jsonl") || !exists(saved, ".name") || exists(saved, ".lock") {
-		t.Error("the saved session's files")
-	}
-
 	p.asking = true
-	sess.Append(ls)
-	id = sess.ID
-	for _, params := range []string{"", `{"save":true}`, `{"save_new":true}`} {
-		if _, err := run(params); err == nil || !strings.Contains(err.Error(), "by the user") || sess.ID != id {
+	id = p.sess.ID
+	for _, params := range []string{"", `{"name":"x"}`} {
+		if _, err := run(params); err == nil || !strings.Contains(err.Error(), "by the user") || p.sess.ID != id {
 			t.Errorf("the assistant cleared with %q: %v", params, err)
 		}
 	}

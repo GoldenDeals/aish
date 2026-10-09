@@ -40,6 +40,7 @@ const (
 	MethodFolds   = "folds"  // outputs kept since the request started
 	MethodTasks   = "tasks"  // the subagents in the background, or one's output
 	MethodResume  = "resume" // switch this shell to another session
+	MethodRename  = "rename" // name this shell's session, RenameParams
 	// The agent: begin a request, go on after the shell ran a command,
 	// stop the one in progress, sum the session up.
 	MethodAgentStart  = "agent_start"
@@ -98,8 +99,11 @@ type Info struct {
 	// Dir holds the session's files: the proxy's sessions_dir, which the
 	// config a later command reads need not match.
 	Dir string `json:"dir"`
-	// Saved is whether the session is on disk.
+	// Saved is whether the session is on disk: it is from its first entry.
 	Saved bool `json:"saved"`
+	// Name is the one the user gave the session, which the proxy keeps
+	// for a session not on disk yet.
+	Name string `json:"name,omitempty"`
 	// Profile, Model and Effort are what this shell uses, which `aish
 	// model` may have changed; Window is the model's context size, 0 if
 	// unknown. Profile "" is the top level of config.toml alone.
@@ -226,15 +230,15 @@ type ResumeParams struct {
 	ID string `json:"id"`
 }
 
-// ClearParams start this shell's session over. Save puts the current
-// session on disk, if it is not there yet, named Name if given; otherwise
-// an unsaved one is simply dropped. SaveNew makes the next session a saved
-// one from its first entry, named NewName if given.
+// ClearParams start this shell's session over: the current one stays on
+// disk as it is, and the next one is named Name if given.
 type ClearParams struct {
-	Save    bool   `json:"save,omitempty"`
-	Name    string `json:"name,omitempty"`
-	SaveNew bool   `json:"save_new,omitempty"`
-	NewName string `json:"new_name,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
+// RenameParams give this shell's session the user's name, "" none.
+type RenameParams struct {
+	Name string `json:"name"`
 }
 
 // AgentParams carry a request to the agent. Cwd and Env are the shell's,

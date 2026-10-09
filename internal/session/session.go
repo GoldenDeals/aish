@@ -93,9 +93,10 @@ type Entry struct {
 	IsError bool `json:"is_error,omitempty"`
 }
 
-// Session is safe for concurrent use. Once saved, every appended entry is
-// persisted to a JSONL file immediately; until then the journal is only in
-// memory.
+// Session is safe for concurrent use. Every session is saved: its first
+// entry puts it on disk, locked, and each entry after it is persisted to
+// the JSONL file at once. One without entries has nothing to resume and
+// leaves no file.
 type Session struct {
 	mu      sync.Mutex
 	ID      string
@@ -104,6 +105,9 @@ type Session struct {
 	lock    *os.File
 	// saved: the journal is on disk, Append writes through.
 	saved bool
+	// name is the one the user gave the session: on disk next to the
+	// journal, kept here till there is one.
+	name string
 	// bad counts the journal lines Open could not parse, so that lost
 	// entries do not go unnoticed.
 	bad int
@@ -139,7 +143,7 @@ func Open(path string) (*Session, error) {
 		return nil, err
 	}
 	defer f.Close()
-	s := &Session{ID: id, path: path, saved: true}
+	s := &Session{ID: id, path: path, saved: true, name: readName(filepath.Join(filepath.Dir(path), id+".name"))}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 64<<20)
 	for sc.Scan() {
@@ -162,23 +166,28 @@ func (s *Session) BadLines() int { return s.bad }
 func (s *Session) Append(es ...Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var f *os.File
-	if s.saved {
-		var err error
-		f, err = os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
+	if len(es) == 0 {
+		return nil
 	}
+	// Kept whatever the disk says: the agent goes on from them.
+	from := len(s.entries)
 	for _, e := range es {
 		if e.Time.IsZero() {
 			e.Time = time.Now()
 		}
 		s.entries = append(s.entries, e)
-		if f == nil {
-			continue
-		}
+	}
+	if !s.saved {
+		// The first entry: now there is something to resume. A save that
+		// failed is tried again with the next one, all entries so far.
+		return s.save()
+	}
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	for _, e := range s.entries[from:] {
 		b, _ := json.Marshal(e)
 		if _, err := f.Write(append(b, '\n')); err != nil {
 			return err
@@ -187,17 +196,23 @@ func (s *Session) Append(es ...Entry) error {
 	return nil
 }
 
-// Save puts the journal on disk, from where it can be resumed: the
-// entries so far at once, later ones as they are appended. The session
-// is locked from here, like one that was opened.
+// Save puts the session on disk before its first entry, which would put
+// it there anyway: the entries so far at once, later ones as they are
+// appended. The session is locked from here, like one that was opened.
 func (s *Session) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.saved {
 		return nil
 	}
+	return s.save()
+}
+
+// save is Save under s.mu.
+func (s *Session) save() error {
+	dir := filepath.Dir(s.path)
 	// Locked first: a journal on disk is there for another aish to open.
-	l, err := lock(filepath.Dir(s.path), s.ID)
+	l, err := lock(dir, s.ID)
 	if err != nil {
 		return err
 	}
@@ -211,10 +226,14 @@ func (s *Session) Save() error {
 		return err
 	}
 	s.lock, s.saved = l, true
+	if s.name != "" {
+		return writeName(dir, s.ID, s.name)
+	}
 	return nil
 }
 
-// Saved reports whether the journal is on disk.
+// Saved reports whether the journal is on disk: the session has had an
+// entry, or was saved before it.
 func (s *Session) Saved() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -227,18 +246,16 @@ func (s *Session) Entries() []Entry {
 	return append([]Entry(nil), s.entries...)
 }
 
-// Clear starts over with an unsaved journal under a new id, keeping the
-// session object. The files of a saved one stay where they are, unlocked.
-func (s *Session) Clear() {
+// Next is a new session in the directory of s, for the shell to go on in
+// when it leaves s: s stays as it is, on disk and locked if it was, for
+// its holder to unlock. Its id is not s's, which a session made the same
+// second would share while s has no file yet.
+func (s *Session) Next() *Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries = nil
 	dir := filepath.Dir(s.path)
-	s.ID = freshID(dir, s.ID)
-	s.path = filepath.Join(dir, s.ID+".jsonl")
-	s.saved = false
-	unlock(s.lock)
-	s.lock = nil
+	id := freshID(dir, s.ID)
+	return &Session{ID: id, path: filepath.Join(dir, id+".jsonl")}
 }
 
 // freshID names a journal that is neither cur nor on disk: two clears within

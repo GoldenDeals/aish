@@ -36,8 +36,8 @@ func TestAskingRefuse(t *testing.T) {
 		run    func() int
 	}{
 		{"clear", rpc.MethodClear, func() int { return clearCmd(nil) }},
-		{"clear save", rpc.MethodClear, func() int { return clearCmd([]string{"save", "x"}) }},
 		{"new", rpc.MethodClear, func() int { return newCmd(nil) }},
+		{"new NAME", rpc.MethodClear, func() int { return newCmd([]string{"x"}) }},
 		{"resume", rpc.MethodResume, func() int { return resumeCmd(nil, cfg, []string{s.ID}) }},
 	} {
 		for _, asking := range []bool{true, false} {

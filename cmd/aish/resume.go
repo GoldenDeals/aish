@@ -15,14 +15,48 @@ import (
 	"github.com/GoldenDeals/aish/internal/session"
 )
 
+// resumeArgs reads `aish resume [--all] [ID|NAME]`.
+func resumeArgs(args []string) (all bool, q []string, err error) {
+	for _, a := range args {
+		switch {
+		case a == "--all" || a == "-a":
+			all = true
+		case strings.HasPrefix(a, "-") || len(q) > 0:
+			return false, nil, errors.New("usage: aish resume [--all] [ID|NAME]")
+		default:
+			q = append(q, a)
+		}
+	}
+	return all, q, nil
+}
+
+// toChoose are the sessions of list the picker shows: those the user
+// named, all with --all.
+func toChoose(list []session.Info, all bool) ([]session.Info, error) {
+	shown := list
+	if !all {
+		shown = session.Named(list)
+	}
+	switch {
+	case len(list) == 0:
+		return nil, errors.New("no sessions yet")
+	case len(shown) == 0:
+		return nil, errors.New("no sessions with a name (aish session rename gives one); aish resume --all lists them all")
+	}
+	return shown, nil
+}
+
 // resumeCmd brings a session back: inside aish this shell switches to it,
-// outside a new aish starts with it, with conf, cfg's config files.
+// outside a new aish starts with it, with conf, cfg's config files. The
+// sessions to choose from are those the user named, all of them with
+// --all; an id finds any.
 func resumeCmd(conf *config.Snapshot, cfg config.Config, args []string) int {
-	if len(args) > 1 || len(args) == 1 && strings.HasPrefix(args[0], "-") {
-		return fail(errors.New("usage: aish resume [ID|NAME]"))
+	all, args, err := resumeArgs(args)
+	if err != nil {
+		return fail(err)
 	}
 	var client *rpc.Client
-	cur, curSaved := "", false
+	cur := ""
 	dir := cfg.SessionsDir
 	if c, err := rpc.FromEnv(); err == nil {
 		client = c
@@ -35,7 +69,7 @@ func resumeCmd(conf *config.Snapshot, cfg config.Config, args []string) int {
 		if info.Asking {
 			return fail(errors.New("sessions are switched by the user, not by the assistant"))
 		}
-		cur, curSaved = info.SessionID, info.Saved
+		cur = info.SessionID
 		// The proxy switches to a session of its own directory, whatever
 		// sessions_dir config.toml on disk has now.
 		if info.Dir != "" {
@@ -47,23 +81,28 @@ func resumeCmd(conf *config.Snapshot, cfg config.Config, args []string) int {
 		return fail(err)
 	}
 	var pick session.Info
-	if len(args) == 1 {
-		if pick, err = session.Find(list, args[0]); err != nil {
+	switch {
+	case len(args) == 1 && all:
+		pick, err = session.FindAll(list, args[0])
+	case len(args) == 1:
+		pick, err = session.Find(list, args[0])
+	default:
+		var shown []session.Info
+		shown, err = toChoose(list, all)
+		switch {
+		case err != nil:
 			return fail(err)
+		case !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())):
+			return fail(errors.New("usage: aish resume [--all] ID|NAME (choosing needs a terminal)"))
 		}
-	} else {
-		if len(list) == 0 {
-			return fail(errors.New("no sessions yet"))
-		}
-		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-			return fail(errors.New("usage: aish resume ID|NAME (choosing needs a terminal)"))
-		}
+		rename := func(id, name string) error { return renameSession(client, dir, cur, id, name) }
 		var ok bool
-		if pick, ok, err = pickSession(dir, list, cur, cfg.Profile); err != nil {
-			return fail(err)
-		} else if !ok {
+		if pick, ok, err = pickSession(dir, shown, cur, cfg.Profile, all, rename); err == nil && !ok {
 			return 0
 		}
+	}
+	if err != nil {
+		return fail(err)
 	}
 	switch {
 	case pick.ID == cur:
@@ -76,9 +115,6 @@ func resumeCmd(conf *config.Snapshot, cfg config.Config, args []string) int {
 		var info rpc.Info
 		if err := client.Call(rpc.MethodResume, rpc.ResumeParams{ID: pick.ID}, &info); err != nil {
 			return fail(err)
-		}
-		if !curSaved {
-			fmt.Fprintln(os.Stderr, "\x1b[2mthe session you left was not saved\x1b[0m")
 		}
 		if sess, err := session.Load(dir, pick.ID); err == nil {
 			printResumed(pick, sess, cfg.Profile)
@@ -124,7 +160,7 @@ func printResumed(i session.Info, sess *session.Session, def string) {
 	}
 	es := session.Current(sess.Entries())
 	var parts []string
-	if i.Name != "" {
+	if i.Title() != i.ID {
 		parts = append(parts, i.ID)
 	}
 	parts = append(parts, fmt.Sprintf("%d requests", i.Requests), "last used "+ago(i.Modified))

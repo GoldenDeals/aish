@@ -11,7 +11,7 @@ import (
 	"github.com/GoldenDeals/aish/internal/shellstate"
 )
 
-func TestClearStartsNewFile(t *testing.T) {
+func TestNextStartsNewFile(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)
 	if err != nil {
@@ -26,7 +26,9 @@ func TestClearStartsNewFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		ids[s.ID] = true
-		s.Clear() // within the same second
+		next := s.Next() // within the same second
+		s.Unlock()
+		s = next
 		if err := s.Save(); err != nil {
 			t.Fatal(err)
 		}
@@ -45,7 +47,7 @@ func TestClearStartsNewFile(t *testing.T) {
 		}
 		want := 1
 		if o.ID == s.ID {
-			want = 0 // saved right after the last clear
+			want = 0 // saved right after the last Next
 		}
 		if n := len(o.Entries()); n != want {
 			t.Errorf("%s has %d entries, want %d", f, n, want)
@@ -128,7 +130,10 @@ func TestLockListFind(t *testing.T) {
 	if _, err := lock(dir, a.ID); err == nil {
 		t.Fatal("a locked session locked twice")
 	}
-	if err := Rename(dir, a.ID, "  deploy  "); err != nil {
+	if err := Rename(dir, a.ID, "deploy"); err == nil {
+		t.Fatal("renamed a session another holds")
+	}
+	if err := a.SetName("  deploy  "); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,17 +165,17 @@ func TestLockListFind(t *testing.T) {
 		t.Error("found nothing")
 	}
 
-	// Clear lets the saved journal go; the new one is locked once saved.
-	first := a.ID
-	a.Clear()
-	if isOpen(dir, first) || isOpen(dir, a.ID) {
-		t.Error("a journal stayed locked after clear")
-	}
-	if err := a.Save(); err != nil || !isOpen(dir, a.ID) {
-		t.Errorf("saved, yet not locked: %v", err)
-	}
+	// The session after a is not locked till it is on disk.
+	next := a.Next()
 	a.Unlock()
-	if isOpen(dir, a.ID) {
+	if isOpen(dir, a.ID) || isOpen(dir, next.ID) {
+		t.Error("a journal stayed locked after Unlock, or one not on disk is")
+	}
+	if err := next.Append(Entry{Kind: KindShell, Cmd: "ls"}); err != nil || !isOpen(dir, next.ID) {
+		t.Errorf("on disk, yet not locked: %v", err)
+	}
+	next.Unlock()
+	if isOpen(dir, next.ID) {
 		t.Error("still locked")
 	}
 }

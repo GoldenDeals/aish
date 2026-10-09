@@ -66,7 +66,9 @@ func (p *Proxy) saveState(cwd string) {
 	}
 	p.cur = &cur
 	if !p.sess.Saved() {
-		return // an unsaved session leaves nothing on disk, its state neither
+		// A session without entries leaves nothing on disk, its state
+		// neither: the first one, recorded right before, puts it there.
+		return
 	}
 	saved := p.savedModel()
 	saved.Shell = shellstate.Diff(*p.base, cur)

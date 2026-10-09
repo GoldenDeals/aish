@@ -85,7 +85,7 @@ func contextCmd(cfg config.Config, args []string) int {
 	}
 	journal := filepath.Join(dir, info.SessionID+".jsonl")
 	if !info.Saved {
-		journal = "not saved (aish clear save, aish new)"
+		journal = "none yet: on disk from the first entry"
 	}
 	row("journal", journal)
 

@@ -6,40 +6,42 @@ import (
 	"testing"
 )
 
-func TestSaveOnlyWhenAsked(t *testing.T) {
+// A session is on disk from its first entry, name and lock included;
+// without entries it leaves no file. Next leaves it on disk as it is.
+func TestSavedFromFirstEntry(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	journal := filepath.Join(dir, s.ID+".jsonl")
-	if err := s.Append(Entry{Kind: KindShell, Cmd: "ls"}, Entry{Kind: KindUser, Text: "hi"}); err != nil {
-		t.Fatal(err)
+	onDisk := func(id string) []string {
+		t.Helper()
+		found, err := filepath.Glob(filepath.Join(dir, id+".*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return found
 	}
-	if _, err := os.Stat(journal); !os.IsNotExist(err) {
-		t.Fatalf("an unsaved session wrote its journal: %v", err)
+	if err := s.SetName("probe"); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.Lock(); err != nil {
 		t.Fatal(err)
 	}
-	if f, err := lock(dir, s.ID); err != nil {
-		t.Fatalf("Lock locked an unsaved session: %v", err)
-	} else {
-		unlock(f)
-	}
-	if s.Saved() {
-		t.Fatal("new session saved")
-	}
-
-	if err := s.Save(); err != nil {
+	if err := s.Append(); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Save(); err != nil {
-		t.Fatalf("saved twice: %v", err)
+	if f := onDisk(s.ID); len(f) > 0 || s.Saved() {
+		t.Fatalf("a session without entries is on disk: %v, saved %v", f, s.Saved())
+	}
+
+	if err := s.Append(Entry{Kind: KindShell, Cmd: "ls"}, Entry{Kind: KindUser, Text: "hi"}); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.Append(Entry{Kind: KindShell, Cmd: "pwd"}); err != nil {
 		t.Fatal(err)
 	}
+	journal := filepath.Join(dir, s.ID+".jsonl")
 	o, err := Open(journal)
 	if err != nil {
 		t.Fatal(err)
@@ -47,29 +49,32 @@ func TestSaveOnlyWhenAsked(t *testing.T) {
 	if es := o.Entries(); len(es) != 3 || es[0].Cmd != "ls" || es[2].Cmd != "pwd" || es[0].Time.IsZero() {
 		t.Fatalf("journal on disk %+v", es)
 	}
-	if !s.Saved() || !o.Saved() {
-		t.Error("a saved or opened session is not saved")
+	if !s.Saved() || !o.Saved() || o.Name() != "probe" {
+		t.Errorf("saved %v, opened %v named %q", s.Saved(), o.Saved(), o.Name())
 	}
 	if _, err := lock(dir, s.ID); err == nil {
-		t.Fatal("a saved session is not locked")
+		t.Fatal("a session on disk is not locked")
+	}
+	if err := s.Save(); err != nil {
+		t.Fatalf("saved again: %v", err)
 	}
 
 	first := s.ID
-	s.Clear()
-	if s.ID == first || s.Saved() || s.Len() != 0 {
-		t.Fatalf("after clear: %s saved %v, %d entries", s.ID, s.Saved(), s.Len())
+	next := s.Next()
+	s.Unlock()
+	if next.ID == first || next.Saved() || next.Len() != 0 || next.Name() != "" {
+		t.Fatalf("next: %s saved %v, %d entries, named %q", next.ID, next.Saved(), next.Len(), next.Name())
 	}
-	if _, err := os.Stat(journal); err != nil {
-		t.Errorf("clear removed the saved journal: %v", err)
+	if o, err := Load(dir, first); err != nil || o.Len() != 3 || o.Name() != "probe" {
+		t.Errorf("the session left: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, first+".lock")); !os.IsNotExist(err) {
-		t.Errorf("the saved session is still locked: %v", err)
+		t.Errorf("the session left is still locked: %v", err)
 	}
-	if err := s.Append(Entry{Kind: KindShell, Cmd: "ls"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, s.ID+".jsonl")); !os.IsNotExist(err) {
-		t.Errorf("the session after clear wrote its journal: %v", err)
+	// Left without an entry, it leaves nothing.
+	next.Unlock()
+	if f := onDisk(next.ID); len(f) > 0 {
+		t.Errorf("an empty session left %v", f)
 	}
 }
 
@@ -99,7 +104,7 @@ func TestCheckName(t *testing.T) {
 	if err := s.Save(); err != nil {
 		t.Fatal(err)
 	}
-	if err := Rename(dir, s.ID, "work"); err != nil {
+	if err := s.SetName("work"); err != nil {
 		t.Fatal(err)
 	}
 	if err := CheckName(dir, "", "work"); err == nil {

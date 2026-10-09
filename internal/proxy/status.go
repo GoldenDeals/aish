@@ -75,7 +75,7 @@ func (p *Proxy) drawStatus() {
 // info is what `aish` commands ask the proxy about the shell. Called under
 // p.mu.
 func (p *Proxy) info() rpc.Info {
-	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Saved: p.sess.Saved(),
+	return rpc.Info{SessionID: p.sess.ID, Dir: p.sess.Dir(), Saved: p.sess.Saved(), Name: p.sess.Name(),
 		Profile: p.profile, Model: p.model, Effort: p.effort, Window: p.window, Asking: p.asking}
 }
 

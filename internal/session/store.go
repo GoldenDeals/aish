@@ -18,7 +18,8 @@ import (
 
 // A session is several files side by side: <id>.jsonl the journal,
 // <id>.state what the shell and the proxy were like, <id>.name the name the
-// user gave it, <id>.lock held by the aish that has the session open.
+// user gave it, <id>.title the one the model gave it after its first
+// request, <id>.lock held by the aish that has the session open.
 
 // Saved is what a session keeps besides its journal.
 type Saved struct {
@@ -74,9 +75,9 @@ func (s *Session) Dir() string {
 	return filepath.Dir(s.path)
 }
 
-// Lock marks the session open, so that no other aish opens it too. An
-// unsaved one is not on disk for another to open: Save locks it when it
-// puts it there.
+// Lock marks the session open, so that no other aish opens it too. One
+// without entries is not on disk for another to open: its first entry
+// locks it as it puts it there.
 func (s *Session) Lock() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,8 +136,12 @@ func isOpen(dir, id string) bool {
 
 // Info describes a session for `aish resume`.
 type Info struct {
-	ID       string
+	ID string
+	// Name is the one the user gave the session, AutoName the one the
+	// model did: `aish resume` lists the sessions with a Name, `aish resume
+	// --all` all of them.
 	Name     string
+	AutoName string
 	Modified time.Time
 	Last     string // the last request
 	Requests int
@@ -148,12 +153,27 @@ type Info struct {
 	Open     bool // in another aish, or in this one
 }
 
-// Title is the name, or the id for a session without one.
+// Title is the user's name, else the model's, else the id.
 func (i Info) Title() string {
-	if i.Name != "" {
+	switch {
+	case i.Name != "":
 		return i.Name
+	case i.AutoName != "":
+		return i.AutoName
 	}
 	return i.ID
+}
+
+// Named are the sessions of list the user named, for `aish resume` without
+// --all.
+func Named(list []Info) []Info {
+	var named []Info
+	for _, i := range list {
+		if i.Name != "" {
+			named = append(named, i)
+		}
+	}
+	return named
 }
 
 // List returns the sessions in dir, the most recent first.
@@ -169,9 +189,8 @@ func List(dir string) ([]Info, error) {
 			continue // Load would refuse it
 		}
 		info := Info{ID: id, Modified: modTime(f), Open: isOpen(dir, id)}
-		if b, err := os.ReadFile(filepath.Join(dir, id+".name")); err == nil {
-			info.Name = strings.TrimSpace(string(b))
-		}
+		info.Name = readName(filepath.Join(dir, id+".name"))
+		info.AutoName = readName(titlePath(dir, id))
 		if st, err := LoadState(dir, id); err == nil {
 			info.Cwd, info.Profile, info.TopLevel, info.Model = st.Shell.Cwd, st.Profile, st.TopLevel, st.Model
 		}
@@ -207,18 +226,42 @@ func requests(path string) (last string, n int) {
 	return last, n
 }
 
-// Find picks a session by its id, its name, or the start of either.
-func Find(list []Info, q string) (Info, error) {
+// Find picks a session by its id, the user's name for it, or the start of
+// either.
+func Find(list []Info, q string) (Info, error) { return find(list, q, false) }
+
+// FindAll is Find that takes the model's names too, which `aish resume
+// --all` shows: they need not differ, and one several sessions have is
+// no answer.
+func FindAll(list []Info, q string) (Info, error) { return find(list, q, true) }
+
+func find(list []Info, q string, auto bool) (Info, error) {
 	for _, i := range list {
 		if i.ID == q || i.Name == q {
 			return i, nil
 		}
 	}
+	// The model's name stands for a session the user did not name, as
+	// Title has it.
+	autoName := func(i Info) string {
+		if auto && i.Name == "" {
+			return i.AutoName
+		}
+		return ""
+	}
 	var found []Info
-	lq := strings.ToLower(q)
 	for _, i := range list {
-		if strings.HasPrefix(i.ID, q) || i.Name != "" && strings.HasPrefix(strings.ToLower(i.Name), lq) {
+		if n := autoName(i); n != "" && n == q {
 			found = append(found, i)
+		}
+	}
+	lq := strings.ToLower(q)
+	prefix := func(name string) bool { return name != "" && strings.HasPrefix(strings.ToLower(name), lq) }
+	if len(found) == 0 {
+		for _, i := range list {
+			if strings.HasPrefix(i.ID, q) || prefix(i.Name) || prefix(autoName(i)) {
+				found = append(found, i)
+			}
 		}
 	}
 	switch len(found) {
@@ -234,20 +277,27 @@ func Find(list []Info, q string) (Info, error) {
 	return Info{}, fmt.Errorf("%q matches %d sessions: %s", q, len(found), strings.Join(names, ", "))
 }
 
-// Rename names the session id; an empty name removes the name.
+// Rename gives session id of dir the user's name; an empty name removes
+// it. The session is locked meanwhile, so one that an aish holds is
+// refused: that aish names it (SetName), as it may keep the name for a
+// journal not on disk yet.
 func Rename(dir, id, name string) error {
-	name = strings.TrimSpace(name)
-	path := filepath.Join(dir, id+".name")
-	if name == "" {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return nil
+	if err := CheckID(id); err != nil {
+		return err
+	}
+	l, err := lock(dir, id)
+	if err != nil {
+		return err
+	}
+	defer unlock(l)
+	// Under the lock: Remove takes it to delete the files.
+	if _, err := os.Stat(filepath.Join(dir, id+".jsonl")); err != nil {
+		return fmt.Errorf("no session %s", id)
 	}
 	if err := CheckName(dir, id, name); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(name+"\n"), 0o600)
+	return writeName(dir, id, name)
 }
 
 // CheckName tells whether Rename would give session id the name: one line
@@ -261,13 +311,19 @@ func CheckName(dir, id, name string) error {
 	if strings.ContainsAny(name, "\n\r\t") || utf8.RuneCountInString(name) > 60 {
 		return fmt.Errorf("a name is one line of at most 60 characters")
 	}
-	list, err := List(dir)
+	// The names alone, not List: a proxy checks under its lock, and List
+	// reads every journal.
+	files, err := filepath.Glob(filepath.Join(dir, "*.name"))
 	if err != nil {
 		return err
 	}
-	for _, i := range list {
-		if i.ID != id && i.Name == name {
-			return fmt.Errorf("session %s is already called %q", i.ID, name)
+	for _, f := range files {
+		other := trimExt(filepath.Base(f))
+		if other == id || CheckID(other) != nil || readName(f) != name {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, other+".jsonl")); err == nil {
+			return fmt.Errorf("session %s is already called %q", other, name)
 		}
 	}
 	return nil

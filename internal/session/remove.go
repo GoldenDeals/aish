@@ -23,7 +23,7 @@ func Remove(dir, id string) error {
 
 // fileExts are the extensions of a session's files besides its .lock; the
 // .state.tmp is what a SaveState cut short leaves.
-var fileExts = []string{".jsonl", ".state", ".state.tmp", ".name"}
+var fileExts = []string{".jsonl", ".state", ".state.tmp", ".name", ".title"}
 
 // remove is Remove that reports a session already gone by found instead
 // of an error: two aish may prune at once.

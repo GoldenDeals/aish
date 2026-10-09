@@ -64,6 +64,7 @@ func (p *Proxy) configure(conf *config.Snapshot, cfg config.Config) {
 	p.conf, p.started = conf, &cfg
 	p.mcpFile, p.mcpSum = cfg.MCPConfig, fileSum(cfg.MCPConfig)
 	p.applyFields(cfg)
+	p.titles.on = true // the shell aish runs: see titles
 	p.mu.Unlock()
 	p.fixedWindow = cfg.ContextWindow > 0
 	if prov, err := p.listProvider(cfg); err == nil {
@@ -215,5 +216,7 @@ func (p *Proxy) loop(sh *shellRun) (int, error) {
 	// Before cleanup: their commands are in process groups of their own
 	// and would outlive aish.
 	p.stopBackground()
+	// Before cleanup too, which unlocks the session they name.
+	p.waitTitles(titleWait)
 	return exitCode(waitErr)
 }

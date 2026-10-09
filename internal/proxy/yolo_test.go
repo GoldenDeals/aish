@@ -111,7 +111,7 @@ func TestYoloRequest(t *testing.T) {
 	if _, err := call(t, p, rpc.MethodClear, rpc.ClearParams{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := call(t, p, rpc.MethodClear, rpc.ClearParams{SaveNew: true}); err != nil {
+	if _, err := call(t, p, rpc.MethodClear, rpc.ClearParams{Name: "work"}); err != nil {
 		t.Fatal(err)
 	}
 	request()

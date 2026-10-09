@@ -14,16 +14,21 @@ import (
 	"github.com/GoldenDeals/aish/internal/session"
 )
 
-// picker is the full-screen list `aish resume` shows without an argument.
+// picker is the full-screen list `aish resume` shows without an argument:
+// the sessions the user named, all of them with --all.
 type picker struct {
 	dir  string
 	list []session.Info
 	cur  string // the session of this shell, inside aish
 	def  string // the profile config.toml selects, which goes unnamed
+	all  bool   // --all: the sessions without the user's name too
 	sel  int
 	top  int
 	w, h int
 
+	// rename gives a session the user's name: the proxy that holds it, or
+	// the files of one nobody holds (renameSession).
+	rename  func(id, name string) error
 	editing bool
 	edit    []rune
 	// deleting: the next key is y to delete the session chosen, or not.
@@ -31,7 +36,7 @@ type picker struct {
 	msg      string
 }
 
-func pickSession(dir string, list []session.Info, cur, def string) (session.Info, bool, error) {
+func pickSession(dir string, list []session.Info, cur, def string, all bool, rename func(id, name string) error) (session.Info, bool, error) {
 	in, out := int(os.Stdin.Fd()), int(os.Stdout.Fd())
 	old, err := term.MakeRaw(in)
 	if err != nil {
@@ -41,7 +46,7 @@ func pickSession(dir string, list []session.Info, cur, def string) (session.Info
 	fmt.Print("\x1b[?1049h\x1b[?25l")
 	defer fmt.Print("\x1b[?25h\x1b[?1049l")
 
-	p := &picker{dir: dir, list: list, cur: cur, def: def}
+	p := &picker{dir: dir, list: list, cur: cur, def: def, all: all, rename: rename}
 	buf := make([]byte, 256)
 	for {
 		p.w, p.h, err = term.GetSize(out)
@@ -91,12 +96,14 @@ func (p *picker) key(k string) (done, ok bool) {
 		switch k {
 		case "\r":
 			id := p.list[p.sel].ID
-			if err := session.Rename(p.dir, id, string(p.edit)); err != nil {
+			if err := p.rename(id, string(p.edit)); err != nil {
 				p.msg = err.Error()
 				return false, false
 			}
 			p.editing, p.msg = false, ""
 			p.reload(id)
+			// The last name taken away: nothing is left to choose from.
+			return len(p.list) == 0, false
 		case "\x1b", "\x03":
 			p.editing, p.msg = false, ""
 		case "\x7f", "\x08":
@@ -141,8 +148,13 @@ func (p *picker) key(k string) (done, ok bool) {
 	case "\x1b[F", "\x1b[4~", "G":
 		p.sel = len(p.list) - 1
 	case "r":
+		// The model's name to start from: Enter keeps it as the user's.
+		i := p.list[p.sel]
 		p.editing = true
-		p.edit = []rune(p.list[p.sel].Name)
+		p.edit = []rune(i.Name)
+		if i.Name == "" {
+			p.edit = []rune(i.AutoName)
+		}
 	case "d":
 		switch i := p.list[p.sel]; {
 		case i.ID == p.cur:
@@ -169,16 +181,25 @@ func (p *picker) key(k string) (done, ok bool) {
 	return false, false
 }
 
+// reload lists the sessions anew, after a rename, at session id: without
+// --all, one whose name was taken away is gone from the list.
 func (p *picker) reload(id string) {
 	list, err := session.List(p.dir)
-	if err != nil || len(list) == 0 {
+	if err != nil {
 		return
 	}
+	if !p.all {
+		list = session.Named(list)
+	}
 	p.list, p.sel = list, 0
+	found := false
 	for n, i := range list {
 		if i.ID == id {
-			p.sel = n
+			p.sel, found = n, true
 		}
+	}
+	if !found {
+		p.msg = "no name now: aish resume --all lists it"
 	}
 }
 
@@ -190,8 +211,12 @@ func (p *picker) render() string {
 	var b strings.Builder
 	b.WriteString("\x1b[H\x1b[2J")
 	fit := func(s string) string { return runewidth.Truncate(s, p.w-1, "…") }
-	fmt.Fprintf(&b, "\x1b[1msessions\x1b[0m\x1b[2m%s\x1b[0m\r\n\r\n",
-		runewidth.Truncate("   ↑↓ choose · enter resume · r rename · d delete · q quit", p.w-9, "…"))
+	heading := "sessions"
+	if p.all {
+		heading = "all sessions"
+	}
+	fmt.Fprintf(&b, "\x1b[1m%s\x1b[0m\x1b[2m%s\x1b[0m\r\n\r\n", heading,
+		runewidth.Truncate("   ↑↓ choose · enter resume · r rename · d delete · q quit", p.w-1-len(heading), "…"))
 
 	rows := p.rows()
 	if p.sel < p.top {
@@ -232,7 +257,7 @@ func (p *picker) render() string {
 		fmt.Fprintf(&b, "%s%s\x1b[0m\x1b[2m%s\x1b[0m\r\n", style, head, tail)
 
 		var about []string
-		if i.Name != "" {
+		if i.Title() != i.ID {
 			about = append(about, i.ID)
 		}
 		about = append(about, fmt.Sprintf("%d requests", i.Requests))

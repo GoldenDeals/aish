@@ -114,6 +114,9 @@ var handlers = map[string]handler{
 	rpc.MethodResume: decoded(func(p *Proxy, ctx context.Context, rp rpc.ResumeParams) (any, error) {
 		return p.resume(ctx, rp.ID)
 	}),
+	rpc.MethodRename: decoded(func(p *Proxy, _ context.Context, rp rpc.RenameParams) (any, error) {
+		return p.rename(rp.Name)
+	}),
 	rpc.MethodMCPStatus: func(p *Proxy, _ context.Context, _ json.RawMessage) (any, error) {
 		return p.mcp.Status(), nil
 	},

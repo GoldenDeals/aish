@@ -1,7 +1,8 @@
 // Command aish runs your shell, bash or zsh, with an LLM agent built in.
 //
 //	aish [--resume]              start the shell under aish (a new or the latest session)
-//	aish resume [ID|NAME]        bring a session back, shell state included; pick one or rename
+//	aish resume [--all] [ID|NAME]
+//	                             bring a session back, shell state included; pick one or rename
 //	aish mcp                     the MCP servers and how they are doing
 //	aish skills                  the skills that apply here and their problems
 //	aish hooks                   the hooks that run here, by event, and their problems
@@ -13,11 +14,13 @@
 //	aish init bash|zsh           print the integration script of bash or zsh
 //	aish tool [NAME ARGS...]     list tools or run one
 //	aish session show            print the current session
-//	aish session rm ID|NAME...   remove saved sessions
+//	aish session rename [ID|NAME] NEWNAME
+//	                             name this or another session, for aish resume
+//	aish session rm ID|NAME...   remove sessions
 //	aish session prune [--older AGE]
 //	                             remove the sessions not used for AGE or sessions_ttl
-//	aish clear [save [NAME]]     start a new session; the current one is dropped unless saved
-//	aish new [NAME]              start a new session that is saved
+//	aish clear                   start a new session; the current one stays saved
+//	aish new [NAME]              start a new session with a name
 //	aish compact [FOCUS]         replace the session with a summary
 //	aish recap                   retell the whole session on the screen
 //	aish status                  the model and the settings
@@ -52,8 +55,11 @@ import (
 
 var usage = `usage:
   aish [--resume]            start the shell with aish (--resume: the latest session)
-  aish resume [ID|NAME]      continue a session: its history, env, functions, aliases
-                             and cwd; without an argument choose one (r renames it)
+  aish resume [--all] [ID|NAME]
+                             continue a session: its history, env, functions, aliases
+                             and cwd; without an argument choose one of those you
+                             named (r renames it); --all: of all, by the names the
+                             model gave them
   aish mcp                   show the MCP servers: state, tools, errors
   aish skills                show the skills of this directory and their problems
   aish hooks                 show the hooks of this directory in the order they run
@@ -69,13 +75,15 @@ var usage = `usage:
   aish init bash|zsh         print the integration script of bash or zsh
   aish tool [NAME ARGS...]   list tools, or run one
   aish session show          print the current session
-  aish session rm ID|NAME... remove saved sessions, not the one of this shell
+  aish session rename [ID|NAME] NEWNAME
+                             name this shell's session, or another one, for aish
+                             resume to list it; "" takes the name away
+  aish session rm ID|NAME... remove sessions, not the one of this shell
   aish session prune [--older AGE]
                              remove the sessions not used for AGE (30d, 12h),
                              sessions_ttl by default; open ones are kept
-  aish clear [save [NAME]]   start a new session; the current one is dropped unless
-                             saved, as NAME if given
-  aish new [NAME]            start a new session that is saved, as NAME if given
+  aish clear                 start a new session; the current one stays on disk
+  aish new [NAME]            start a new session, named NAME if given
   aish compact [FOCUS]       replace the session with its summary (FOCUS: what to keep)
   aish recap                 retell the whole session, on the screen only
   aish status                show the model and the settings
@@ -344,7 +352,7 @@ func toolCmd(cfg config.Config, args []string) int {
 }
 
 func sessionCmd(cfg config.Config, args []string) int {
-	const sessionUsage = "usage: aish session show | rm ID|NAME... | prune [--older AGE]"
+	const sessionUsage = "usage: aish session show | rename [ID|NAME] NEWNAME | rm ID|NAME... | prune [--older AGE]"
 	if len(args) == 0 {
 		return fail(errors.New(sessionUsage))
 	}
@@ -373,6 +381,8 @@ func sessionCmd(cfg config.Config, args []string) int {
 			}
 			printEntry(e)
 		}
+	case "rename":
+		return sessionRenameCmd(cfg, args[1:])
 	case "rm":
 		return sessionRmCmd(cfg, args[1:])
 	case "prune":

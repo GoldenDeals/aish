@@ -46,6 +46,7 @@ type agentHost struct {
 	untrusted    map[string]bool // the project files tellUntrusted told of
 	agentProv    llm.Provider    // the agent's provider, see providerFor
 	agentProvKey string
+	titles       titles // the model's names of sessions (title.go), under p.mu
 }
 
 // request runs fn on the agent for one RPC call, alone: the shell drives
@@ -168,7 +169,10 @@ func (p *Proxy) agentStart(ctx context.Context, ap rpc.AgentParams) error {
 		// the shell run that command after this one. Not before the turn:
 		// the request that has it may hand a command off yet.
 		_ = os.WriteFile(filepath.Join(p.run, "next.cmd"), nil, 0o600)
-		return a.Start(ctx, ap.Text, p.shellExec(ap))
+		sess := p.untitled()
+		err := a.Start(ctx, ap.Text, p.shellExec(ap))
+		p.titleSession(sess, a, ap.Text)
+		return err
 	})
 }
 
