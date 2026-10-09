@@ -74,6 +74,11 @@ type Entry struct {
 	// level: Raw is replayed only within it, as accounts differ between
 	// profiles.
 	Profile string `json:"profile,omitempty"`
+	// Prefix is a digest of what the request for this turn sent before the
+	// conversation, the system prompt and the tools, and of what the
+	// conversation was rendered by: a turn with the prefix, provider, model
+	// and profile of the turn before it could read what that one cached.
+	Prefix string `json:"prefix,omitempty"`
 	// What the request for this turn cost: everything sent, cache included,
 	// the part of it read from the cache, and the reply.
 	InputTokens  int `json:"input_tokens,omitempty"`

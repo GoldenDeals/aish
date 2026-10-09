@@ -396,7 +396,7 @@ func (a *Agent) turn(ctx context.Context) error {
 	}
 	e := session.Entry{
 		Kind: session.KindAssistant, Text: resp.Text, Raw: resp.Raw,
-		Provider: a.Provider.Name(), Model: a.Provider.Model(), Profile: a.Cfg.Profile,
+		Provider: a.Provider.Name(), Model: a.Provider.Model(), Profile: a.Cfg.Profile, Prefix: a.prefixKey(req),
 		InputTokens: resp.InputTokens, CachedTokens: resp.CachedTokens, OutputTokens: resp.OutputTokens,
 	}
 	for _, c := range resp.ToolCalls {

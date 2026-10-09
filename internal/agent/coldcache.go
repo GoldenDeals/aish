@@ -1,9 +1,13 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/GoldenDeals/aish/internal/llm"
 	"github.com/GoldenDeals/aish/internal/session"
 )
 
@@ -43,8 +47,10 @@ func (a *Agent) warnCold() {
 // cache renews it, so the last turn is the one that counts. "uncached":
 // the last turn read nothing from the cache though the one before it,
 // both of minTokens or more, was recent enough to have left the prefix
-// there: a provider or a model without a cache, or a prefix that changes
-// from turn to turn. ttl 0 checks no expiry and takes any cache to have
+// there, and sent the same (samePrefix): a provider or a model without a
+// cache, or messages that change from turn to turn. A turn that sent
+// another prefix, or went to another model, wrote the cache anew and was
+// to read nothing. ttl 0 checks no expiry and takes any cache to have
 // lived. A turn without a time tells nothing.
 func coldCache(es []session.Entry, tokens int, ttl time.Duration, minTokens int, now time.Time) (why string) {
 	if minTokens <= 0 || tokens < minTokens {
@@ -60,10 +66,18 @@ func coldCache(es []session.Entry, tokens int, ttl time.Duration, minTokens int,
 	if prev == nil || prev.Time.IsZero() || prev.InputTokens < minTokens || last.InputTokens < minTokens {
 		return ""
 	}
-	if (ttl == 0 || last.Time.Sub(prev.Time) <= ttl) && last.CachedTokens == 0 {
+	if (ttl == 0 || last.Time.Sub(prev.Time) <= ttl) && last.CachedTokens == 0 && samePrefix(*last, *prev) {
 		return "uncached"
 	}
 	return ""
+}
+
+// samePrefix says whether turn b was sent what turn a was before the
+// conversation, to the same provider, model and profile: the cache a
+// wrote was b's to read. Turns recorded before Entry.Prefix have none, and
+// are taken for the same, as they were before.
+func samePrefix(a, b session.Entry) bool {
+	return a.Prefix == b.Prefix && a.Provider == b.Provider && a.Model == b.Model && a.Profile == b.Profile
 }
 
 // measured are the last two assistant turns of es whose input the API
@@ -79,6 +93,23 @@ func measured(es []session.Entry) (last, prev *session.Entry) {
 		last = &es[i]
 	}
 	return last, nil
+}
+
+// prefixKey is a digest of what the provider caches of req ahead of its
+// messages, the system prompt and the tools, and of what the messages are
+// made from the journal by: max_output_bytes and the mask; and of the
+// effort, which sets the thinking, a change of which may drop the cached
+// messages. A turn whose key is not the one of the turn before it writes
+// the cache anew, as it should: after `aish apply-config` with another
+// system_prompt, policy hint or MCP server, a tool loaded by tool_search,
+// a request from another repository or on another day.
+func (a *Agent) prefixKey(req llm.Request) string {
+	h := sha256.New()
+	enc := json.NewEncoder(h)
+	enc.Encode(req.System)
+	enc.Encode(req.Tools)
+	enc.Encode([]any{a.Cfg.Effort, a.Cfg.MaxOutputBytes, a.maskKey})
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
 // age is d the short way, in its largest unit, rounded: 40s, 23m, 5h, 3d.
