@@ -143,3 +143,23 @@ func TestUserRequestMentionsUnderReadPolicy(t *testing.T) {
 		t.Errorf("terminal:\n%s", out)
 	}
 }
+
+// The host's model learns from task's description that a brief brings no
+// files: it names paths for the subagent to read. The description is part
+// of the cached prefix, so it is the same on every turn.
+func TestTaskDescPathsNotMentions(t *testing.T) {
+	a, _, _, _, _ := newSubAgent(t, &subProvider{}, def("alpha"))
+	tool, ok := a.Tools.Get(subName)
+	if !ok {
+		t.Fatal("no task tool")
+	}
+	desc := tool.Desc()
+	const want = "Write file paths as they are: the subagent reads the files itself. " +
+		"@file and /skill in a prompt attach nothing."
+	if !strings.Contains(desc, want) {
+		t.Errorf("task's description lacks %q:\n%s", want, desc)
+	}
+	if again := tool.Desc(); again != desc {
+		t.Errorf("task's description changed between calls:\n%s\n---\n%s", desc, again)
+	}
+}

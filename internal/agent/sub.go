@@ -112,6 +112,8 @@ func (t *taskTool) Desc() string {
 		"Usage:\n" +
 		"- A subagent starts with a fresh context: it knows nothing of this conversation. " +
 		"Its prompt must say everything it needs, and what to answer with.\n" +
+		"- Write file paths as they are: the subagent reads the files itself. " +
+		"@file and /skill in a prompt attach nothing.\n" +
 		"- Independent tasks go into one call, so that they run at once.\n" +
 		"- The answers come back to you, not to the user: tell the user what matters in them.\n" +
 		"- With background, the call returns at once, a line \"started ID (NAME)\" for each subagent, and they work on " +
