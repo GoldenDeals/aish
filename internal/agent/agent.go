@@ -40,7 +40,8 @@ const (
 
 // Journal is the session's journal as the proxy keeps it. ID and Len tell
 // the agent whether what it read is still the journal: `clear` and `aish
-// resume` replace it.
+// resume` replace it. Subagents append to it from goroutines of their own
+// (subusage.go), so it is safe for concurrent use.
 type Journal interface {
 	ID() string
 	Len() int
@@ -133,6 +134,7 @@ type Agent struct {
 	entries []session.Entry
 	sess    string // Journal.ID() the entries were read from
 	seen    int    // Journal.Len() after the agent last read or wrote it
+	own     int    // of those, the entries but KindUsage: see load
 	env     string // see environment; built once per request
 	mask    *Masker
 	maskKey string // the config the mask was built from: it is reloaded per request
@@ -276,17 +278,26 @@ func (a *Agent) closePending(ctx context.Context) error {
 // sent, and instruction files read before it are read again. Unless full,
 // the entries are kept when the journal is the one they came from: within
 // a request nothing but the agent writes it, and a journal of any size
-// costs the same.
+// costs the same. Nothing but the agent and its subagents, that is: what
+// their turns cost (KindUsage) is no part of the context, so the agent
+// holds none of it and takes it for no news, as reading the journal again
+// would undo what the agent holds otherwise than the journal (cutResults).
 func (a *Agent) load(full bool) {
-	if id := a.Journal.ID(); !full && a.entries != nil && id == a.sess && a.Journal.Len() == a.seen {
+	id := a.Journal.ID()
+	kept := !full && a.entries != nil && id == a.sess
+	if kept && a.Journal.Len() == a.seen {
 		return
 	}
 	es := a.Journal.Entries()
-	a.entries = session.Current(es)
+	if kept && ownEntries(es) == a.own {
+		a.seen = len(es)
+		return
+	}
+	a.entries = withoutUsage(session.Current(es))
 	if a.entries == nil {
 		a.entries = []session.Entry{}
 	}
-	a.sess, a.seen = a.Journal.ID(), len(es)
+	a.sess, a.seen, a.own = a.Journal.ID(), len(es), ownEntries(es)
 }
 
 func (a *Agent) append(es ...session.Entry) error {
@@ -298,6 +309,7 @@ func (a *Agent) append(es ...session.Entry) error {
 	a.entries = append(a.entries, es...)
 	err := a.Journal.Append(es...)
 	a.seen += len(es)
+	a.own += len(es)
 	return err
 }
 

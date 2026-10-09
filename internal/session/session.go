@@ -36,6 +36,12 @@ const (
 	// KindClear marks where the user erased the screen: the model is sent
 	// only what follows.
 	KindClear = "clear"
+	// KindUsage is what a call to the model cost whose context is not the
+	// session's: a turn of a subagent (About: its name). It is there for
+	// aish stats alone: the model is not sent it, Tokens does not count it,
+	// and its tokens are in Usage, not in InputTokens and the rest, which
+	// tell where the API measured the session's own context.
+	KindUsage = "usage"
 )
 
 // NotRecorded is the Output of a shell command that journal_ignore matched:
@@ -100,6 +106,18 @@ type Entry struct {
 
 	// tool_result, file, skill (a mention that could not be read)
 	IsError bool `json:"is_error,omitempty"`
+
+	// usage (Provider, Model and Profile are of the call too)
+	Usage *Usage `json:"usage,omitempty"`
+}
+
+// Usage is what a call to the model cost, counted as for an assistant
+// turn: everything sent, cache included, the part read from the cache, the
+// reply.
+type Usage struct {
+	Input  int `json:"input"`
+	Cached int `json:"cached,omitempty"`
+	Output int `json:"output"`
 }
 
 // Session is safe for concurrent use. Every session is saved: its first

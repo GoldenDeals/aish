@@ -111,6 +111,9 @@ func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Messag
 		user, parts = llm.Message{}, nil
 	}
 	for _, e := range entries {
+		if e.Kind == session.KindUsage {
+			continue // what a subagent's turn cost: no part of the context
+		}
 		if e.Kind != session.KindInstructions && e.Kind != session.KindFile && e.Kind != session.KindSkill && e.Kind != session.KindContext {
 			flushInst()
 		}

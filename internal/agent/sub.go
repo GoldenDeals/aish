@@ -35,8 +35,9 @@ import (
 // tools as its file allows them. The live shell is the host's, busy with
 // the request, so the subagent's bash commands run as processes of their
 // own. Only its final answer goes back, as the result of the call or, for
-// one in the background (bgtask.go), of task_wait or task_result; the
-// session never sees the rest.
+// one in the background (bgtask.go), of task_wait or task_result; of the
+// rest the session keeps what its turns cost (subusage.go), out of the
+// context.
 
 const (
 	subName = "task"
@@ -342,12 +343,19 @@ type subRun struct {
 	pol    *policy.Engine
 	ex     tools.Exec
 	yolo   func() bool // the host's Yolo: asked at each call, not taken now
+	// journal is the host's, sess its ID as the call found it: what the
+	// subagent's turns cost goes there while the shell is in that session.
+	journal Journal
+	sess    string
 }
 
 // prepSub takes what subagent d needs to work on prompt in the host's
 // shell situation.
 func (a *Agent) prepSub(d subagent.Def, prompt string) *subRun {
 	s := &subRun{def: d, prompt: prompt, cfg: a.Cfg, prov: a.Provider, pol: a.Policy.Subagent(d.Name), ex: a.exec, yolo: a.Yolo}
+	if a.Journal != nil {
+		s.journal, s.sess = a.Journal, a.Journal.ID()
+	}
 	s.cfg.SystemPrompt = subNote + "\n\n" + d.Prompt
 	if d.Model != "" && d.Model != s.cfg.Model {
 		// The host's effort and window are its model's: another one may
@@ -365,7 +373,7 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
 	if s.err != nil {
 		return "", s.err
 	}
-	j := &memJournal{id: "sub:" + s.def.Name}
+	j := &memJournal{id: "sub:" + s.def.Name, spent: s.spent}
 	sh := &subShell{}
 	child := &Agent{Cfg: s.cfg, Provider: s.prov, Tools: s.reg, Policy: s.pol, Journal: j, Shell: sh, UI: subUI{out}, Yolo: s.yolo, name: s.def.Name}
 	ex := s.ex
@@ -822,10 +830,12 @@ func matchCommand(pat, line string) bool {
 	return ok
 }
 
-// memJournal is a subagent's journal: in memory, gone with the call.
+// memJournal is a subagent's journal: in memory, gone with the call. Its
+// turns are told to spent, which keeps what they cost.
 type memJournal struct {
-	id string
-	es []session.Entry
+	id    string
+	es    []session.Entry
+	spent func(session.Entry)
 }
 
 func (j *memJournal) ID() string               { return j.id }
@@ -833,6 +843,13 @@ func (j *memJournal) Len() int                 { return len(j.es) }
 func (j *memJournal) Entries() []session.Entry { return slices.Clone(j.es) }
 func (j *memJournal) Append(es ...session.Entry) error {
 	j.es = append(j.es, es...)
+	if j.spent != nil {
+		for _, e := range es {
+			if e.Kind == session.KindAssistant {
+				j.spent(e)
+			}
+		}
+	}
 	return nil
 }
 

@@ -69,6 +69,7 @@ var compSpecs = []compSpec{
 	{name: "session rm", args: []string{"{named}..."}},
 	{name: "session show"},
 	{name: "skills"},
+	{name: "stats"},
 	{name: "status"},
 	{name: "tasks"},
 	{name: "tasks show", args: []string{"{task}"}},

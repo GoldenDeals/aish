@@ -152,6 +152,9 @@ func kindStats(es []session.Entry, maxOutput int) []kindStat {
 	by := map[string]*kindStat{}
 	total := kindStat{kind: "total"}
 	for _, e := range es {
+		if e.Kind == session.KindUsage {
+			continue // what a subagent's turn cost: no part of the context
+		}
 		s := by[e.Kind]
 		if s == nil {
 			s = &kindStat{kind: e.Kind}

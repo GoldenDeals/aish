@@ -26,6 +26,7 @@
 //	aish recap                   retell the whole session on the screen
 //	aish status                  the model and the settings
 //	aish context [--full]        how full the context is and with what; --full: the messages too
+//	aish stats                   tokens, requests and sessions over 24 hours, 7, 30 and 90 days
 //	aish model [PROFILE] [NAME] [EFFORT]
 //	                             list the models, switch this shell's profile, model or effort
 //	aish yolo [off]              turn the checks of the assistant's calls off till the shell exits, or on
@@ -93,6 +94,9 @@ var usage = `usage:
   aish context [--full]      show the context size and what fills it, by kind of
                              entry and by tool; --full also prints the messages
                              the model gets, as JSONL on stdout
+  aish stats                 show the tokens, requests and sessions of the last 24
+                             hours, 7, 30 and 90 days, subagents included, in all
+                             and by model
   aish model [PROFILE] [NAME] [EFFORT]
                              list the profiles and the models, or switch the
                              profile of config.toml, the model and/or the
@@ -179,6 +183,8 @@ func run(args []string) int {
 		return statusCmd(cfg)
 	case "context":
 		return contextCmd(cfg, args[1:])
+	case "stats":
+		return statsCmd(cfg, args[1:])
 	case "model":
 		return modelCmd(cfg, args[1:])
 	case "yolo":
