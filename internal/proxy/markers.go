@@ -124,6 +124,7 @@ func (p *Proxy) marker(m Marker) {
 // cmdStart begins the command line cmd the user typed. Called under p.mu.
 func (p *Proxy) cmdStart(cmd string) {
 	p.dropLine()
+	p.dropEdits() // neovim's diffs from before it are no one's
 	p.user = &segment{cmd: cmd, buf: capture.NewText(headCap, tailCap)}
 }
 
@@ -205,6 +206,7 @@ func (p *Proxy) recordUser(rc, cwd string) {
 	}
 	exit, _ := strconv.Atoi(rc)
 	out, tui := render(seg.buf)
+	out, tui = p.withEdits(out, tui) // what it saved in neovim, editdiff.go
 	if seg.cleared && strings.TrimSpace(out) == "" {
 		return // `clear` itself: nothing left on the screen
 	}
