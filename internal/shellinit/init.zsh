@@ -731,6 +731,116 @@ zle -N __aish_vi_quote __aish_quote
 	done
 }
 
+# Tab, with the completion system the user's .zshrc loaded (compinit),
+# completes on top of what it did: the path after an @ that starts a word
+# of a request, a line whose first word is no command, a skill after a /
+# that starts the line, and the subcommands of aish and their arguments,
+# which aish lists itself. Compsys runs -first- before any other
+# completion: ours runs the user's for any other word. A completion of his
+# for aish stays. Without compinit there is no compdef, and Tab stays as
+# it was.
+
+# __aish_comp_first is -first-. A word it completes ends the completion
+# there, which _compskip, a local of compsys's, tells it.
+__aish_comp_first() {
+	if __aish_comp_ours; then
+		_compskip=all
+		return 0
+	fi
+	[[ -n $__aish_comp_prev ]] && eval "$__aish_comp_prev"
+}
+
+# __aish_comp_ours completes the word under the cursor if it is aish's: an
+# @path after a first word that is no command, or first, @path or ?@path,
+# and /name if a skill fits.
+__aish_comp_ours() {
+	emulate -L zsh -o extendedglob
+	[[ -z $compstate[quote] && -z $IPREFIX ]] || return 1
+	if ((CURRENT == 1)); then
+		if [[ $PREFIX == (\?|)@* ]]; then
+			__aish_comp_mention
+			return 0
+		fi
+		[[ $PREFIX == /[A-Za-z0-9_-]# ]] && __aish_comp_skill
+		return
+	fi
+	[[ $PREFIX == @* ]] || return 1
+	whence -- "$words[1]" >/dev/null 2>&1 && return 1
+	__aish_comp_mention
+	return 0
+}
+
+# __aish_comp_mention completes the path after the @ as agent/mentions.go
+# reads it, the request going as typed: no quoting, a directory with a /
+# and nothing after it. A name with a blank is no @path; dot files come for
+# a dot typed.
+__aish_comp_mention() {
+	emulate -L zsh -o extendedglob
+	local d f n
+	local -a found dirs files
+	compset -P '(\?|)@'
+	d=${(M)PREFIX##*/}
+	compset -P '*/'
+	[[ $d == \~(/*|) ]] && d=$HOME${d#\~}
+	if [[ $PREFIX == .* ]]; then
+		found=($d*(DN))
+	else
+		found=($d*(N))
+	fi
+	for f in $found; do
+		n=${f##*/}
+		[[ $n == *[[:space:]]* ]] && continue
+		if [[ -d $f ]]; then
+			dirs+=("$n/")
+		else
+			files+=("$n")
+		fi
+	done
+	compadd -Q -S '' -a dirs
+	compadd -Q -a files
+}
+
+# __aish_comp_skill completes /name with the skills of __aish_is_skill's
+# roots, and fails, leaving the word as it was, when none fits: the word is
+# a path then.
+__aish_comp_skill() {
+	emulate -L zsh -o extendedglob
+	local d f p ip
+	local -a roots names
+	roots=("$HOME/.claude" "${XDG_CONFIG_HOME:-$HOME/.config}/aish")
+	d=$PWD
+	while [[ -n $d ]]; do
+		roots+=("$d/.claude")
+		d=${d%/*}
+	done
+	for d in $roots /.claude; do
+		for f in $d/skills/*/SKILL.md(N-.); do
+			f=${f:h:t}
+			[[ $f == [A-Za-z0-9_-](#c1,64) ]] && names+=("$f")
+		done
+	done
+	p=$PREFIX ip=$IPREFIX
+	compset -P '/'
+	compadd -Q -- ${(u)names} && return 0
+	PREFIX=$p IPREFIX=$ip
+	return 1
+}
+
+# __aish_comp_aish completes the words of aish, which aish lists: the words
+# before the cursor's and the start of that one go to it.
+__aish_comp_aish() {
+	emulate -L zsh
+	local -a v
+	v=("${(@f)$("${AISH_BIN:-aish}" __complete "${(@)words[1,CURRENT-1]}" "$PREFIX" </dev/null 2>/dev/null)}")
+	compadd -- "${(@)v:#}"
+}
+
+if (( ${+functions[compdef]} )); then
+	typeset -g __aish_comp_prev=${_comps[-first-]-}
+	compdef __aish_comp_first -first-
+	(( ${+_comps[aish]} )) || compdef __aish_comp_aish aish
+fi
+
 zle -A accept-line __aish_accept_prev
 zle -N accept-line __aish_accept
 preexec_functions+=(__aish_preexec)

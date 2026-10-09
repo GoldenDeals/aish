@@ -12,6 +12,7 @@
 //	                             check the policies, or ask them about one call (of subagent NAME)
 //	aish trust [--revoke|--list] let the .aish.toml here run the repository's hooks and tools
 //	aish init bash|zsh           print the integration script of bash or zsh
+//	aish completion bash|zsh     print the Tab completion of aish for bash or zsh
 //	aish tool [NAME ARGS...]     list tools or run one
 //	aish session show            print the current session
 //	aish session rename [ID|NAME] NEWNAME
@@ -73,6 +74,8 @@ var usage = `usage:
                              let the .aish.toml here run hooks and tools from the
                              repository, as it is now; or take that back; or list
   aish init bash|zsh         print the integration script of bash or zsh
+  aish completion bash|zsh   print Tab completion of aish for bash or zsh, for a
+                             shell not under aish (one under it has it)
   aish tool [NAME ARGS...]   list tools, or run one
   aish session show          print the current session
   aish session rename [ID|NAME] NEWNAME
@@ -116,6 +119,14 @@ func run(args []string) int {
 	// is wrong with it, and that nothing was applied.
 	if len(args) > 0 && args[0] == "apply-config" {
 		return applyConfigCmd(args[1:])
+	}
+	// Neither reads config.toml here: Tab and its scripts work with the
+	// file broken on disk too.
+	if len(args) > 0 && args[0] == "__complete" {
+		return completeCmd(args[1:])
+	}
+	if len(args) > 0 && args[0] == "completion" {
+		return completionCmd(args[1:])
 	}
 	// One reading of config.toml: the proxy keeps it, cfg is what it
 	// selects here.

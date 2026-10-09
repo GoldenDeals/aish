@@ -754,6 +754,151 @@ for __aish_km in emacs vi-insert; do
 done
 unset __aish_km __aish_k __aish_b __aish_q
 
+# Tab completes, on top of what it did: the path after an @ that starts a
+# word of a request, a line whose first word is no command (the file it
+# attaches, agent/mentions.go; bash would complete host names there), a
+# skill after a / that starts the line, and the subcommands of aish and
+# their arguments, which aish lists itself (cmd/aish/completion.go). Bash
+# asks complete -I for the first word and complete -D for a word of a
+# command with no compspec of its own: those are ours. The user's, from
+# ~/.bashrc (bash-completion's loader), become ours with his options, and
+# ours calls his for any other word; one that is no function stays his,
+# and so does a compspec of his for aish. Once, at load: $(...) forks.
+
+# __aish_comp_D completes a word after the first. Of a command, as before;
+# of a request, an @ word is a path, the rest is bash's own completion, not
+# that of the user's -D: bash-completion would leave a compspec for the
+# first word, one that knows no @, for the next Tab.
+__aish_comp_D() {
+	if type -t -- "${1-}" >/dev/null 2>&1; then
+		if [[ -n ${__aish_comp_dprev-} ]]; then
+			"$__aish_comp_dprev" "$@" && return 0
+			return $?
+		fi
+	elif __aish_comp_mention "${2-}"; then
+		return 0
+	fi
+	compopt -o bashdefault -o default 2>/dev/null || :
+	return 0
+}
+
+# __aish_comp_I completes the first word: @path, a skill for /name if one
+# fits, else as before, by the user's -I or as command names.
+__aish_comp_I() {
+	__aish_comp_mention "${2-}" && return 0
+	__aish_comp_skill "${2-}" && return 0
+	if [[ -n ${__aish_comp_iprev-} ]]; then
+		"$__aish_comp_iprev" "$@" && return 0
+		return $?
+	fi
+	compopt -o bashdefault -o default 2>/dev/null || :
+	return 0
+}
+
+# __aish_comp_mention completes the word before the cursor if it is @path,
+# @ at the start of it as agent/mentions.go reads one, and fails if not. $1
+# is the part of it readline replaces: COMP_WORDBREAKS cuts words at @, =
+# and :, and bash keeps the @ in the part after it. (An @ after another
+# character, as in ?@path, bash takes for a host name's, compspecs
+# unasked.) A path goes as typed, as the request does: no quoting, a
+# directory with a / and no space after it. A name with a blank is no
+# @path; dot files come for a dot typed.
+__aish_comp_mention() {
+	local __aish_w __aish_p __aish_k __aish_h __aish_f
+	__aish_w=${COMP_LINE-}
+	__aish_w=${__aish_w:0:${COMP_POINT-0}}
+	__aish_w=${__aish_w##*[[:space:]]}
+	[[ $__aish_w == @* && $__aish_w == *"$1" ]] || return 1
+	__aish_p=${__aish_w#@}
+	__aish_k=${__aish_w%"$1"} # what readline keeps of the word
+	__aish_h=$__aish_p
+	[[ $__aish_p == '~' || $__aish_p == '~/'* ]] && __aish_h=$HOME${__aish_p:1}
+	COMPREPLY=()
+	while IFS= read -r __aish_f; do
+		[[ $__aish_f == *[[:space:]]* ]] && continue
+		[[ ${__aish_f##*/} == .* && ${__aish_p##*/} != .* ]] && continue
+		[[ -d $__aish_f ]] && __aish_f+=/
+		if [[ $__aish_h != "$__aish_p" ]]; then
+			[[ $__aish_f == "$HOME"/* ]] || continue
+			__aish_f="~${__aish_f:${#HOME}}"
+		fi
+		__aish_f=@$__aish_f
+		COMPREPLY+=("${__aish_f#"$__aish_k"}")
+	done < <(compgen -f -- "$__aish_h")
+	if ((${#COMPREPLY[@]} == 1)) && [[ ${COMPREPLY[0]} == */ ]]; then
+		compopt -o nospace 2>/dev/null || :
+	fi
+	# Nothing else for the word: bash's default would add host names.
+	compopt +o bashdefault +o default 2>/dev/null || :
+	return 0
+}
+
+# __aish_comp_skill completes /name at the start of the line with the
+# skills of __aish_is_skill's roots, and fails when none fits: the word is
+# a path then. The roots are globbed in a subshell, nullglob and all, as
+# the user's shopt may have it otherwise.
+__aish_comp_skill() {
+	local __aish_n __aish_w __aish_f
+	__aish_n=${1#/}
+	[[ $1 == /* && $__aish_n != *[!A-Za-z0-9_-]* ]] || return 1
+	__aish_w=${COMP_LINE-}
+	__aish_w=${__aish_w:0:${COMP_POINT-0}}
+	[[ ${__aish_w%"$1"} != *[![:space:]]* ]] || return 1
+	COMPREPLY=()
+	while IFS= read -r __aish_f; do
+		__aish_f=${__aish_f%/SKILL.md}
+		__aish_f=${__aish_f##*/}
+		[[ ${#__aish_f} -le 64 && $__aish_f != *[!A-Za-z0-9_-]* ]] || continue
+		[[ " ${COMPREPLY[*]-} " == *" /$__aish_f "* ]] || COMPREPLY+=("/$__aish_f")
+	done < <(
+		set +f
+		shopt -s nullglob
+		shopt -u failglob nocaseglob dotglob
+		GLOBIGNORE=
+		__aish_w=$PWD
+		set -- "$HOME/.claude" "${XDG_CONFIG_HOME:-$HOME/.config}/aish"
+		while [[ -n $__aish_w ]]; do
+			set -- "$@" "$__aish_w/.claude"
+			__aish_w=${__aish_w%/*}
+		done
+		for __aish_w in "$@" /.claude; do
+			for __aish_f in "$__aish_w/skills/$__aish_n"*/SKILL.md; do
+				[[ -f $__aish_f ]] && printf '%s\n' "$__aish_f"
+			done
+		done
+	)
+	((${#COMPREPLY[@]} > 0))
+}
+
+# __aish_comp_aish completes the words of aish, which aish lists: the
+# words before the cursor's and the start of that one go to it. They come
+# quoted, as a session name with a blank in it has to.
+__aish_comp_aish() {
+	local __aish_c __aish_q
+	COMPREPLY=()
+	while IFS= read -r __aish_c; do
+		printf -v __aish_q %q "$__aish_c"
+		[[ $__aish_q == "${2-}"* ]] && COMPREPLY+=("$__aish_q")
+	done < <("${AISH_BIN:-aish}" __complete "${COMP_WORDS[@]:0:COMP_CWORD}" "${2-}" </dev/null 2>/dev/null)
+	return 0
+}
+
+complete -p aish >/dev/null 2>&1 || complete -F __aish_comp_aish aish
+# Bash before 5.0 has no -I, 4.0 no -D: complete fails, and Tab stays.
+for __aish_k in D I; do
+	__aish_l=$(complete -p "-$__aish_k" 2>/dev/null) || __aish_l=
+	__aish_f=
+	if [[ -z $__aish_l ]]; then
+		complete "-$__aish_k" -F "__aish_comp_$__aish_k" 2>/dev/null || :
+	elif [[ $__aish_l == *' -F '* ]]; then
+		__aish_f=${__aish_l#* -F }
+		__aish_f=${__aish_f%% *}
+		eval "${__aish_l/" -F $__aish_f "/" -F __aish_comp_$__aish_k "}" 2>/dev/null || __aish_f=
+	fi
+	if [[ $__aish_k == D ]]; then __aish_comp_dprev=$__aish_f; else __aish_comp_iprev=$__aish_f; fi
+done
+unset __aish_k __aish_l __aish_f
+
 HISTIGNORE="${HISTIGNORE:+$HISTIGNORE:}__aish_ask *"
 PS0='${__aish_ps0}'"${PS0-}"
 # __aish_precmd returns the code of the user's command, for $? in PS1 and in
