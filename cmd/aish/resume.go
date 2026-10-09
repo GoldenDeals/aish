@@ -125,17 +125,18 @@ func resumeCmd(conf *config.Snapshot, cfg config.Config, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	return startShell(conf, cfg, sess, true)
+	return startShell(conf, cfg, sess, true, fail)
 }
 
 // startShell runs the shell under aish with sess, brought back as it was left
 // if resume. conf is the config files cfg is of: the proxy goes by them.
-func startShell(conf *config.Snapshot, cfg config.Config, sess *session.Session, resume bool) int {
+// What keeps the shell from starting goes to failed.
+func startShell(conf *config.Snapshot, cfg config.Config, sess *session.Session, resume bool, failed func(error) int) int {
 	p := proxy.New(sess)
 	if resume {
 		saved, err := session.LoadState(cfg.SessionsDir, sess.ID)
 		if err != nil {
-			return fail(err)
+			return failed(err)
 		}
 		p.Resume(saved)
 		if list, err := session.List(cfg.SessionsDir); err == nil {
@@ -148,7 +149,7 @@ func startShell(conf *config.Snapshot, cfg config.Config, sess *session.Session,
 	}
 	code, err := p.Run(conf, cfg)
 	if err != nil {
-		return fail(err)
+		return failed(err)
 	}
 	return code
 }

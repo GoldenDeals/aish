@@ -121,6 +121,7 @@ func main() {
 }
 
 func run(args []string) int {
+	fb := takeFallback()
 	// Not with config.toml as read here: the proxy reads it and tells what
 	// is wrong with it, and that nothing was applied.
 	if len(args) > 0 && args[0] == "apply-config" {
@@ -148,6 +149,8 @@ func run(args []string) int {
 		case byProxy(args):
 			// It goes by the config in force, or by none: the file waits
 			// for aish apply-config, which tells what is wrong with it.
+		case topErr != nil && startsProxy(args):
+			return fb.fail("", err)
 		case topErr != nil:
 			return fail(err)
 		case len(args) == 0 || args[0] != "agent":
@@ -157,8 +160,8 @@ func run(args []string) int {
 		}
 		cfg = top
 	}
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return shell(conf, cfg, args)
+	if startsProxy(args) {
+		return shell(conf, cfg, args, fb)
 	}
 	switch args[0] {
 	case "init":
@@ -221,7 +224,9 @@ func run(args []string) int {
 	return 2
 }
 
-func shell(conf *config.Snapshot, cfg config.Config, args []string) int {
+// shell starts the shell under aish; what keeps it from starting, fb tells
+// and falls back on.
+func shell(conf *config.Snapshot, cfg config.Config, args []string, fb fallback) int {
 	resume := false
 	for _, a := range args {
 		switch a {
@@ -245,11 +250,12 @@ func shell(conf *config.Snapshot, cfg config.Config, args []string) int {
 	} else {
 		sess, err = session.New(cfg.SessionsDir)
 	}
+	failed := func(err error) int { return fb.fail(cfg.Shell, err) }
 	if err != nil {
-		return fail(err)
+		return failed(err)
 	}
 	// Latest starts a new session when there is nothing to continue.
-	return startShell(conf, cfg, sess, resume && sess.Len() > 0)
+	return startShell(conf, cfg, sess, resume && sess.Len() > 0, failed)
 }
 
 func trimDashes(a []string) []string {

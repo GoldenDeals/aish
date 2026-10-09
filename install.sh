@@ -179,13 +179,14 @@ terminal emulator (in its profile settings), or add this line at the end of
 ~/.bashrc (~/.zshrc for zsh):
 EOF
 # shellcheck disable=SC2016 # the line is printed, not run
-printf '  %s\n' '[[ -z ${AISH_SOCK-} && $- == *i* ]] && command -v aish >/dev/null && exec aish'
+printf '  %s\n' '[[ -z ${AISH_SOCK-} && ${AISH_FALLBACK-} != $$ && $- == *i* ]] && command -v aish >/dev/null && exec aish'
 cat <<'EOF'
 The shell aish starts reads that file too and skips the line: AISH_SOCK is
 set there. $- == *i* keeps aish out of scripts; command -v keeps exec from
 closing the terminal if aish is gone. aish starts bash; for zsh, see
-"zsh" in README.md. Should aish fail to start (a broken config, say), the
-terminal closes at once: open one with bash --norc to fix it. Do not make
-aish your login shell (chsh): ssh with a command and scp run that with -c,
-which aish does not take.
+"zsh" in README.md. Should aish fail to start (a broken config, say), it
+prints why and starts your shell in its place, rc files and all, with its
+pid in AISH_FALLBACK, for the line to skip it: fix what is wrong there and
+run aish. Do not make aish your login shell (chsh): ssh with a command and
+scp run that with -c, which aish does not take.
 EOF
