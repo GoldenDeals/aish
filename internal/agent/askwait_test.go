@@ -195,16 +195,25 @@ func (u *blockingUI) Form(ctx context.Context, qs []Question) ([]Answer, error) 
 }
 
 // held is the time each question was held open by blockingUI, and the
-// cause its ctx ended with.
+// cause its ctx ended with. The time runs from since, a moment before the
+// question was asked: the test sets it before the request, each question
+// for the next one at its end. The clock of a question starts before the UI
+// gets it, so a time from the start of hold falls short of the wait by the
+// delay between the two and has the question seem to end early.
 type held struct {
+	since  time.Time
 	took   []time.Duration
 	causes []string
 }
 
 func (h *held) hold(ctx context.Context) {
-	start := time.Now()
+	if h.since.IsZero() {
+		panic("held: since is not set before the request")
+	}
 	<-ctx.Done()
-	h.took = append(h.took, time.Since(start))
+	end := time.Now()
+	h.took = append(h.took, end.Sub(h.since))
+	h.since = end
 	h.causes = append(h.causes, context.Cause(ctx).Error())
 }
 
@@ -217,6 +226,7 @@ func TestAskWaitClock(t *testing.T) {
 	a, j, _, ui, cwd := newAgent(t, asking(3))
 	var h held
 	a.Policy, a.UI = askPolicy(t), &blockingUI{fakeUI: ui, hold: h.hold}
+	h.since = time.Now()
 	if err := a.Start(context.Background(), "remove x", tools.Exec{Dir: cwd}); err != nil {
 		t.Fatal(err)
 	}
@@ -244,6 +254,7 @@ func TestAskUserTimeout(t *testing.T) {
 	a.Cfg.AskTimeout = "50ms"
 	var h held
 	a.UI = &blockingUI{fakeUI: ui, hold: h.hold}
+	h.since = time.Now()
 	if err := a.Start(context.Background(), "make it nice", tools.Exec{Dir: cwd}); err != nil {
 		t.Fatal(err)
 	}

@@ -22,6 +22,10 @@ import (
 type foreground struct {
 	group atomic.Int64
 	cmd   *exec.Cmd
+	t     *testing.T       // of stand: a Wait that fails fails it
+	ended chan struct{}    // closed once the sleep is reaped
+	state *os.ProcessState // how it ended, once ended is closed
+	err   error
 }
 
 func newForeground(t *testing.T, p *Proxy) *foreground {
@@ -35,6 +39,9 @@ func newForeground(t *testing.T, p *Proxy) *foreground {
 }
 
 // stand starts sleep in a group of its own and puts it in the foreground.
+// One goroutine waits for it, however many times interrupted asks: of two
+// Waits of the process only the one that reaps it gets its status, the
+// other "no child processes".
 func (f *foreground) stand(t *testing.T) {
 	t.Helper()
 	f.cmd = exec.Command("sleep", "30")
@@ -42,20 +49,24 @@ func (f *foreground) stand(t *testing.T) {
 	if err := f.cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	f.t, f.ended = t, make(chan struct{})
+	go func() {
+		f.state, f.err = f.cmd.Process.Wait()
+		close(f.ended)
+	}()
 	t.Cleanup(func() { _ = f.cmd.Process.Kill() })
 	f.group.Store(int64(f.cmd.Process.Pid))
 }
 
 // interrupted reports whether the sleep ended by SIGINT within d.
 func (f *foreground) interrupted(d time.Duration) bool {
-	done := make(chan *os.ProcessState, 1)
-	go func() {
-		st, _ := f.cmd.Process.Wait()
-		done <- st
-	}()
+	f.t.Helper()
 	select {
-	case st := <-done:
-		ws, ok := st.Sys().(syscall.WaitStatus)
+	case <-f.ended:
+		if f.err != nil {
+			f.t.Fatalf("waiting for the sleep: %v", f.err)
+		}
+		ws, ok := f.state.Sys().(syscall.WaitStatus)
 		return ok && ws.Signaled() && ws.Signal() == syscall.SIGINT
 	case <-time.After(d):
 		return false
