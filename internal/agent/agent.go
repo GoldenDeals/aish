@@ -227,7 +227,7 @@ func (a *Agent) Start(ctx context.Context, text string, ex tools.Exec) error {
 	if err := a.append(added...); err != nil {
 		return err
 	}
-	if err := a.append(session.Entry{Kind: session.KindUser, Text: text, Cwd: cwd}); err != nil {
+	if err := a.append(session.Entry{Kind: session.KindUser, Text: text, Cwd: cwd, Repo: gitRoot(ctx, ex)}); err != nil {
 		return err
 	}
 	a.warnCold()
@@ -470,9 +470,9 @@ func (a *Agent) request(entries []session.Entry) llm.Request {
 		extra = strings.TrimSpace(note + "\n\n" + extra)
 	}
 	if a.env == "" {
-		// From a.entries, not entries: Compact adds its prompt as a request
-		// and must send the system prompt the previous turns were cached with.
-		a.env = environment(requestCwd(a.entries, a.exec.Dir), a.exec.Shell)
+		// From the shell the request was made in: a command of the request
+		// that exports USER does not change what its turns are cached with.
+		a.env = environment(a.exec.Shell, a.Cfg.Model, a.Cfg.Provider, a.exec.Getenv("USER"))
 	}
 	if key := fmt.Sprint(a.Cfg.MaskDefaults, a.Cfg.Mask); a.mask == nil || key != a.maskKey {
 		m, err := NewMasker(a.Cfg.MaskDefaults, a.Cfg.Mask)

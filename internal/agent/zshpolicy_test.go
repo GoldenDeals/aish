@@ -39,11 +39,10 @@ func TestPolicyZsh(t *testing.T) {
 }
 
 func TestEnvironmentShell(t *testing.T) {
-	dir := t.TempDir()
-	if env := environment(dir, "zsh"); !strings.Contains(env, "- Shell: zsh") {
+	if env := environment("zsh", "m", "", "u"); !strings.Contains(env, "- Shell: zsh") {
 		t.Errorf("zsh:\n%s", env)
 	}
-	if env := environment(dir, ""); !strings.Contains(env, "- Shell: bash") {
+	if env := environment("", "m", "", "u"); !strings.Contains(env, "- Shell: bash") {
 		t.Errorf("bash:\n%s", env)
 	}
 }

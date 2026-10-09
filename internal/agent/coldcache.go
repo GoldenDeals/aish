@@ -102,7 +102,8 @@ func measured(es []session.Entry) (last, prev *session.Entry) {
 // messages. A turn whose key is not the one of the turn before it writes
 // the cache anew, as it should: after `aish apply-config` with another
 // system_prompt, policy hint or MCP server, a tool loaded by tool_search,
-// a request from another repository or on another day.
+// a request from a project with a system_prompt, policy hints or tools of
+// its own. The date and the directory of a request are in its message.
 func (a *Agent) prefixKey(req llm.Request) string {
 	h := sha256.New()
 	enc := json.NewEncoder(h)

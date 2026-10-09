@@ -67,6 +67,10 @@ type Entry struct {
 
 	// user, assistant; context: what the hook added
 	Text string `json:"text,omitempty"`
+	// user: the top of the git repository Cwd is in, "" outside one (and
+	// in journals from before the field). The request's header has it, not
+	// the system prompt, which a cd would change.
+	Repo string `json:"repo,omitempty"`
 
 	// assistant
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`

@@ -1,17 +1,19 @@
 package agent
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/GoldenDeals/aish/internal/capture"
+	"github.com/GoldenDeals/aish/internal/config"
 	"github.com/GoldenDeals/aish/internal/llm"
 	"github.com/GoldenDeals/aish/internal/session"
+	"github.com/GoldenDeals/aish/internal/tools"
 )
 
 // systemPrompt is assembled from Claude Code's system prompt (v2.1.286, as
@@ -33,32 +35,47 @@ func system(env, extra string) string {
 	return b.String()
 }
 
-// environment describes the machine the agent runs on and shell, the one
-// its bash tool runs in ("" for bash). It goes into the system prompt, the
-// first thing the provider caches, so it holds nothing that changes within
-// a request: the cwd is in every user message instead, and the git root is
-// taken for dir, where the request was made, not for wherever its commands
-// have cd'ed since.
-func environment(dir, shell string) string {
+// environment describes the machine the agent runs on, the shell its bash
+// tool runs in ("" for bash), the model that answers (provider "" being
+// config.DefaultProvider) and user, the shell's $USER. It goes into the
+// system prompt, the first thing the provider caches, so it holds nothing
+// that changes from request to request of one shell: the date, the cwd and
+// its git root are in the header of each request (Messages), where a cd or
+// midnight leaves the history before them cached.
+func environment(shell, model, provider, user string) string {
 	var b strings.Builder
 	host, _ := os.Hostname()
-	repo := "no"
-	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
-		repo = "yes, root " + strings.TrimSpace(string(out))
-	}
-	fmt.Fprintf(&b, "- Git repository: %s\n", repo)
 	osName := runtime.GOOS
 	if out, err := exec.Command("uname", "-sr").Output(); err == nil {
 		osName = strings.TrimSpace(string(out))
 	}
-	fmt.Fprintf(&b, "- OS: %s (%s), host %s, user %s\n", osName, runtime.GOARCH, host, os.Getenv("USER"))
+	fmt.Fprintf(&b, "- OS: %s (%s), host %s, user %s\n", osName, runtime.GOARCH, host, user)
 	if shell == "zsh" {
 		b.WriteString("- Shell: zsh (interactive, the user's own ~/.zshrc). Your bash tool runs its commands in this zsh: write them for zsh, quote what zsh would glob, and keep to what zsh and bash read alike\n")
 	} else {
 		b.WriteString("- Shell: bash (interactive, the user's own ~/.bashrc)\n")
 	}
-	fmt.Fprintf(&b, "- Today's date: %s", time.Now().Format("2006-01-02"))
+	if provider == "" {
+		provider = config.DefaultProvider
+	}
+	fmt.Fprintf(&b, "- Model: %s (%s)", model, provider)
 	return b.String()
+}
+
+// gitRoot is the top of the git repository the request made in ex is in,
+// as git finds it in the shell's environment, "" outside one. It is taken
+// for the directory of the request, not for wherever its commands cd to.
+func gitRoot(ctx context.Context, ex tools.Exec) string {
+	if ex.Dir == "" {
+		return "" // git would look at the proxy's own directory
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", ex.Dir, "rev-parse", "--show-toplevel")
+	cmd.Env = ex.Env
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // requestCwd is the directory the last user request was made in, or cwd
@@ -136,7 +153,11 @@ func Messages(entries []session.Entry, maxOutput int, mask *Masker) []llm.Messag
 			e.Output = mask.Mask(e.Output)
 			parts = append(parts, shellBlock(e, maxOutput))
 		case session.KindUser:
-			parts = append(parts, fmt.Sprintf("[%s, cwd %s]\n%s", e.Time.Format("2006-01-02 15:04"), e.Cwd, e.Text))
+			head := e.Time.Format("2006-01-02 15:04") + ", cwd " + e.Cwd
+			if e.Repo != "" {
+				head += ", git root " + e.Repo
+			}
+			parts = append(parts, "["+head+"]\n"+e.Text)
 		case session.KindToolResult:
 			user.ToolResults = append(user.ToolResults, llm.ToolResult{
 				CallID: e.ToolCallID, Name: e.ToolName, Content: mask.Mask(e.Output), IsError: e.IsError,
