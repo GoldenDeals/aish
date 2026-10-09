@@ -1,8 +1,8 @@
 # aish bash integration. Installed after ~/.bashrc by the aish PTY proxy.
 #
 # Enter is rebound to: __aish_route (bind -x, may rewrite the line) + accept-line.
-# Text that is not a command becomes `__aish_ask '<text>'`, so bash never
-# parses the natural language itself.
+# Text that is not a command goes to the global __aish_req and the line becomes
+# `__aish_ask "$__aish_req"`, so bash never parses the natural language itself.
 #
 # Markers, OSC 6973;<nonce>;<kind>[;<payload>] BEL, are stripped by the proxy
 # before they reach the terminal. The nonce is the session's, from
