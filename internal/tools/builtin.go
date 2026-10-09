@@ -154,21 +154,19 @@ func (t external) Execute(ctx context.Context, ex Exec, args map[string]any, liv
 func Builtins() []Tool {
 	return []Tool{
 		shell{
-			desc: "Executes a given bash command in the user's interactive bash session and returns its output.\n\n" +
-				"The session is the user's own shell: state persists between calls (cwd, exported variables, functions), " +
-				"the user's aliases and functions are available, the user sees the command, its output is folded on their screen.\n\n" +
-				"IMPORTANT: Avoid using this tool to run cat, head, tail, sed, awk or echo to read, edit or write files. " +
-				"Instead, use read_file, edit_file and write_file. Output text to the user directly, not with echo/printf.\n\n" +
+			// What the shell is and what persists in it the system prompt
+			// says (its Environment and live-shell sections); here only
+			// what a call needs.
+			desc: "Executes a command in the user's interactive shell (bash or zsh, see Environment) and returns its output.\n\n" +
 				"Usage:\n" +
-				"- Stdin is /dev/null: do not run interactive programs (editors, pagers, prompts); use non-interactive flags.\n" +
-				"- Never run `exit`, `exec` or `logout`: it would close the user's shell.\n" +
+				"- Stdin is /dev/null: use non-interactive flags. Run editors, pagers and other full-screen programs only when the user asks for one.\n" +
+				"- Never run `exit`, `exec`, `logout` or `return`: they end the user's shell or the function running your command, and your request with it.\n" +
 				"- Avoid `cd` and use absolute paths: a cd stays in effect for the user. Unless the user asked to go somewhere, return in the same command " +
 				"(`cd dir && make; cd -`, or a subshell: `(cd dir && make)`). Never cd into the directory the shell is already in.\n" +
-				"- Always quote file paths that contain spaces with double quotes.\n" +
-				"- Do not run long-running servers or watchers in the foreground; start them in the background with output redirected to a file.\n" +
-				"- Do not sleep between commands that can run immediately — just run them.\n" +
-				"- When issuing multiple commands that depend on each other, chain them with '&&'; use ';' only when you don't care if earlier commands fail.",
-			args: []Arg{{Name: "command", Type: "string", Desc: "Bash command line to execute", Required: true}},
+				"- Start long-running servers and watchers in the background, with their output redirected to a file: the user's shell waits for your command to end.\n" +
+				"- Quote file paths that contain spaces with double quotes.\n" +
+				"- Chain commands that depend on each other with '&&'; use ';' only when you don't care if earlier commands fail.",
+			args: []Arg{{Name: "command", Type: "string", Desc: "Command line to execute", Required: true}},
 		},
 		builtin{
 			name: "read_file",
