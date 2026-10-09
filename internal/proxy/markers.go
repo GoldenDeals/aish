@@ -123,7 +123,7 @@ func (p *Proxy) marker(m Marker) {
 // cmdStart begins the command line cmd the user typed. Called under p.mu.
 func (p *Proxy) cmdStart(cmd string) {
 	p.dropLine()
-	p.user = &segment{cmd: cmd, buf: capture.NewBuffer(headCap, tailCap)}
+	p.user = &segment{cmd: cmd, buf: capture.NewText(headCap, tailCap)}
 }
 
 // askStart begins a request. Called under p.mu.
@@ -218,7 +218,7 @@ func (p *Proxy) recordUser(rc, cwd string) {
 // p.mu.
 func (p *Proxy) agentCmdStart(payload string) {
 	id, cmd, _ := strings.Cut(payload, ";")
-	seg := &segment{cmd: cmd, buf: capture.NewBuffer(headCap, tailCap)}
+	seg := &segment{cmd: cmd, buf: capture.NewText(headCap, tailCap)}
 	if p.hide {
 		seg.fold = newQuiet("❯ " + cmd)
 		if p.spin != nil {

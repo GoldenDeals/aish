@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/GoldenDeals/aish/internal/capture"
@@ -127,7 +128,7 @@ func (p *Proxy) cleared() {
 	}
 	p.folds = nil
 	if p.user != nil {
-		p.user.buf = capture.NewBuffer(headCap, tailCap)
+		p.user.buf = capture.NewText(headCap, tailCap)
 		p.user.cleared = true
 	}
 }
@@ -150,11 +151,18 @@ func (p *Proxy) finishFold(f *fold, exit int) {
 	}
 }
 
+// render is the text of a command's output, and whether the command was a
+// full-screen program as a whole. An interactive session (ssh, `kubectl
+// exec -it`) is its text, the prompts, commands and output in it, read
+// after it is over; each stretch of the alternate screen in it (vim, htop,
+// a remote tmux) is one line, capture.FullScreen. A command that left only
+// such a line is a full-screen program: its output is that line.
 func render(b *capture.Buffer) (string, bool) {
-	if b.AltScreen() {
-		return "[full-screen interactive program; output not captured]", true
+	out := capture.Clean(b.Bytes())
+	if strings.TrimSpace(out) == capture.FullScreen {
+		return capture.FullScreen, true
 	}
-	return capture.Clean(b.Bytes()), false
+	return out, false
 }
 
 func (p *Proxy) wait(ctx context.Context, id string, timeout time.Duration) (rpc.Output, error) {

@@ -4,6 +4,7 @@ package capture
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -18,6 +19,10 @@ type Buffer struct {
 	dropped          int
 	altScreen        bool
 	scan             []byte // last bytes, for sequences split across writes
+
+	text bool   // NewText's: what is drawn on the alternate screen is not kept
+	alt  bool   // its stream is on the alternate screen now
+	held []byte // its last bytes, which may begin a switch of screens
 }
 
 func NewBuffer(headCap, tailCap int) *Buffer {
@@ -27,6 +32,10 @@ func NewBuffer(headCap, tailCap int) *Buffer {
 var altScreenSeqs = [][]byte{[]byte("\x1b[?1049h"), []byte("\x1b[?1047h"), []byte("\x1b[?47h")}
 
 func (b *Buffer) Write(p []byte) {
+	if b.text {
+		b.writeText(p)
+		return
+	}
 	if !b.altScreen {
 		probe := append(b.scan, p...)
 		for _, s := range altScreenSeqs {
@@ -37,6 +46,10 @@ func (b *Buffer) Write(p []byte) {
 		n := min(len(probe), 8)
 		b.scan = append(b.scan[:0], probe[len(probe)-n:]...)
 	}
+	b.store(p)
+}
+
+func (b *Buffer) store(p []byte) {
 	if room := b.headCap - len(b.head); room > 0 {
 		n := min(room, len(p))
 		b.head = append(b.head, p[:n]...)
@@ -65,7 +78,10 @@ func (b *Buffer) Bytes() []byte {
 	}
 	out = append(out, b.tail[b.tailPos:]...)
 	out = append(out, b.tail[:b.tailPos]...)
-	return out
+	if b.alt {
+		return append(out, altScreenSeqs[0]...) // and still there
+	}
+	return append(out, b.held...)
 }
 
 // farCol is how far past a line's end Clean lets the cursor go. A terminal
@@ -74,8 +90,10 @@ func (b *Buffer) Bytes() []byte {
 const farCol = 512
 
 // Clean strips terminal control sequences and applies carriage returns,
-// backspaces, erasing in line and moving along it the way a terminal would
-// render them line by line. Sequences that span lines are ignored.
+// backspaces, erasing, inserting and deleting in line and moving along it
+// the way a terminal would render them line by line. Sequences that span
+// lines are ignored. What a full-screen program draws on the alternate
+// screen is one line, FullScreen, and the main screen goes on below it.
 func Clean(raw []byte) string {
 	var lines []string
 	var line []rune
@@ -95,11 +113,36 @@ func Clean(raw []byte) string {
 		lines = append(lines, strings.TrimRight(string(line), " "))
 		line, col = line[:0], 0
 	}
+	// screen takes the stretch on the alternate screen that rest begins and
+	// returns its length. Programs nothing on the main screen came between
+	// share their line: a loop of them is not a line each.
+	screen := func(rest []byte) int {
+		if len(line) > 0 {
+			flush()
+		}
+		line, col = line[:0], 0
+		k := len(lines) - 1
+		for k >= 0 && lines[k] == "" {
+			k--
+		}
+		if k < 0 || lines[k] != FullScreen {
+			lines = append(lines, FullScreen)
+		}
+		j, n := firstOf(rest, screenOff)
+		if j < 0 {
+			return len(rest) // never left
+		}
+		return j + n
+	}
 	for i := 0; i < len(raw); {
 		c := raw[i]
 		switch {
 		case c == 0x1b:
 			n := escapeLen(raw[i:])
+			if isScreenOn(raw[i : i+n]) {
+				i += n + screen(raw[i+n:])
+				continue
+			}
 			final, arg, ok := csi(raw[i : i+n])
 			switch {
 			case !ok: // colors, titles, moves to other lines
@@ -117,6 +160,18 @@ func Clean(raw []byte) string {
 				col = min(col+max(arg, 1), max(col, len(line)+farCol))
 			case final == 'D':
 				col = max(col-max(arg, 1), 0)
+			case final == '@': // blanks inserted at the cursor push the rest right
+				if col < len(line) {
+					line = slices.Insert(line, col, slices.Repeat([]rune{' '}, min(max(arg, 1), farCol))...)
+				}
+			case final == 'P': // deleted at the cursor, the rest comes left
+				if col < len(line) {
+					line = slices.Delete(line, col, min(col+max(arg, 1), len(line)))
+				}
+			case final == 'X': // erased from the cursor on; it stays
+				for j := col; j < min(col+max(arg, 1), len(line)); j++ {
+					line[j] = ' '
+				}
 			}
 			i += n
 			continue

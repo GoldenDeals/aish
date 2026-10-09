@@ -57,7 +57,7 @@ type Entry struct {
 	Output string `json:"output,omitempty"`
 	Exit   int    `json:"exit,omitempty"`
 	Cwd    string `json:"cwd,omitempty"`
-	TUI    bool   `json:"tui,omitempty"`
+	TUI    bool   `json:"tui,omitempty"` // a full-screen program as a whole: Output is its one line
 
 	// user, assistant; context: what the hook added
 	Text string `json:"text,omitempty"`

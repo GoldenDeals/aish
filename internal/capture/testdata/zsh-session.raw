@@ -1,0 +1,11 @@
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[J[32muser@remote[39m:[34m~[39m% [K[?2004hccd dir[?2004l
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[J[32muser@remote[39m:[34m~/dir[39m% [K[?2004hllss [?2004l
+sub1  sub2
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[J[32muser@remote[39m:[34m~/dir[39m% [K[?2004heecho helo worldlo world[?2004l
+hello world
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[J[32muser@remote[39m:[34m~/dir[39m% [K[?2004hecho hello world     there[?2004l
+hello there
+[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[J[32muser@remote[39m:[34m~/dir[39m% [K[?2004hlless ../notes.txt[?2004l
+[?1049h[22;0;0t[24;1H[?1h=line one
+line two
+[7m../notes.txt (END)[27m[K[K[?1l>[?1049l[23;0;0t[1m[7m%[27m[1m[0m                                                                                [0m[27m[24m[J[32muser@remote[39m:[34m~/dir[39m% [K[?2004heexit[?2004l

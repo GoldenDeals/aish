@@ -1,0 +1,25 @@
+[?2004h]0;user@remote: ~[1;32muser@remote[0m:[1;34m~[0m$ cd dir
+[?2004l[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ lss[K
+[?2004lsub1  sub2
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo helo world[1@l
+[?2004lhello world
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo hello world[K[K[K[K[Kthere
+[?2004lhello there
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ (reverse-i-search)`': [Kh': echo hello t[7mh[27mere[1@e': echo hello t[7mhe[27m[1@l': echo [7mhel[27mlo the[6P]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo hel
+[?2004lhello there
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ ls s
+sub1/ sub2/ 
+]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ ls sub1/
+[?2004l[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo one; e[1@#
+[?2004l[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[?2004laaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ less ../notes.txt
+[?2004l[?1049h[22;0;0t[24;1H[?1h=line one
+line two
+[7m../notes.txt (END)[27m[K[K[?1l>[?1049l[23;0;0t[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ vim -u NONE -N ../notes.txt
+[?2004l[?1049h[22;0;0t[>4;2m[?1h=[?2004h[?1004h[1;24r[?12h[?12l[22;2t[22;1t[27m[23m[29m[m[H[2J[?25l[24;1H"../notes.txt" 2L, 18B[2;1H▽[6n[2;1H  [3;1HPzz\[0%m[6n[3;1H           [1;1H[>c]10;?]11;?[1;1Hline one
+line two[2;9H[K[3;1H[94m~                                                                               [4;1H~                                                                               [5;1H~                                                                               [6;1H~                                                                               [7;1H~                                                                               [8;1H~                                                                               [9;1H~                                                                               [10;1H~                                                                               [11;1H~                                                                               [12;1H~                                                                               [13;1H~                                                                               [14;1H~                                                                               [15;1H~                                                                               [16;1H~                                                                               [17;1H~                                                                               [18;1H~                                                                               [19;1H~                                                                               [20;1H~                                                                               [21;1H~                                                                               [22;1H~                                                                               [23;1H~                                                                               [m[24;63H1,1[11CAll[?25h[1;1H[?4m[?25l[24;1H[K[24;1H:q[?2004l[>4;m[23;2t[23;1t[24;1H[K[24;1H[?1004l[?2004l[?1l>[?1049l[23;0;0t[?25h[>4;m[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ clear
+[?2004l[H[2J[3J[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ printf "%s\n" done
+[?2004ldone
+[?2004h]0;user@remote: ~/dir[1;32muser@remote[0m:[1;34m~/dir[0m$ exit
+[?2004lexit
