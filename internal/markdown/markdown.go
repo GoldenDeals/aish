@@ -511,7 +511,27 @@ func isSeparator(cs []string) bool {
 	return true
 }
 
-var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
+// ansiRe matches the SGR styles and the OSC 8 hyperlink openers and closers
+// that inline writes; none of them takes a column.
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m|\x1b\\]8;;[^\x07\x1b]*\x07")
+
+// hyperlink wraps s in an OSC 8 hyperlink to url. A url the terminal could not
+// open, or one that carries control bytes, leaves s as it is.
+func hyperlink(url, s string) string {
+	ok := false
+	for _, p := range []string{"http://", "https://", "mailto:", "file://"} {
+		if strings.HasPrefix(url, p) {
+			ok = true
+		}
+	}
+	for i := 0; i < len(url) && ok; i++ {
+		ok = url[i] > ' ' && url[i] != 0x7f
+	}
+	if !ok {
+		return s
+	}
+	return "\x1b]8;;" + url + "\a" + s + "\x1b]8;;\a"
+}
 
 func width(s string) int {
 	return runewidth.StringWidth(ansiRe.ReplaceAllString(s, ""))
@@ -625,9 +645,9 @@ func inline(s, base string) string {
 			}
 		case c == '[' || c == '!' && i+1 < len(s) && s[i+1] == '[':
 			if text, url, n, ok := link(s[i:]); ok {
-				b.WriteString(reset + linkColor + inline(text, linkColor) + reset)
+				b.WriteString(reset + linkColor + hyperlink(url, inline(text, linkColor)) + reset)
 				if url != text && url != "" {
-					b.WriteString(dim + " (" + url + ")" + reset)
+					b.WriteString(dim + " (" + hyperlink(url, url) + ")" + reset)
 				}
 				b.WriteString(style())
 				i += n - 1
@@ -635,7 +655,7 @@ func inline(s, base string) string {
 			}
 		case c == '<':
 			if j := strings.IndexByte(s[i:], '>'); j > 0 && (strings.HasPrefix(s[i+1:], "http://") || strings.HasPrefix(s[i+1:], "https://")) {
-				b.WriteString(reset + linkColor + s[i+1:i+j] + style())
+				b.WriteString(reset + linkColor + hyperlink(s[i+1:i+j], s[i+1:i+j]) + style())
 				i += j
 				continue
 			}

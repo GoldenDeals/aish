@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-var escRe = regexp.MustCompile("\x1b\\[[0-9;?]*[A-Za-z]")
+var escRe = regexp.MustCompile("\x1b\\[[0-9;?]*[A-Za-z]|\x1b\\]8;;[^\x07]*\x07")
 
 // render feeds s in chunks of n bytes and returns the final screen text
 // with styles removed.
@@ -102,6 +102,25 @@ func TestInline(t *testing.T) {
 		if got := escRe.ReplaceAllString(inline(in, ""), ""); got != want {
 			t.Errorf("%q: got %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestHyperlink(t *testing.T) {
+	open := func(url string) string { return "\x1b]8;;" + url + "\a" }
+	const end = "\x1b]8;;\a"
+	for in, want := range map[string]string{
+		"[docs](https://x.dev/a)":  open("https://x.dev/a") + "\x1b[34mdocs\x1b[0m" + end,
+		"<https://x.dev/b>":        open("https://x.dev/b") + "https://x.dev/b" + end,
+		"[rel](foo.go)":            "foo.go",
+		"[bad](https://x\x1b[31m)": "https://x\x1b[31m",
+	} {
+		got := inline(in, "")
+		if !strings.Contains(got, want) {
+			t.Errorf("%q: got %q, want it to contain %q", in, got, want)
+		}
+	}
+	if got := width(inline("[docs](https://x.dev/a)", "")); got != len("docs (https://x.dev/a)") {
+		t.Errorf("width %d counts the hyperlink escapes", got)
 	}
 }
 
