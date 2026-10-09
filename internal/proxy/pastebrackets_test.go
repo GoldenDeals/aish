@@ -186,6 +186,7 @@ func TestPasteEsc(t *testing.T) {
 	cols := 80
 	p, _, res, cancel := formProxy(t, &cols)
 	defer cancel()
+	pause(p) // the form's keys come after one (askguard.go)
 	if got := p.key([]byte(keyDownSeq + pasted + keyEnterSeq)); got != nil {
 		t.Errorf("went to the shell: %q", got)
 	}
@@ -209,6 +210,7 @@ func TestPasteFormOther(t *testing.T) {
 	cols := 80
 	p, _, _, cancel := formProxy(t, &cols)
 	defer cancel()
+	pause(p) // the form's keys come after one (askguard.go)
 	p.key([]byte(keyDownSeq + keyDownSeq + "my "))
 	for _, r := range cuts("\x1b[200~src/a b\r\nc\t1\x03\x1b[201~")["after ESC"] {
 		if got := p.key([]byte(r)); got != nil {

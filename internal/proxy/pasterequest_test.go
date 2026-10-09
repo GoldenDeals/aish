@@ -99,6 +99,7 @@ func TestPasteModeQuestion(t *testing.T) {
 				t.Fatalf("the question is open with the mode %q: %q", m, out.String())
 			}
 			before := len(out.String())
+			pause(p) // the question's keys come after one (askguard.go)
 			if got := p.key([]byte("n")); len(got) != 0 {
 				t.Errorf("went to the shell: %q", got)
 			}
@@ -143,6 +144,7 @@ func TestPasteQuestion(t *testing.T) {
 			if !open {
 				t.Fatal("the question is gone")
 			}
+			pause(p) // a paste is typing too (askguard.go)
 			if got := p.key([]byte("n")); len(got) != 0 {
 				t.Errorf("went to the shell: %q", got)
 			}
@@ -173,6 +175,7 @@ func TestPasteModeShellOff(t *testing.T) {
 		t.Errorf("after the sequence: %q", s)
 	}
 	before = len(out.String())
+	pause(p) // the question's keys come after one (askguard.go)
 	p.key([]byte("y"))
 	answer(t, res)
 	if m := pasteModeOf(out.String()[before:]); m != "off" {
@@ -234,6 +237,7 @@ func TestPasteModeReaders(t *testing.T) {
 		t.Errorf("the viewer over the question closed with %q", s)
 	}
 	before = len(term.String())
+	pause(p) // the question's keys come after one (askguard.go)
 	p.key([]byte("y"))
 	answer(t, res)
 	if s := term.String()[before:]; pasteModeOf(s) != "off" {
@@ -270,6 +274,7 @@ func TestPasteModeReaders(t *testing.T) {
 		t.Errorf("the form opened with %q", s)
 	}
 	before = len(term.String())
+	pause(p)
 	p.key([]byte("\x1b"))
 	settled(p)
 	result(t, fres)

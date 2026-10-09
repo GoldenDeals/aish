@@ -17,6 +17,7 @@ type openForm struct {
 	shown []string
 	done  chan struct{}
 	clock *askClock // nil: the form waits as long as its ctx
+	guard askGuard  // the keys typed ahead, no answer (askguard.go)
 }
 
 // askForm shows the questions and waits for the user to answer or cancel
@@ -34,7 +35,7 @@ func (p *Proxy) askForm(ctx context.Context, qs []agent.Question) ([]agent.Answe
 		p.mu.Unlock()
 		return nil, errors.New("a question is open already")
 	}
-	of := &openForm{f: newForm(qs), done: make(chan struct{})}
+	of := &openForm{f: newForm(qs), done: make(chan struct{}), guard: newGuard(p.keyTime())}
 	p.form = of
 	of.clock = p.answerClock(ctx)
 	p.at = nil // the agent closed the line of the call: no status goes there
@@ -57,44 +58,55 @@ func (p *Proxy) askForm(ctx context.Context, qs []agent.Question) ([]agent.Answe
 	}
 	err, _ := of.clock.ended(ctx)
 	p.closeForm()
+	p.releaseKeys(&of.guard)
 	p.syncPaste()
 	return nil, err
 }
 
 // formKey gives what the user typed to the open form and draws it anew.
 // Ctrl+C goes on to the shell and Ctrl+O opens the viewer, as with a
-// question. Returns what goes on to the shell: Ctrl+C and, once the form
-// is answered, what was typed after it, as the shell keeps what is typed
-// ahead. Called under p.mu.
+// question. The keys typed ahead wait for the shell (askGuard). Returns
+// what goes on to the shell now: Ctrl+C, after the keys typed before it,
+// and, once the form is answered, the keys typed ahead and what was typed
+// after the answer, as the shell keeps what is typed ahead. Called under
+// p.mu.
 func (p *Proxy) formKey(b []byte) []byte {
 	view := false
 	if i := bytes.IndexByte(b, ctrlO); i >= 0 && len(p.viewFolds()) > 0 {
 		b, view = b[:i], true // the rest would be the viewer's
 	}
-	var keys []byte
-	for _, c := range b {
-		if c != 0x03 {
-			keys = append(keys, c)
-		}
-	}
-	n, done := 0, false
-	if len(keys) > 0 {
-		n, done = p.form.f.feed(keys)
-	}
+	of := p.form
+	g := &of.guard
 	var pass []byte
-	for i, c := range b {
-		if c == 0x03 {
-			pass = append(pass, c) // interrupts the request, like anywhere else
-		} else if n == 0 {
-			pass = append(pass, b[i:]...) // the rest, in the order it came
-			break
-		} else {
-			n--
+	pressed := false
+	for i := 0; i < len(b) && !of.f.done; {
+		n, k, r := nextUnit(b[i:])
+		key := b[i : i+n]
+		i += n
+		fresh := g.take()
+		switch {
+		case key[0] == 0x03:
+			// Interrupts the request, like anywhere else.
+			pass = append(append(pass, g.release(nil)...), key[0])
+		case key[0] == ctrlO:
+			// Nothing to view: nothing, as before.
+		case !fresh && g.ahead, k == keyRune && !of.f.takes(r):
+			g.hold(key)
+		default:
+			g.ahead = false
+			if k == keyNone {
+				break // Alt with a key, a sequence the form has no use for: nothing
+			}
+			of.f.press(k, r)
+			pressed = true
+			if of.f.done {
+				pass = append(pass, g.release(b[i:])...) // the rest, in the order it came
+			}
 		}
 	}
-	if done {
+	if of.f.done {
 		p.closeForm()
-	} else if len(keys) > 0 {
+	} else if pressed {
 		p.drawForm()
 	}
 	if view {

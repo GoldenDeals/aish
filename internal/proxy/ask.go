@@ -19,6 +19,7 @@ type prompt struct {
 	clock *askClock // nil: the question waits as long as its ctx
 	firm  bool      // a question the agent's code may have opened, see confirm.go
 	from  time.Time // when the keys of a firm one start to count
+	guard askGuard  // the keys typed ahead, no answer (askguard.go)
 }
 
 // choices is the block of answers drawn after the question: the one chosen
@@ -66,7 +67,7 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 		p.mu.Unlock()
 		return "", errors.New("a question is open already")
 	}
-	pr := &prompt{yes: true, done: make(chan string, 1)}
+	pr := &prompt{yes: true, done: make(chan string, 1), guard: newGuard(p.keyTime())}
 	pr.firmly(ctx)
 	p.ask = pr
 	pr.clock = p.answerClock(ctx)
@@ -123,14 +124,17 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 		end = (&openForm{shown: pr.shown}).erase(cols)
 	}
 	p.emit([]byte(end + "\x1b[?25h"))
+	p.releaseKeys(&pr.guard)
 	p.syncPaste()
 	return "", err
 }
 
 // askKey reads the answer to the open question from what the user typed
 // and draws the choice anew: the shell is not reading, so nothing else
-// would. y and n answer at once, Enter answers with the choice. Returns
-// what goes on to the shell anyway. Called under p.mu.
+// would. y and n answer at once, Enter answers with the choice, each
+// after a pause; the keys typed ahead wait for the shell (askGuard). A
+// firm question takes No from them, and drops the rest. Returns what goes
+// on to the shell now. Called under p.mu.
 func (p *Proxy) askKey(b []byte) []byte {
 	b = p.ask.firmKeys(b)
 	back := fmt.Sprintf("\x1b[%dD", choicesWidth)
@@ -140,33 +144,39 @@ func (p *Proxy) askKey(b []byte) []byte {
 			p.emit([]byte(back + choices(p.ask.chosen())))
 		}
 	}
+	g := &p.ask.guard
 	var pass []byte
-	for i := 0; i < len(b); i++ {
-		c := b[i]
-		if c == 0x1b {
-			// An escape sequence: an arrow is told by its last byte, and
-			// Alt with a key is no answer.
-			if i++; i >= len(b) || b[i] != '[' && b[i] != 'O' {
-				continue
+	for i := 0; i < len(b); {
+		n, k, _ := nextUnit(b[i:])
+		key := b[i : i+n]
+		i += n
+		fresh := g.take()
+		switch c := key[0]; {
+		case c == 0x03:
+			// Interrupts the request, like anywhere else, after the keys
+			// typed before it; the question goes when the request ends,
+			// see askUser.
+			pass = append(append(pass, g.release(nil)...), c)
+			continue
+		case c == ctrlO:
+			if folds := p.viewFolds(); len(folds) > 0 {
+				p.openView(folds)
+				// The time stands while the viewer covers the question.
+				p.ask.clock.sync()
+				return pass // the rest would be the viewer's
 			}
-			csi := b[i] == '['
-			for i++; csi && i < len(b) && (b[i] < 0x40 || b[i] > 0x7e); i++ {
-			}
-			if i >= len(b) {
-				break
-			}
-			switch b[i] {
-			case 'D':
-				c = 'h'
-			case 'C':
-				c = 'l'
-			case 'A', 'B', 'Z':
-				c = '\t' // up, down, Shift+Tab: in one row either way is the other
-			default:
-				continue
-			}
+			continue
+		case !fresh && p.ask.firm && c != 'n' && c != 'N':
+			continue // nothing toward Yes, nor for the shell (confirm.go)
+		case !fresh && p.ask.firm:
+			// No, from whatever key firmKeys took for it.
+		case !fresh && g.ahead:
+			g.hold(key)
+			continue
+		case !fresh:
+			continue // right after a key of the question: each needs its pause
 		}
-		switch c {
+		switch c := askChar(key); c {
 		case 'h':
 			choose(true)
 		case 'l':
@@ -186,19 +196,15 @@ func (p *Proxy) askKey(b []byte) []byte {
 			p.ask.done <- ans
 			p.ask.clock.stop()
 			p.ask = nil
-			return append(pass, b[i+1:]...)
-		case 0x03:
-			// Interrupts the request, like anywhere else; the question
-			// goes when it ends, see askUser.
-			pass = append(pass, c)
-		case ctrlO:
-			if folds := p.viewFolds(); len(folds) > 0 {
-				p.openView(folds)
-				// The time stands while the viewer covers the question.
-				p.ask.clock.sync()
-				return pass // the rest would be the viewer's
+			return append(pass, g.release(b[i:])...)
+		default:
+			if k == keyRune {
+				g.hold(key) // a line begun for the shell
+				continue
 			}
+			// Esc, Alt with a key, a sequence: nothing, as before.
 		}
+		g.ahead = false
 	}
 	return pass
 }

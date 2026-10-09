@@ -103,6 +103,7 @@ func TestViewCursorForm(t *testing.T) {
 	if s := out.String()[before:]; strings.Contains(s, showCursor) || cursorShown(s) {
 		t.Errorf("the viewer closed with the cursor shown: %q", s)
 	}
+	pause(p) // the form's keys come after one (askguard.go)
 	p.key([]byte(keyEnterSeq + keyEnterSeq))
 	if r := result(t, res); r.err != nil || len(r.ans) != 2 {
 		t.Errorf("after the viewer: %+v", r)

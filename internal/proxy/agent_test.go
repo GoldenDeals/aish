@@ -209,8 +209,9 @@ func TestAgentCancel(t *testing.T) {
 
 // The agent's question is answered on the keyboard the proxy reads: Yes
 // or No on the line of the question, Yes at first, chosen with the arrows
-// or a letter. None of it goes to the shell; Ctrl+C does, and so does what
-// was typed after the answer.
+// or a letter, each after a pause (askguard_test.go has the keys without
+// one). None of it goes to the shell; Ctrl+C does, after a character the
+// question had no use for, and so does what was typed after the answer.
 func TestAskKey(t *testing.T) {
 	const (
 		yes  = "\x1b[7m[ Yes ]\x1b[27m   No  "
@@ -283,6 +284,7 @@ func TestAskKey(t *testing.T) {
 		{"\x1b[1;5C", no},
 		{"\x1b[Z", yes},
 	} {
+		pause(p)
 		if got := p.key([]byte(k.key)); got != nil {
 			t.Errorf("%q went to the shell: %q", k.key, got)
 		}
@@ -293,10 +295,11 @@ func TestAskKey(t *testing.T) {
 			t.Fatalf("after %q:\n got %q\nwant %q", k.key, s, want)
 		}
 	}
-	if got := p.key([]byte{0x03}); !bytes.Equal(got, []byte{0x03}) {
-		t.Errorf("Ctrl+C did not reach the shell: %q", got)
+	if got := p.key([]byte{0x03}); !bytes.Equal(got, []byte("x\x03")) {
+		t.Errorf("Ctrl+C did not reach the shell after the x: %q", got)
 	}
 	// Ctrl+C draws nothing: its request takes the question off the screen.
+	pause(p)
 	if got := p.key([]byte("\rls\n")); string(got) != "ls\n" {
 		t.Errorf("what followed the answer was lost: %q", got)
 	}
@@ -308,8 +311,17 @@ func TestAskKey(t *testing.T) {
 		t.Errorf("terminal\n got %q\nwant %q", s, want)
 	}
 
+	// Each of keys after a pause.
+	paused := func(keys ...string) []byte {
+		var got []byte
+		for _, k := range keys {
+			pause(p)
+			got = append(got, p.key([]byte(k))...)
+		}
+		return got
+	}
 	res = ask(context.Background())
-	if got := p.key([]byte("\x1b[C\r")); got != nil {
+	if got := paused("\x1b[C", "\r"); got != nil {
 		t.Errorf("went to the shell: %q", got)
 	}
 	if a := answered(res); a.s != "n" {
@@ -321,14 +333,14 @@ func TestAskKey(t *testing.T) {
 
 	// A letter answers without Enter.
 	res = ask(context.Background())
-	if got := p.key([]byte("Nls\r")); string(got) != "ls\r" {
+	if got := paused("Nls\r"); string(got) != "ls\r" {
 		t.Errorf("what followed n was lost: %q", got)
 	}
 	if a := answered(res); a.s != "n" {
 		t.Errorf("n: %q", a.s)
 	}
 	res = ask(context.Background())
-	if got := p.key([]byte("\x1b[Cy")); got != nil {
+	if got := paused("\x1b[C", "y"); got != nil {
 		t.Errorf("went to the shell: %q", got)
 	}
 	if a := answered(res); a.s != "y" {
@@ -342,7 +354,7 @@ func TestAskKey(t *testing.T) {
 	// short of the last column: a redraw steps back from the cursor.
 	cols = 21
 	res = ask(context.Background())
-	p.key([]byte("\x1b[C\r"))
+	paused("\x1b[C", "\r")
 	if a := answered(res); a.s != "n" {
 		t.Errorf("narrow: %q", a.s)
 	}

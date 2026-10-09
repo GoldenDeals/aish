@@ -30,6 +30,9 @@ type console struct {
 	seq    keySeq     // keys a read cut, and pastes, see pastebrackets.go
 	esc    escKey     // a lone Esc during a request, see esc.go
 	lines  lineMode   // whether the shell's terminal reads lines (esc.go); nil without one
+
+	toShell  io.Writer        // the shell's PTY, which input writes the keys to
+	keyClock func() time.Time // when the keys come, for a question's guard (askguard.go); nil: time.Now
 }
 
 // emit writes to the terminal, or holds the output while the viewer or the
@@ -61,6 +64,9 @@ func (p *Proxy) openView(folds []Fold) {
 // input copies the keyboard to bash. Ctrl+O while the assistant works or
 // at the prompt toggles the viewer of folded outputs instead.
 func (p *Proxy) input(r io.Reader, w io.Writer) {
+	p.mu.Lock()
+	p.toShell = w // for the keys typed ahead of a question, see askguard.go
+	p.mu.Unlock()
 	buf := make([]byte, 4<<10)
 	for {
 		n, err := r.Read(buf)
@@ -87,6 +93,7 @@ func (p *Proxy) key(b []byte) []byte {
 		return p.earlyKey(b)
 	}
 	defer p.syncPaste() // the keys may have opened or closed a reader of them
+	p.keysRead(b)       // a question's guard, see askguard.go
 	keys := p.takeKeys(p.shiftEnter(p.wholeKeys(b)))
 	p.typedHidden(keys) // a hidden command they go to, see hidework.go
 	return keys

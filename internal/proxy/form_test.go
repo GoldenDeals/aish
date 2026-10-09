@@ -337,6 +337,7 @@ func TestFormKeys(t *testing.T) {
 	if p.at != nil {
 		t.Error("a status position left for the form's line")
 	}
+	pause(p) // and from then on the keys as they come: askguard_test.go
 	if got := p.key([]byte(keyDownSeq + keyEnterSeq)); got != nil {
 		t.Errorf("keys went to the shell: %q", got)
 	}
@@ -374,6 +375,7 @@ func TestFormCancel(t *testing.T) {
 	cols := 80
 	p, out, res, cancel := formProxy(t, &cols)
 	defer cancel()
+	pause(p)
 	p.key([]byte("\x1b"))
 	if r := result(t, res); r.ans != nil || r.err != nil {
 		t.Errorf("esc: %+v", r)
@@ -428,6 +430,7 @@ func TestFormViewer(t *testing.T) {
 	p.mu.Lock()
 	p.folds = []Fold{{Title: "❯ ls", Text: "a\r\nb\r\n"}}
 	p.mu.Unlock()
+	pause(p)
 	p.key([]byte(keyDownSeq + "\x0f" + keyEnterSeq))
 	if p.view == nil {
 		t.Fatal("no viewer")

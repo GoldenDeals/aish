@@ -59,6 +59,7 @@ func yoloByUser(t *testing.T, p *Proxy) {
 	t.Helper()
 	firmNow(t)
 	res := askYolo(t, p, context.Background())
+	pause(p) // a Yes comes after one (askguard.go)
 	p.key([]byte("y"))
 	if err := answered(t, res); err != nil || !p.yoloOn() {
 		t.Fatalf("yolo by the user: %v, on %v", err, p.yoloOn())
@@ -72,18 +73,19 @@ func yoloByUser(t *testing.T, p *Proxy) {
 func TestYoloConfirm(t *testing.T) {
 	firmNow(t)
 	for _, tc := range []struct {
-		name, keys string
-		on         bool
+		name string
+		keys []string // each after a pause (askguard.go)
+		on   bool
 	}{
-		{"y", "y", true},
-		{"Y", "Y", true},
-		{"left, Enter", "\x1b[D\r", true},
-		{"n", "n", false},
-		{"Enter", "\r", false},
-		{"Esc", "\x1b", false},
-		{"Alt+y", "\x1by", false},
-		{"a command typed ahead", "ls -la\r", false},
-		{"left, a command typed ahead", "\x1b[Dhtop\r", false},
+		{"y", []string{"y"}, true},
+		{"Y", []string{"Y"}, true},
+		{"left, Enter", []string{"\x1b[D", "\r"}, true},
+		{"n", []string{"n"}, false},
+		{"Enter", []string{"\r"}, false},
+		{"Esc", []string{"\x1b"}, false},
+		{"Alt+y", []string{"\x1by"}, false},
+		{"a command typed ahead", []string{"ls -la\r"}, false},
+		{"left, a command typed ahead", []string{"\x1b[Dhtop\r"}, false},
 	} {
 		p, out, _ := hosted(t, &scripted{})
 		res := askYolo(t, p, context.Background())
@@ -91,8 +93,11 @@ func TestYoloConfirm(t *testing.T) {
 			!strings.Contains(s, "the guard and the hooks stay") {
 			t.Errorf("%s: the question %q", tc.name, s)
 		}
-		if pass := p.key([]byte(tc.keys)); len(pass) > 0 {
-			t.Errorf("%s: to the shell %q", tc.name, pass)
+		for _, k := range tc.keys {
+			pause(p)
+			if pass := p.key([]byte(k)); len(pass) > 0 {
+				t.Errorf("%s: to the shell %q", tc.name, pass)
+			}
 		}
 		err := answered(t, res)
 		if tc.on && (err != nil || !p.yoloOn()) || !tc.on && (!errors.Is(err, errYoloDeclined) || p.yoloOn()) {
@@ -171,6 +176,7 @@ func TestYoloConfirmTypedAhead(t *testing.T) {
 	if since := time.Since(start); since < firmWait {
 		time.Sleep(firmWait - since)
 	}
+	pause(p) // a Yes comes after one (askguard.go)
 	p.key([]byte("y"))
 	if err := answered(t, res); err != nil || !p.yoloOn() {
 		t.Errorf("%v, on %v", err, p.yoloOn())

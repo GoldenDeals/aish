@@ -20,6 +20,7 @@ func TestFormKeyRest(t *testing.T) {
 	cols := 80
 	p, _, res, cancel := formProxyOf(t, &cols, oneQuestion())
 	defer cancel()
+	pause(p) // the form's keys come after one (askguard.go)
 	if got := p.key([]byte("1\rls")); string(got) != "ls" {
 		t.Errorf("after the form: %q, want %q", got, "ls")
 	}
@@ -32,6 +33,7 @@ func TestFormKeyRest(t *testing.T) {
 
 	p, _, res, cancel = formProxyOf(t, &cols, oneQuestion())
 	defer cancel()
+	pause(p)
 	if got := p.key([]byte("2\x03" + keyEnterSeq + "echo \x03x\r")); string(got) != "\x03echo \x03x\r" {
 		t.Errorf("with Ctrl+C: %q", got)
 	}
@@ -42,6 +44,7 @@ func TestFormKeyRest(t *testing.T) {
 	// Nothing after the Enter: nothing for the shell.
 	p, _, res, cancel = formProxyOf(t, &cols, oneQuestion())
 	defer cancel()
+	pause(p)
 	if got := p.key([]byte(keyDownSeq + keyEnterSeq)); len(got) != 0 {
 		t.Errorf("the form's own keys: %q", got)
 	}
@@ -57,6 +60,7 @@ func TestFormKeyRestViewer(t *testing.T) {
 	p.mu.Lock()
 	p.folds = []Fold{{Title: "❯ ls", Text: "a\r\nb\r\n"}}
 	p.mu.Unlock()
+	pause(p)
 	if got := p.key([]byte("1\rab\x0fq")); string(got) != "ab" {
 		t.Errorf("before Ctrl+O: %q", got)
 	}

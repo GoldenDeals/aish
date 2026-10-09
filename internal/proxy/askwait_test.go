@@ -95,9 +95,11 @@ func TestAnsweredAtDeadline(t *testing.T) {
 		res <- ans
 	}()
 	waitOpen(t, p, func() bool { return p.ask != nil })
+	pause(p) // the keys of a question come after one (askguard.go)
 	p.mu.Lock()
 	cancel()
 	time.Sleep(20 * time.Millisecond) // askUser is past its select, waiting for p.mu
+	p.keysRead([]byte("n"))
 	p.askKey([]byte("n"))
 	p.mu.Unlock()
 	if ans := <-res; ans != "n" {
@@ -112,9 +114,11 @@ func TestAnsweredAtDeadline(t *testing.T) {
 		form <- formResult{ans, err}
 	}()
 	waitOpen(t, p, func() bool { return p.form != nil })
+	pause(p)
 	p.mu.Lock()
 	cancel()
 	time.Sleep(20 * time.Millisecond)
+	p.keysRead([]byte(keyDownSeq + keyEnterSeq))
 	p.formKey([]byte(keyDownSeq + keyEnterSeq))
 	p.formKey([]byte("2"))
 	p.formKey([]byte(keyEnterSeq))
