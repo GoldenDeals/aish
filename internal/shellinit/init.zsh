@@ -550,6 +550,7 @@ __aish_dump() {
 
 __aish_precmd() {
 	typeset -g __aish_rc=$?
+	[[ -z ${__aish_comp_wait-} ]] || __aish_comp_init
 	if [[ -n ${AISH_RUN-} ]]; then
 		# The state the shell starts with, which a session's changes are
 		# measured against; then the session `aish resume` switched to.
@@ -737,8 +738,8 @@ zle -N __aish_vi_quote __aish_quote
 # that starts the line, and the subcommands of aish and their arguments,
 # which aish lists itself. Compsys runs -first- before any other
 # completion: ours runs the user's for any other word. A completion of his
-# for aish stays. Without compinit there is no compdef, and Tab stays as
-# it was.
+# for aish stays. After a compinit run later, Tab is so from the next
+# prompt; without compinit Tab stays as it was.
 
 # __aish_comp_first is -first-. A word it completes ends the completion
 # there, which _compskip, a local of compsys's, tells it.
@@ -835,11 +836,25 @@ __aish_comp_aish() {
 	compadd -- "${(@)v:#}"
 }
 
-if (( ${+functions[compdef]} )); then
-	typeset -g __aish_comp_prev=${_comps[-first-]-}
+# __aish_comp_init sets Tab up if compinit has run, and else sets
+# __aish_comp_wait: a compinit later than the .zshrc (zinit's turbo,
+# zsh4humans) __aish_precmd looks for at each prompt till it comes, with
+# no command run. A compdef without _comps is no compinit's: zsh4humans's
+# keeps the calls for after its compinit, and the -first- and aish they
+# would replace are not known before it.
+__aish_comp_init() {
+	emulate -L zsh
+	if (( ! ${+functions[compdef]} || ! ${+_comps} )); then
+		typeset -g __aish_comp_wait=1
+		return 0
+	fi
+	typeset -g __aish_comp_wait= __aish_comp_prev=${_comps[-first-]-}
 	compdef __aish_comp_first -first-
 	(( ${+_comps[aish]} )) || compdef __aish_comp_aish aish
-fi
+	return 0
+}
+
+__aish_comp_init
 
 zle -A accept-line __aish_accept_prev
 zle -N accept-line __aish_accept
