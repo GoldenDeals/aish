@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -198,5 +199,107 @@ func TestFormClockStandsInViewer(t *testing.T) {
 	closedIn(t, "the form", took)
 	if s := out.String(); !strings.Contains(s, "✗ no answer in 200ms") || !strings.Contains(s, "going on without it") {
 		t.Errorf("terminal %q", s)
+	}
+}
+
+// pauseFor has the clock of a question stand d in all.
+func pauseFor(t *testing.T, d time.Duration) {
+	t.Helper()
+	pause := askPause
+	t.Cleanup(func() { askPause = pause })
+	askPause = d
+}
+
+// A viewer left open over a question does not keep it for ever: the time,
+// 100ms, stands 150ms in all and then goes on under the viewer, and the
+// question ends there with No some 250ms after it opened. The form that
+// opens next under the same viewer has its own 150ms to stand.
+func TestAskClockPauseRunsOut(t *testing.T) {
+	lookOften(t)
+	pauseFor(t, 150*time.Millisecond)
+	p, out := termProxy(t)
+	p.folds = []Fold{{Title: "❯ ls", Text: "a\r\nb\r\n"}}
+	p.key([]byte{ctrlO})
+	if p.view == nil {
+		t.Fatal("no viewer")
+	}
+	ctx := agent.WithAnswerTime(context.Background(), 100*time.Millisecond)
+	res := make(chan askResult, 1)
+	start := time.Now()
+	go func() {
+		ans, err := p.askUser(ctx, "allow?")
+		res <- askResult{ans, err}
+	}()
+	select {
+	case r := <-res:
+		if took := time.Since(start); took < 250*time.Millisecond || took > 3*time.Second {
+			t.Errorf("the question ended %v after it opened, want 250ms", took)
+		}
+		if r.ans != "" || !errors.Is(r.err, context.DeadlineExceeded) {
+			t.Errorf("answered %q, %v", r.ans, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the question stood under the viewer for ever")
+	}
+	if locked(p, func() bool { return p.ask != nil || p.view == nil }) {
+		t.Fatal("the question stayed open, or the viewer went with it")
+	}
+
+	form := make(chan formResult, 1)
+	start = time.Now()
+	go func() {
+		ans, err := p.askForm(ctx, twoQuestions())
+		form <- formResult{ans, err}
+	}()
+	r := result(t, form)
+	if took := time.Since(start); took < 250*time.Millisecond {
+		t.Errorf("the form ended %v after it opened, want 250ms", took)
+	}
+	if r.ans != nil || !errors.Is(r.err, context.DeadlineExceeded) {
+		t.Errorf("the form: %+v", r)
+	}
+	if locked(p, func() bool { return p.form != nil || p.view == nil }) {
+		t.Fatal("the form stayed open, or the viewer went with it")
+	}
+
+	closeViewer(t, p)
+	if s := out.String(); !strings.Contains(s, "No (no answer in 100ms)") {
+		t.Errorf("terminal %q", s)
+	}
+	if got := p.key([]byte("y")); string(got) != "y" {
+		t.Errorf("the keys after them: %q", got)
+	}
+}
+
+// The clock stands askPause in all, not each time the viewer covers the
+// question. 300ms to answer, 400ms to stand: 300ms under the viewer, 50ms
+// in sight, then under the viewer again for good; the time is out 700ms
+// after the start, the pause and the time to answer both gone, and not
+// 1s, as a new pause for the viewer opened again would have it.
+func TestAskClockPauseInAll(t *testing.T) {
+	lookOften(t)
+	var mu sync.Mutex
+	hid := true
+	c := &askClock{mu: &mu, hidden: func() bool { return hid }, left: 300 * time.Millisecond, pause: 400 * time.Millisecond, out: make(chan struct{})}
+	start := time.Now()
+	mu.Lock()
+	c.sync()
+	mu.Unlock()
+	time.Sleep(300 * time.Millisecond)
+	mu.Lock()
+	hid = false // closed with nobody telling: the clock finds out by itself
+	mu.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	hid = true
+	c.sync()
+	mu.Unlock()
+	select {
+	case <-c.ranOut():
+		if took := time.Since(start); took < 650*time.Millisecond || took > 900*time.Millisecond {
+			t.Errorf("out %v after the start, want 700ms", took)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the time never ran out")
 	}
 }
