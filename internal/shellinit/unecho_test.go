@@ -10,7 +10,7 @@ import (
 // screen is as much of a terminal as __aish_unecho's output and readline's
 // echo need: rows that wrap at cols with xterm's pending wrap, a wide
 // character that does not fit in what is left of a row put on the next,
-// "\n" as the PTY's onlcr sends it, cursor up, down and home, erase in
+// "\n" as the PTY's onlcr sends it, cursor up, down, forward and home, erase in
 // line, below and all. Erase all, and erase below from the top-left
 // corner, is what tmux takes for clearing the screen: with
 // scroll-on-clear, on by default, it first moves the screen to its
@@ -124,6 +124,8 @@ func (s *screen) csi(t *testing.T, param string, final rune) {
 		s.y, s.wrap = max(s.y-n, 0), false
 	case 'B':
 		s.y, s.wrap = min(s.y+n, len(s.rows)-1), false
+	case 'C':
+		s.x, s.wrap = min(s.x+n, s.cols-1), false
 	case 'H':
 		if param != "" {
 			t.Fatalf("CSI %sH", param)

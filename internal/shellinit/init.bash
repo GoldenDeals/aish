@@ -607,6 +607,31 @@ __aish_rows() {
 	[[ -z $__aish_g ]] || shopt -u globasciiranges
 }
 
+# __aish_modestr sets __aish_m, a local of its caller, to the mode string
+# readline draws before the prompt's last line under show-mode-in-prompt,
+# empty without it: emacs-mode-string, or in vi that of the keymap the line
+# was accepted in, which bind -v still names after accept-line. bind -v
+# prints the string as readline keeps it, \001 and \002 around what takes
+# no columns included. A fork, once a request: no builtin but bind tells
+# readline's variables.
+__aish_modestr() {
+	local __aish_v __aish_k
+	__aish_m=
+	__aish_v=$'\n'$(builtin bind -v 2>/dev/null)$'\n' || :
+	[[ $__aish_v == *$'\nset show-mode-in-prompt on\n'* ]] || return 0
+	if [[ $__aish_v == *$'\nset editing-mode emacs\n'* ]]; then
+		__aish_k=emacs
+	elif [[ $__aish_v == *$'\nset keymap vi-insert\n'* ]]; then
+		__aish_k=vi-ins
+	else
+		__aish_k=vi-cmd
+	fi
+	__aish_k=$'\nset '$__aish_k'-mode-string '
+	[[ $__aish_v == *"$__aish_k"* ]] || return 0
+	__aish_m=${__aish_v#*"$__aish_k"}
+	__aish_m=${__aish_m%%$'\n'*}
+}
+
 # __aish_unecho replaces the `__aish_ask "$__aish_req"` line readline has
 # echoed with the request, the prompt's `$` (or `#`) turned into `?`:
 # "user@host:~? text". The echo is that line, not what was typed: bind -x
@@ -620,7 +645,11 @@ __aish_unecho() {
 	__aish_status "${__aish_rc:-0}" && :
 	p=${p@P}
 	p=${p##*$'\n'}
-	vis=$p
+	# The mode string of show-mode-in-prompt is in the echo's rows, not in
+	# the line drawn in its place.
+	local __aish_m
+	__aish_modestr
+	vis=$__aish_m$p
 	while [[ $vis == *$'\001'*$'\002'* ]]; do
 		vis=${vis%%$'\001'*}${vis#*$'\002'}
 	done
