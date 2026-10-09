@@ -122,7 +122,7 @@ func (a *Agent) dialog(ctx context.Context, c session.ToolCall, args map[string]
 	fctx, stop := ctx, context.CancelFunc(func() {})
 	wait := a.Cfg.AskMaxWait()
 	if wait > 0 {
-		fctx, stop = waitAnswer(ctx, wait)
+		fctx, stop = a.waitAnswer(ctx, wait)
 	}
 	ans, err := a.UI.Form(fctx, qs)
 	stop()

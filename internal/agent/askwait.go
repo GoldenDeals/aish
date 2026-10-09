@@ -44,11 +44,53 @@ func (w *askWaits) missed() { w.next = max(w.wait()/2, askLeast) }
 // reset is an answer, or a new request.
 func (w *askWaits) reset() { w.next = 0 }
 
-// waitAnswer is ctx ending after d, a question's time to be answered. Its
-// cause is what the UI shows on the question it closes.
-func waitAnswer(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
-	return context.WithTimeoutCause(ctx, d, errors.New("no answer in "+span(d)))
+// AnswerTimer is a UI that keeps the time of its questions itself, so as
+// to stop it while the user cannot see the question: the proxy stops it
+// while the Ctrl+O viewer covers the question, the user reading there
+// being no user gone. Its questions, Ask and Form, get the time on ctx
+// (AnswerTime) instead of a deadline, and end when it is out as at one:
+// with context.DeadlineExceeded, the cause on the screen.
+type AnswerTimer interface {
+	TimesAnswers()
 }
+
+// waitAnswer is ctx of a question that has d to be answered: past d, it
+// ends with the cause the UI shows on the question it closes. An
+// AnswerTimer gets d on ctx instead, and the cancel stops nothing.
+func (a *Agent) waitAnswer(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	ui := a.UI
+	if a.work != nil {
+		ui = a.work.ui // the agent's, under the line of hidden calls
+	}
+	if _, ok := ui.(AnswerTimer); ok {
+		return WithAnswerTime(ctx, d), func() {}
+	}
+	return context.WithTimeoutCause(ctx, d, unanswered(d))
+}
+
+type answerKey struct{}
+
+type answerTime struct {
+	d   time.Duration
+	why error
+}
+
+// WithAnswerTime is ctx of a question that has d to be answered, for an
+// AnswerTimer to keep.
+func WithAnswerTime(ctx context.Context, d time.Duration) context.Context {
+	return context.WithValue(ctx, answerKey{}, answerTime{d, unanswered(d)})
+}
+
+// AnswerTime is the time the question of ctx has to be answered, given to
+// an AnswerTimer, and the cause it ends with unanswered. Without it, the
+// question waits as long as ctx.
+func AnswerTime(ctx context.Context) (d time.Duration, why error, ok bool) {
+	t, ok := ctx.Value(answerKey{}).(answerTime)
+	return t.d, t.why, ok
+}
+
+// unanswered is the cause a question that had d ends with.
+func unanswered(d time.Duration) error { return errors.New("no answer in " + span(d)) }
 
 // timedOut tells whether the error of a question is its time running out,
 // not ctx of the request ending.

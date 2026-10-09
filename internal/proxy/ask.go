@@ -15,6 +15,7 @@ type prompt struct {
 	// shown are the lines the question takes on the screen with its
 	// choices, which an interrupt erases.
 	shown []string
+	clock *askClock // nil: the question waits as long as its ctx
 }
 
 // choices is the block of answers drawn after the question: the one chosen
@@ -49,9 +50,9 @@ func (pr *prompt) chosen() string {
 // askUser prints q with Yes and No after it and waits for the user to pick
 // one, or for ctx: Ctrl+C goes to the shell, which stops the request, and
 // the question goes off the screen as a form does, the echo of ^C with it.
-// ctx past its deadline is no answer in time: the question is left with
-// No, as if chosen, and the cause of ctx. Without a terminal there is
-// nothing to draw the choices on.
+// ctx past its deadline, or the time on ctx out (askClock), is no answer
+// in time: the question is left with No, as if chosen, and the cause.
+// Without a terminal there is nothing to draw the choices on.
 func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	p.mu.Lock()
 	if p.size == nil {
@@ -64,6 +65,7 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	}
 	pr := &prompt{yes: true, done: make(chan string, 1)}
 	p.ask = pr
+	pr.clock = p.answerClock(ctx)
 	p.syncPaste() // a paste is no answer
 	// The choices end short of the last column: there the cursor would
 	// stay on it, and stepping back from it would miss by one. So does the
@@ -82,40 +84,43 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 	case ans := <-pr.done:
 		return ans, nil
 	case <-ctx.Done():
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if p.ask != pr {
-			// Answered as ctx ended: the screen shows the answer, and so
-			// it stands.
-			select {
-			case ans := <-pr.done:
-				return ans, nil
-			default:
-				return "", ctx.Err()
-			}
-		}
-		p.ask = nil
-		end := ""
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			// The keyboard is back as after an answer, and the line
-			// says that none came.
-			end = fmt.Sprintf("\x1b[%dDNo", choicesWidth)
-			if why := context.Cause(ctx); why != ctx.Err() {
-				end += " (" + why.Error() + ")"
-			}
-			end += "\x1b[K\r\n"
-		} else {
-			// Interrupted: the terminal echoed ^C as it signalled the
-			// client, which only then asks to stop, so the echo is on the
-			// screen already and goes with the question, as with a form.
-			// The prompt starts where the question did, below the call.
-			cols, _ := p.size()
-			end = (&openForm{shown: pr.shown}).erase(cols)
-		}
-		p.emit([]byte(end + "\x1b[?25h"))
-		p.syncPaste()
-		return "", ctx.Err()
+	case <-pr.clock.ranOut():
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pr.clock.stop()
+	err, why := pr.clock.ended(ctx)
+	if p.ask != pr {
+		// Answered as the question ended: the screen shows the answer, and
+		// so it stands.
+		select {
+		case ans := <-pr.done:
+			return ans, nil
+		default:
+			return "", err
+		}
+	}
+	p.ask = nil
+	end := ""
+	if errors.Is(err, context.DeadlineExceeded) {
+		// The keyboard is back as after an answer, and the line says that
+		// none came.
+		end = fmt.Sprintf("\x1b[%dDNo", choicesWidth)
+		if why != err {
+			end += " (" + why.Error() + ")"
+		}
+		end += "\x1b[K\r\n"
+	} else {
+		// Interrupted: the terminal echoed ^C as it signalled the client,
+		// which only then asks to stop, so the echo is on the screen
+		// already and goes with the question, as with a form. The prompt
+		// starts where the question did, below the call.
+		cols, _ := p.size()
+		end = (&openForm{shown: pr.shown}).erase(cols)
+	}
+	p.emit([]byte(end + "\x1b[?25h"))
+	p.syncPaste()
+	return "", err
 }
 
 // askKey reads the answer to the open question from what the user typed
@@ -174,6 +179,7 @@ func (p *Proxy) askKey(b []byte) []byte {
 				ans = "y"
 			}
 			p.ask.done <- ans
+			p.ask.clock.stop()
 			p.ask = nil
 			return append(pass, b[i+1:]...)
 		case 0x03:
@@ -183,6 +189,8 @@ func (p *Proxy) askKey(b []byte) []byte {
 		case ctrlO:
 			if folds := p.viewFolds(); len(folds) > 0 {
 				p.openView(folds)
+				// The time stands while the viewer covers the question.
+				p.ask.clock.sync()
 				return pass // the rest would be the viewer's
 			}
 		}

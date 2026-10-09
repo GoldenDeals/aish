@@ -16,6 +16,7 @@ type openForm struct {
 	f     *form
 	shown []string
 	done  chan struct{}
+	clock *askClock // nil: the form waits as long as its ctx
 }
 
 // askForm shows the questions and waits for the user to answer or cancel
@@ -35,6 +36,7 @@ func (p *Proxy) askForm(ctx context.Context, qs []agent.Question) ([]agent.Answe
 	}
 	of := &openForm{f: newForm(qs), done: make(chan struct{})}
 	p.form = of
+	of.clock = p.answerClock(ctx)
 	p.at = nil // the agent closed the line of the call: no status goes there
 	p.syncPaste()
 	p.emit([]byte("\x1b[?25l"))
@@ -44,17 +46,19 @@ func (p *Proxy) askForm(ctx context.Context, qs []agent.Question) ([]agent.Answe
 	case <-of.done:
 		return of.f.answers(), nil
 	case <-ctx.Done():
-		// Its deadline too: nobody answered in time, and the form goes as
-		// on Ctrl+C.
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if p.form != of {
-			return of.f.answers(), nil // answered as ctx ended: the summary is on the screen
-		}
-		p.closeForm()
-		p.syncPaste()
-		return nil, ctx.Err()
+	case <-of.clock.ranOut():
 	}
+	// The request ended, or the time: nobody answered in time, and the
+	// form goes as on Ctrl+C.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.form != of {
+		return of.f.answers(), nil // answered as it ended: the summary is on the screen
+	}
+	err, _ := of.clock.ended(ctx)
+	p.closeForm()
+	p.syncPaste()
+	return nil, err
 }
 
 // formKey gives what the user typed to the open form and draws it anew.
@@ -95,6 +99,9 @@ func (p *Proxy) formKey(b []byte) []byte {
 	}
 	if view {
 		p.openView(p.viewFolds())
+		if p.form != nil {
+			p.form.clock.sync() // stands while the viewer covers the form
+		}
 	}
 	return pass
 }
@@ -113,6 +120,7 @@ func (t *console) drawForm() {
 func (t *console) closeForm() {
 	of := t.form
 	t.form = nil
+	of.clock.stop()
 	w, _ := t.size()
 	out := of.erase(w)
 	if s := of.f.summary(); s != "" {

@@ -772,7 +772,7 @@ func (a *Agent) ask(ctx context.Context, d policy.Decision) policy.Decision {
 		q = d.Reason + " — allow?"
 	}
 	wait := a.asks.wait()
-	actx, stop := waitAnswer(ctx, wait)
+	actx, stop := a.waitAnswer(ctx, wait)
 	ans, err := a.UI.Ask(actx, fmt.Sprintf("%s%s%s", bold, q, reset))
 	stop()
 	if timedOut(ctx, err) {
