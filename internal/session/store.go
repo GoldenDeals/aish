@@ -19,7 +19,8 @@ import (
 // A session is several files side by side: <id>.jsonl the journal,
 // <id>.state what the shell and the proxy were like, <id>.name the name the
 // user gave it, <id>.title the one the model gave it after its first
-// request, <id>.lock held by the aish that has the session open.
+// request, <id>.info what List found in the journal and state,
+// <id>.lock held by the aish that has the session open.
 
 // Saved is what a session keeps besides its journal.
 type Saved struct {
@@ -188,13 +189,10 @@ func List(dir string) ([]Info, error) {
 		if CheckID(id) != nil {
 			continue // Load would refuse it
 		}
-		info := Info{ID: id, Modified: modTime(f), Open: isOpen(dir, id)}
+		info := Info{ID: id, Open: isOpen(dir, id)}
 		info.Name = readName(filepath.Join(dir, id+".name"))
 		info.AutoName = readName(titlePath(dir, id))
-		if st, err := LoadState(dir, id); err == nil {
-			info.Cwd, info.Profile, info.TopLevel, info.Model = st.Shell.Cwd, st.Profile, st.TopLevel, st.Model
-		}
-		info.Last, info.Requests = requests(f)
+		summarize(dir, id, &info)
 		list = append(list, info)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Modified.After(list[j].Modified) })
@@ -202,20 +200,34 @@ func List(dir string) ([]Info, error) {
 }
 
 // requests finds the last request and counts them in the end of a journal:
-// the whole one may be large with command output.
-func requests(path string) (last string, n int) {
+// the whole one may be large with command output. err tells that what it
+// found is not of the journal as it was when it was opened.
+func requests(path string) (last string, n int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", 0
+		return "", 0, err
 	}
 	defer f.Close()
-	const tail = 1 << 20
-	if st, err := f.Stat(); err == nil && st.Size() > tail {
-		f.Seek(-tail, io.SeekEnd)
+	st, err := f.Stat()
+	if err != nil {
+		return "", 0, err
 	}
-	b, _ := io.ReadAll(f)
-	for _, line := range bytes.Split(b, []byte{'\n'}) {
-		if !bytes.Contains(line, []byte(`"kind":"user"`)) {
+	const tail = 1 << 20
+	from := max(0, st.Size()-tail)
+	b := make([]byte, st.Size()-from)
+	read, err := f.ReadAt(b, from)
+	if read == len(b) {
+		err = nil
+	} else if err == nil || err == io.EOF {
+		err = fmt.Errorf("%s: cut short while read", path)
+	}
+	for b = b[:read]; len(b) > 0; {
+		var line []byte
+		line, b, _ = bytes.Cut(b, []byte{'\n'})
+		// An entry aish wrote starts with its kind, and the rest of one
+		// that is not a request need not be searched: most of it is output.
+		if bytes.HasPrefix(line, []byte(`{"kind":"`)) && !bytes.HasPrefix(line, []byte(`{"kind":"user"`)) ||
+			!bytes.Contains(line, []byte(`"kind":"user"`)) {
 			continue
 		}
 		var e Entry
@@ -223,7 +235,7 @@ func requests(path string) (last string, n int) {
 			last, n = e.Text, n+1
 		}
 	}
-	return last, n
+	return last, n, err
 }
 
 // Find picks a session by its id, the user's name for it, or the start of

@@ -473,14 +473,6 @@ func sent(k string) bool {
 	return false
 }
 
-func modTime(p string) time.Time {
-	st, err := os.Stat(p)
-	if err != nil {
-		return time.Time{}
-	}
-	return st.ModTime()
-}
-
 func trimExt(name string) string { return name[:len(name)-len(filepath.Ext(name))] }
 
 // Short formats a token count the short way: 950, 12k, 1.2M.
