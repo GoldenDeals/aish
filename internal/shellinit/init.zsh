@@ -76,7 +76,7 @@ __aish_accept() {
 		__aish_expanding
 	fi
 	if [[ -n $__aish_t || -n $__aish_raw || -n $__aish_spawn ]]; then
-		__aish_request
+		__aish_request "${options[errexit]}"
 	fi
 	typeset -g __aish_t= __aish_raw=
 	zle __aish_accept_prev -- "$@"
@@ -488,7 +488,8 @@ __aish_body() {
 # throw the line away. __aish_intr keeps the code, 130 or that of the signal
 # that killed the substitution, for __aish_ask to return unasked; the
 # user's trap is back when this returns (localtraps). It returns 0 under
-# the user's err_return too.
+# the user's err_return too, and a substitution that fails is in a list:
+# it neither returns under err_return nor exits under err_exit.
 __aish_expanding() {
 	setopt localoptions localtraps
 	local __aish_x __aish_s
@@ -496,7 +497,7 @@ __aish_expanding() {
 		trap 'typeset -g __aish_intr=130' INT
 		zle -R 'expanding…'
 	fi
-	__aish_x=$(__aish_expand </dev/null 2>/dev/null)
+	__aish_x=$(__aish_expand </dev/null 2>/dev/null) && :
 	__aish_s=$?
 	[[ $__aish_t == *'$('* ]] && zle -R ''
 	((__aish_s > 128)) && typeset -g __aish_intr=$__aish_s
@@ -519,7 +520,8 @@ __aish_expand() {
 
 __aish_status() { return $1; }
 
-# __aish_request rewrites the line into a request.
+# __aish_request rewrites the line into a request; $1 is the user's
+# err_exit, on or off.
 __aish_request() {
 	emulate -L zsh -o extendedglob
 	__aish_t=${${__aish_t##[[:space:]]#}%%[[:space:]]#}
@@ -529,6 +531,11 @@ __aish_request() {
 	else
 		__aish_req=$__aish_t
 		BUFFER='__aish_ask "$__aish_req"'
+		# Under the user's err_exit a request that fails, 130 after Ctrl+C
+		# among them, would close the shell. In a list it does not, and $?
+		# is still the request's code. Only under err_exit: the list keeps
+		# the user's ZERR trap from it too, as init.bash does under set -e.
+		[[ $1 == on ]] && BUFFER+=' && :'
 		__aish_redraw=1
 		__aish_typed=${${__aish_buf##[[:space:]]#}%%[[:space:]]#}
 	fi
@@ -547,10 +554,13 @@ __aish_preexec() {
 }
 
 # The rewritten line stays out of history; __aish_ask puts what was typed
-# there instead.
+# there instead. The code 1 that says so neither exits under the user's
+# err_exit nor runs his ZERR trap, which emulate -L puts back on return.
 __aish_addhistory() {
-	[[ $1 == '__aish_ask "$__aish_req"'* ]] && return 1
-	return 0
+	emulate -L zsh
+	[[ $1 == '__aish_ask "$__aish_req"'* ]] || return 0
+	trap - ZERR
+	return 1
 }
 
 # __aish_dump prints the shell's state for the proxy to save with the
@@ -601,7 +611,9 @@ __aish_precmd() {
 			# The options the script keeps aside while it is read: its
 			# own, not a global of this function's.
 			local -a __aish_so
-			builtin source "$AISH_RUN/restore.bash"
+			# In a list, a command of it that fails neither returns under
+			# the user's err_return, before cmd-end, nor exits under err_exit.
+			builtin source "$AISH_RUN/restore.bash" && :
 			: >|"$AISH_RUN/restore.bash"
 		fi
 		# Written before cmd-end: the proxy reads it when the marker arrives.
@@ -621,9 +633,11 @@ __aish_unecho() {
 	local __aish_p
 	__aish_status "$__aish_rc" && :
 	__aish_p=${(%%)PS1}
-	__aish_unecho_draw "$1" "$__aish_p"
+	__aish_unecho_draw "$1" "$__aish_p" "${options[errexit]}"
 }
 
+# __aish_unecho_draw TEXT PROMPT [ERREXIT]: with ERREXIT on the line zle
+# left ends in ` && :`, as __aish_request writes it under err_exit.
 __aish_unecho_draw() {
 	emulate -L zsh -o extendedglob
 	local p vis c rows w cols line
@@ -635,6 +649,7 @@ __aish_unecho_draw() {
 	cols=${COLUMNS:-80}
 	((cols > 0)) || cols=80
 	line='__aish_ask "$__aish_req"'
+	[[ ${3-} == on ]] && line+=' && :'
 	w=$((${(m)#vis} + ${#line}))
 	# zle takes the cursor to the next row after a full one, and Enter one
 	# row down from there: a line just the terminal's width takes two.
@@ -672,7 +687,9 @@ __aish_ask() {
 		return $__aish_rc
 	fi
 	if [[ -n $__aish_a ]]; then
-		__aish_spawning "$__aish_a" "$__aish_q"
+		# In a list its code 2, a hint, runs the user's ZERR trap once, as
+		# the request's code, not in __aish_spawning too.
+		__aish_spawning "$__aish_a" "$__aish_q" && :
 		return
 	fi
 
@@ -693,10 +710,16 @@ __aish_ask() {
 		repeat 1; do
 			{
 				printf '\e]6973;%s;agent-start;%s;%s\a' "$__aish_nonce" "$__aish_id" "${__aish_rc:0:1000}"
-				# In a list, its failure neither returns under the user's
-				# err_return before agent-end nor exits under err_exit.
-				eval "$__aish_cmd" </dev/null && :
-				__aish_rc=$?
+				# In a condition, a command of it that fails neither returns
+				# under the user's err_return before agent-end nor exits under
+				# err_exit. A list would not do: under err_exit the request is
+				# the left of one (`&& :`), and in a function called there zsh
+				# leaves err_return on in the left of a list.
+				if eval "$__aish_cmd" </dev/null; then
+					__aish_rc=0
+				else
+					__aish_rc=$?
+				fi
 			} always {
 				if [[ -s $AISH_RUN/esc ]]; then
 					IFS=' ' read -r __aish_e __aish_c <"$AISH_RUN/esc" || :
