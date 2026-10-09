@@ -61,10 +61,16 @@ typeset -g __aish_hint= __aish_hinted= __aish_rc=0 __aish_based= __aish_autocd=o
 # shell (__aish_precmd sourcing restore.bash) starts with emulate -L zsh:
 # the user's options stay out of it.
 
-# __aish_accept is accept-line: the line is routed first.
+# __aish_accept is accept-line: the line is routed first. A request whose
+# line ends in an odd run of backslashes goes on to the next one
+# (__aish_more): zle keeps the line, and nothing of it is expanded yet.
 __aish_accept() {
 	typeset -g __aish_autocd=${options[autocd]}
 	__aish_route
+	if [[ -n $__aish_t || -n $__aish_raw ]] && __aish_more; then
+		typeset -g __aish_t= __aish_raw=
+		return 0
+	fi
 	if [[ -n $__aish_t && -z $__aish_raw && $__aish_route_expand == true && $__aish_t == *'$'* ]]; then
 		__aish_expanding
 	fi
@@ -141,6 +147,19 @@ __aish_route() {
 			__aish_hint=1 __aish_hinted=1 # for command_not_found_handler, once
 		fi
 	fi
+}
+
+# __aish_more puts a newline for the last backslash of the line and the
+# blanks before it, as init.bash's does, when the line ends in an odd run
+# of them.
+__aish_more() {
+	emulate -L zsh -o extendedglob
+	local e
+	e=${(M)BUFFER%%\\#}
+	(($#e % 2)) || return 1
+	e=${BUFFER%\\}
+	BUFFER=${e%%[[:blank:]]#}$'\n'
+	CURSOR=$#BUFFER
 }
 
 # __aish_is_command decides by the first word, the way zsh itself would.

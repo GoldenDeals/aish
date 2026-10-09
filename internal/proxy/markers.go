@@ -118,6 +118,7 @@ func (p *Proxy) marker(m Marker) {
 	case "agent-end":
 		p.agentCmdEnd(m.Payload)
 	}
+	p.promptMarker(m.Kind) // Shift+Enter there, see shiftenter.go
 }
 
 // cmdStart begins the command line cmd the user typed. Called under p.mu.

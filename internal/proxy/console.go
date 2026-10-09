@@ -84,7 +84,7 @@ func (p *Proxy) key(b []byte) []byte {
 		return p.earlyKey(b)
 	}
 	defer p.syncPaste() // the keys may have opened or closed a reader of them
-	keys := p.takeKeys(p.wholeKeys(b))
+	keys := p.takeKeys(p.shiftEnter(p.wholeKeys(b)))
 	p.typedHidden(keys) // a hidden command they go to, see hidework.go
 	return keys
 }
@@ -178,4 +178,5 @@ func (p *Proxy) restoreScreen() {
 	p.stopSpin()
 	p.stopWatch()
 	p.setPaste(false) // even under a question, which waits for its request
+	p.atPrompt(false) // modifyOtherKeys too, after a Ctrl+D at the prompt
 }

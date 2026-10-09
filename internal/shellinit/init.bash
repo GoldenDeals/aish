@@ -62,6 +62,7 @@ __aish_route() {
 	__aish_rc=$?
 	local __aish_line
 	__aish_line=$READLINE_LINE
+	[[ -z ${__aish_held-} ]] || __aish_hold accept-line
 	if [[ $__aish_fresh != 1 ]]; then
 		# Continuation line (PS2): part of a command already routed to bash.
 		__aish_buf+=$'\n'$__aish_line
@@ -457,6 +458,7 @@ __aish_expanding() {
 # into the scrollback, out of __aish_unecho's reach.
 __aish_to_llm() {
 	local __aish_t __aish_x
+	__aish_more && return
 	__aish_t=$1
 	__aish_t=${__aish_t#"${__aish_t%%[![:space:]]*}"}
 	__aish_t=${__aish_t%"${__aish_t##*[![:space:]]}"}
@@ -479,6 +481,34 @@ __aish_to_llm() {
 	fi
 	READLINE_POINT=${#READLINE_LINE}
 	__aish_ps0=
+}
+
+# __aish_more takes a line for the assistant that ends in an odd run of
+# backslashes on to the next one, as bash does a command: the last
+# backslash and the blanks before it go, a newline takes their place, and
+# readline keeps the line, which Enter sends whole. Nothing of the text
+# runs, nor is expanded, before then, and history gets it as one line.
+# Readline goes on with the accept-line of Enter's macro: it is
+# end-of-line, a no-op there, till __aish_route gives it back.
+__aish_more() {
+	local __aish_e
+	__aish_e=${READLINE_LINE##*[!\\]}
+	((${#__aish_e} % 2)) || return 1
+	__aish_e=${READLINE_LINE%\\}
+	READLINE_LINE=${__aish_e%"${__aish_e##*[![:blank:]]}"}$'\n'
+	READLINE_POINT=${#READLINE_LINE}
+	__aish_fresh=1 # the line is still the primary prompt's
+	__aish_hold end-of-line
+}
+
+# __aish_hold binds \C-x\C-b, the accept-line of Enter's macro, to $1.
+__aish_hold() {
+	local __aish_m
+	for __aish_m in emacs vi-insert; do
+		bind -m "$__aish_m" "\"\\C-x\\C-b\": $1"
+	done
+	__aish_held=
+	[[ $1 == accept-line ]] || __aish_held=1
 }
 
 __aish_mark() {

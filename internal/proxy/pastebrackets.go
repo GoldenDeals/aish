@@ -30,6 +30,7 @@ type keySeq struct {
 
 	shell pasteScan // the pastes in the keys that go on to the shell
 	mode  pasteMode // the terminal's bracketed paste mode
+	other otherKeys // the terminal's modifyOtherKeys, for Shift+Enter at the prompt (shiftenter.go)
 }
 
 // escWait is how long a read may follow the one that cut an escape
@@ -205,9 +206,13 @@ type pasteMode struct {
 var modeSet = []byte("\x1b[?") // a private mode set or reset follows
 
 // syncPaste turns the mode on when the proxy has begun to read the keys,
-// and gives the shell's back when it has stopped. Called under p.mu after
-// whatever opens or closes the viewer, the panes, a question or the form.
-func (t *console) syncPaste() { t.setPaste(t.readsKeys()) }
+// and gives the shell's back when it has stopped; modifyOtherKeys goes the
+// other way. Called under p.mu after whatever opens or closes the viewer,
+// the panes, a question or the form.
+func (t *console) syncPaste() {
+	t.setPaste(t.readsKeys())
+	t.syncOther()
+}
 
 // setPaste is syncPaste with whether the proxy reads the keys given. The
 // mode goes to the terminal at once, past what the viewer holds: the keys
@@ -231,13 +236,15 @@ func (t *console) setPaste(on bool) {
 // sequence open that it would break. Called under p.mu.
 func (t *console) pasteOutput(b, show []byte) {
 	m := &t.seq.mode
-	if m.feed(b) && m.on && !m.shell {
+	set := m.feed(b)
+	if set && m.on && !m.shell {
 		m.again = true
 	}
 	if m.again && openSeq(show) == len(show) {
 		m.again = false
 		t.emit(pasteOn)
 	}
+	t.otherOutput(set && m.shell, show) // modifyOtherKeys, see shiftenter.go
 }
 
 // feed keeps the mode the shell's output b sets, if it sets it, and
