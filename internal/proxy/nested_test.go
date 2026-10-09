@@ -32,7 +32,7 @@ func TestNestedRequestRefused(t *testing.T) {
 		t.Helper()
 		for _, m := range []string{rpc.MethodCompact, rpc.MethodAgentStart} {
 			_, err := call(t, p, m, rpc.AgentParams{Text: "nested", Cwd: cwd})
-			if err == nil || !strings.Contains(err.Error(), "the assistant's command cannot start or compact a request") {
+			if err == nil || !strings.Contains(err.Error(), "the assistant's command cannot start, compact or recap a request") {
 				t.Errorf("%s %s: %v", m, when, err)
 			}
 		}

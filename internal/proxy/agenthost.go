@@ -125,7 +125,7 @@ func (p *Proxy) takeTurn(gen uint64, cancel context.CancelFunc) bool {
 // with. The shell's own `agent start` comes before the first command is
 // handed off, and the next request of the same command line after the
 // last command's output was taken.
-var errNested = errors.New("the assistant's command cannot start or compact a request")
+var errNested = errors.New("the assistant's command cannot start, compact or recap a request")
 
 // errBusy refuses them while a request is in progress and not
 // interrupted: the shell sends its next request only once the client of
@@ -134,7 +134,7 @@ var errNested = errors.New("the assistant's command cannot start or compact a re
 // command, a tool, a hook. Waiting for the turn, it would wait for the
 // request that waits for that process, or close the call the request
 // hands off next.
-var errBusy = errors.New("a request is in progress: the assistant's commands cannot start or compact another")
+var errBusy = errors.New("a request is in progress: the assistant's commands cannot start, compact or recap another")
 
 // nested is why a request that starts or compacts is refused, nil if it is
 // not. fg, what fromShell said of the caller, comes last: the reasons
