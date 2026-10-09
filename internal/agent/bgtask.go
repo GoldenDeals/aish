@@ -230,6 +230,7 @@ func (s *bgSet) add(runs []*subRun, user bool) []*bgJob {
 			done: make(chan struct{}), out: &bgOutput{buf: capture.NewBuffer(subCapture, subCapture)}, user: user,
 		}
 		j.ctx, j.cancel = bgContext(r.limit)
+		r.id = j.id // its hooks know it as task_wait does
 		s.jobs[j.id] = j
 		s.order = append(s.order, j.id)
 		jobs[i] = j

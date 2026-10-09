@@ -240,6 +240,7 @@ func (t *taskTool) Execute(ctx context.Context, _ tools.Exec, args map[string]an
 		}
 		return a.background().start(runs, live)
 	}
+	nameRuns(ctx, runs)
 	var open func(title string) Live
 	if p, ok := a.UI.(Panes); ok {
 		open = p.Pane
@@ -355,6 +356,9 @@ type subRun struct {
 	// limit is how long one in the background may work, as the call of
 	// task gave it; 0 is no limit.
 	limit time.Duration
+	// id tells this run from the others of the subagent to its hooks:
+	// see subid.go.
+	id string
 }
 
 // prepSub takes what subagent d needs to work on prompt in the host's
@@ -383,7 +387,8 @@ func runSub(ctx context.Context, s *subRun, out Live) (string, error) {
 	}
 	j := &memJournal{id: "sub:" + s.def.Name, spent: s.spent}
 	sh := &subShell{}
-	child := &Agent{Cfg: s.cfg, Provider: s.prov, Tools: s.reg, Policy: s.pol, Journal: j, Shell: sh, UI: subUI{out}, Yolo: s.yolo, name: s.def.Name}
+	child := &Agent{Cfg: s.cfg, Provider: s.prov, Tools: s.reg, Policy: s.pol, Journal: j, Shell: sh, UI: subUI{out}, Yolo: s.yolo,
+		name: s.def.Name, agentID: s.id, parentSession: s.sess}
 	ex := s.ex
 	if ex.Shell != "" && ex.Shell != "bash" {
 		// Its commands run in a bash of their own (runCommand), not in the

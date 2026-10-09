@@ -155,6 +155,10 @@ type Agent struct {
 	// calls carry it to the pre-tool hooks; the policy has it from the
 	// engine prepSub gives the subagent as well (Engine.Subagent).
 	name string
+	// agentID tells this run of subagent name from the others, whose
+	// journals are all sub:NAME, and parentSession is the host's session
+	// it works for: its hooks get both (hooks.go). "" for the host agent.
+	agentID, parentSession string
 	// windowFull is set when the context window cut the last reply: the
 	// session is summed up before the next turn, however small the estimate.
 	// Like the agent it lives through to the next request.
@@ -611,6 +615,7 @@ func (a *Agent) call(req context.Context, c session.ToolCall) (handedOff bool, e
 	}
 	ctx, cancel := limit(ctx, lim)
 	defer cancel()
+	ctx = withCall(ctx, c.ID) // task names its subagents' runs by it
 	if hide {
 		return false, a.callHidden(req, ctx, t, c, args, title)
 	}

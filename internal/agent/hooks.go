@@ -72,6 +72,18 @@ func (a *Agent) hookFailed(r hooks.Result) bool {
 	return true
 }
 
+// hookAgent is who makes the events of a subagent's hooks, which have
+// session sub:NAME for every run of NAME alike: the subagent, the run of
+// it (subid.go) and the host's session it works for. The host agent's
+// events have none of it.
+type hookAgent struct {
+	Agent         string `json:"agent,omitempty"`
+	AgentID       string `json:"agent_id,omitempty"`
+	ParentSession string `json:"parent_session,omitempty"`
+}
+
+func (a *Agent) hookIdent() hookAgent { return hookAgent{a.name, a.agentID, a.parentSession} }
+
 // userPrompt runs the user-prompt hooks on a request and returns what
 // they add to it, one entry per hook: kept apart from what the user typed,
 // it is not taken for their words and goes to the model masked. False
@@ -82,7 +94,8 @@ func (a *Agent) userPrompt(ctx context.Context, text, cwd string) ([]session.Ent
 		Prompt  string `json:"prompt"`
 		Cwd     string `json:"cwd"`
 		Session string `json:"session"`
-	}{text, cwd, a.Journal.ID()}
+		hookAgent
+	}{text, cwd, a.Journal.ID(), a.hookIdent()}
 	var added []session.Entry
 	for _, h := range a.hooks.set.For(hooks.UserPrompt) {
 		r := h.Run(ctx, a.exec, in)
@@ -133,15 +146,19 @@ func (a *Agent) preTool(ctx context.Context, t tools.Tool, c session.ToolCall, i
 		Action string `json:"action"`
 		Reason string `json:"reason,omitempty"`
 	}
+	// The subagent's name is the agent of policy.Input: hookAgent's beside
+	// it, as deep, would make json drop both.
 	type input struct {
 		policy.Input
-		Session string   `json:"session"`
-		Policy  decision `json:"policy"`
+		Session       string   `json:"session"`
+		AgentID       string   `json:"agent_id,omitempty"`
+		ParentSession string   `json:"parent_session,omitempty"`
+		Policy        decision `json:"policy"`
 	}
 	cur := in
 	var ask *verdict
 	for _, h := range hs {
-		r := h.Run(ctx, a.exec, input{cur, a.Journal.ID(), decision{d.Action, d.Reason}})
+		r := h.Run(ctx, a.exec, input{cur, a.Journal.ID(), a.agentID, a.parentSession, decision{d.Action, d.Reason}})
 		if ctx.Err() != nil {
 			return v, ctx.Err()
 		}
@@ -236,7 +253,8 @@ func (a *Agent) postTool(ctx context.Context, c session.ToolCall, args map[strin
 			IsError bool           `json:"is_error"`
 			Cwd     string         `json:"cwd"`
 			Session string         `json:"session"`
-		}{c.Name, args, out, isErr, a.exec.Dir, a.Journal.ID()}
+			hookAgent
+		}{c.Name, args, out, isErr, a.exec.Dir, a.Journal.ID(), a.hookIdent()}
 		r := h.Run(ctx, a.exec, in)
 		if ctx.Err() != nil {
 			break // the tool ran: its result is recorded all the same
@@ -271,7 +289,8 @@ func (a *Agent) stop(ctx context.Context) {
 		OutputTokens int    `json:"output_tokens"`
 		Cwd          string `json:"cwd"`
 		Session      string `json:"session"`
-	}{Text: a.entries[len(a.entries)-1].Text, Steps: steps(a.entries), Cwd: a.exec.Dir, Session: a.Journal.ID()}
+		hookAgent
+	}{Text: a.entries[len(a.entries)-1].Text, Steps: steps(a.entries), Cwd: a.exec.Dir, Session: a.Journal.ID(), hookAgent: a.hookIdent()}
 	for i := len(a.entries) - 1; i >= 0 && a.entries[i].Kind != session.KindUser; i-- {
 		in.InputTokens += a.entries[i].InputTokens
 		in.CachedTokens += a.entries[i].CachedTokens
