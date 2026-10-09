@@ -1272,7 +1272,7 @@ MCP-серверов ключи не касаются: их запросы ид�
 другого может не быть. Профиль наследует прокси верхнего уровня, и тот, что задаёт свой `base_url`:
 прокси — свойство сети, а не endpoint'а. В профиле бывают `provider`,
 `base_url`, `api_key`, `api_key_env`, `http_proxy`, `https_proxy`, `all_proxy`, `no_proxy`, `model`,
-`effort`, `max_tokens`, `context_window` и `tool_timeout`. Действует
+`effort`, `max_tokens`, `context_window`, `tool_timeout` и `ask_timeout`. Действует
 профиль из `$AISH_PROFILE`, иначе из `profile`; нет ни того, ни другого — только верхний уровень,
 как в конфиге без профилей. `$AISH_MODEL` и `$AISH_EFFORT` — поверх выбранного профиля. В shell
 профиль переключает `aish model ИМЯ` (см. «Контекст и модель»).
