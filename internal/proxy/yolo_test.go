@@ -49,12 +49,7 @@ func TestYoloSwitch(t *testing.T) {
 	p.mu.Lock()
 	p.fg = fg
 	p.mu.Unlock()
-	if _, err := call(t, p, rpc.MethodYolo, on); err != nil {
-		t.Fatalf("by the user: %v", err)
-	}
-	if !p.yoloOn() {
-		t.Fatal("not on")
-	}
+	yoloByUser(t, p)
 	if text, _ := p.statusText(); text != "m · yolo" {
 		t.Errorf("status with yolo on: %q", text)
 	}
@@ -105,9 +100,7 @@ func TestYoloRequest(t *testing.T) {
 		}
 	}
 
-	if _, err := call(t, p, rpc.MethodYolo, rpc.YoloParams{On: true}); err != nil {
-		t.Fatal(err)
-	}
+	yoloByUser(t, p)
 	if _, err := call(t, p, rpc.MethodClear, rpc.ClearParams{}); err != nil {
 		t.Fatal(err)
 	}

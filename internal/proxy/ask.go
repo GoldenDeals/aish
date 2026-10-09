@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // prompt is a question the agent has open on the terminal, Yes or No; the
@@ -16,6 +17,8 @@ type prompt struct {
 	// choices, which an interrupt erases.
 	shown []string
 	clock *askClock // nil: the question waits as long as its ctx
+	firm  bool      // a question the agent's code may have opened, see confirm.go
+	from  time.Time // when the keys of a firm one start to count
 }
 
 // choices is the block of answers drawn after the question: the one chosen
@@ -64,6 +67,7 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 		return "", errors.New("a question is open already")
 	}
 	pr := &prompt{yes: true, done: make(chan string, 1)}
+	pr.firmly(ctx)
 	p.ask = pr
 	pr.clock = p.answerClock(ctx)
 	p.syncPaste() // a paste is no answer
@@ -128,6 +132,7 @@ func (p *Proxy) askUser(ctx context.Context, q string) (string, error) {
 // would. y and n answer at once, Enter answers with the choice. Returns
 // what goes on to the shell anyway. Called under p.mu.
 func (p *Proxy) askKey(b []byte) []byte {
+	b = p.ask.firmKeys(b)
 	back := fmt.Sprintf("\x1b[%dD", choicesWidth)
 	choose := func(yes bool) {
 		if p.ask.yes != yes {

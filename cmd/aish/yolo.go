@@ -1,15 +1,22 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/GoldenDeals/aish/internal/rpc"
 )
 
 // yoloCmd turns the checks of the assistant's calls off for the rest of
 // this shell's life (`aish yolo`), or on again (`aish yolo off`). The proxy
-// refuses the assistant and a process in the background.
+// refuses the assistant and a process in the background, and asks the user
+// before the checks go off.
 func yoloCmd(args []string) int {
 	on := true
 	switch {
@@ -23,14 +30,68 @@ func yoloCmd(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if err := client.Call(rpc.MethodYolo, rpc.YoloParams{On: on}, nil); err != nil {
+	if !on {
+		if err := client.Call(rpc.MethodYolo, rpc.YoloParams{}, nil); err != nil {
+			return fail(err)
+		}
+		fmt.Println("yolo off: the assistant's calls are checked again")
+		return 0
+	}
+	// Interrupted after the Yes, the proxy answers that it is on.
+	if interrupted, err := confirmYolo(client.Path); err != nil {
+		if interrupted {
+			fail(errors.New("yolo: interrupted, the checks stay on"))
+			return 130
+		}
 		return fail(err)
 	}
-	if on {
-		fmt.Println("yolo: no policies, [policy] rules, questions or limits of the subagents' bash for the assistant " +
-			"till this shell exits (the guard of aish trust and the hooks stay); aish yolo off turns the checks back on")
-	} else {
-		fmt.Println("yolo off: the assistant's calls are checked again")
-	}
+	fmt.Println("yolo: no policies, [policy] rules, questions or limits of the subagents' bash for the assistant " +
+		"till this shell exits (the guard and the hooks stay); aish yolo off turns the checks back on")
 	return 0
+}
+
+// confirmYolo makes the call of aish yolo, which the proxy answers once the
+// user answered its question: no rpc.CallTimeout, then. Ctrl+C gives up on
+// it by closing the connection for writing, not whole: the proxy takes the
+// question off the screen and only then answers, so what aish prints next
+// comes below the question, not over its lines. A second Ctrl+C, or
+// giveUpAfter, closes the connection.
+func confirmYolo(path string) (interrupted bool, err error) {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	d := net.Dialer{Timeout: 2 * time.Second}
+	c, err := d.Dial("unix", path)
+	if err != nil {
+		return false, err
+	}
+	conn := c.(*net.UnixConn)
+	defer conn.Close()
+	req := rpc.Request{Method: rpc.MethodYolo}
+	req.Params, _ = json.Marshal(rpc.YoloParams{On: true})
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		return false, err
+	}
+	done := make(chan error, 1)
+	go func() {
+		var resp rpc.Response
+		err := json.NewDecoder(conn).Decode(&resp)
+		if err == nil && resp.Error != "" {
+			err = errors.New(resp.Error)
+		}
+		done <- err
+	}()
+	for {
+		select {
+		case err := <-done:
+			return interrupted, err
+		case <-sig:
+			if interrupted {
+				return true, errors.New("gave up on the proxy")
+			}
+			interrupted = true
+			_ = conn.CloseWrite()
+			_ = conn.SetReadDeadline(time.Now().Add(giveUpAfter))
+		}
+	}
 }
