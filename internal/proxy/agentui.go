@@ -82,9 +82,13 @@ func (u *ui) Size() (int, int) {
 	return u.p.size()
 }
 
-func (u *ui) Ask(ctx context.Context, q string) (string, error) { return u.p.askUser(ctx, q) }
+func (u *ui) Ask(ctx context.Context, q string) (string, error) {
+	u.p.bell()
+	return u.p.askUser(ctx, q)
+}
 
 func (u *ui) Form(ctx context.Context, qs []agent.Question) ([]agent.Answer, error) {
+	u.p.bell()
 	return u.p.askForm(ctx, qs)
 }
 

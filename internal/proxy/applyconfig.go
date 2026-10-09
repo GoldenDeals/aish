@@ -42,6 +42,7 @@ type settings struct {
 	foldLines    int // the request's fold_lines, the project's included; before one, config.toml's
 	maxOutput    int
 	promptStatus bool
+	askBell      bool     // the request's ask_bell, as foldLines is: see bell
 	compactAt    float64  // compact_at: the status says when the next request compacts
 	ignore       []string // journal_ignore: commands recorded without their output
 	stateIgnore  []string // state_ignore: variables kept out of the shell state
@@ -65,6 +66,7 @@ func (s *settings) snapshot() *config.Snapshot {
 // session would keep them set, or unset, for nothing. Called under p.mu.
 func (p *Proxy) applyFields(cfg config.Config) {
 	p.foldLines = cfg.FoldLines
+	p.askBell = cfg.AskBell
 	p.maxOutput = cfg.MaxOutputBytes
 	p.promptStatus = cfg.PromptStatus
 	p.compactAt = cfg.CompactAt

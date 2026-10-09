@@ -78,6 +78,11 @@ type Config struct {
 	// answers: past it the form is closed and the model is told nobody
 	// answered. A Go duration (5m, 1h) or days (1d); "0" waits for ever.
 	AskTimeout string `toml:"ask_timeout"`
+	// AskBell rings the terminal's bell as the agent opens a question, the
+	// policy's Yes or No or the form of ask_user: one in a window or a tab
+	// in the background says nothing of itself otherwise, while its time
+	// runs. Off by default.
+	AskBell bool `toml:"ask_bell"`
 	// CacheTTL is how long the provider keeps a session cached after its
 	// last turn: past it a request in a session of ColdWarnTokens or more
 	// is told that it pays for all of it again. A Go duration (5m, 1h) or

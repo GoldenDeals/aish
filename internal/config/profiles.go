@@ -37,6 +37,7 @@ type Profile struct {
 	ContextWindow *int    `toml:"context_window"`
 	ToolTimeout   *string `toml:"tool_timeout"`
 	AskTimeout    *string `toml:"ask_timeout"`
+	AskBell       *bool   `toml:"ask_bell"`
 }
 
 // LoadProfile is Load with profile name in force, "" being the top level
@@ -101,6 +102,7 @@ func (c Config) withProfile(name, from string) (Config, error) {
 	lay(&c.ContextWindow, pr.ContextWindow)
 	lay(&c.ToolTimeout, pr.ToolTimeout)
 	lay(&c.AskTimeout, pr.AskTimeout)
+	lay(&c.AskBell, pr.AskBell)
 	// Whether the endpoint changed is told by what the table sets, not by
 	// the values: a table naming provider or base_url has an endpoint of
 	// its own, and the top level's key is for the top level's.

@@ -66,6 +66,7 @@ func (p *Proxy) prepare(ctx context.Context, ex tools.Exec, fresh bool) (*agent.
 	// The agent opens the line of a call by it, and the output under the
 	// call is folded by the same: the project's value, not config.toml's.
 	p.foldLines = cfg.FoldLines
+	p.askBell = cfg.AskBell // the shell's profile's
 	cfg.Model, cfg.Effort = model, effort
 	if cfg.ContextWindow == 0 {
 		cfg.ContextWindow = window // the API's or `aish model`'s, for compact_at
