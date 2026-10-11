@@ -43,5 +43,17 @@ func (h *hello) Init(b bus.Bus, cfg config.Config) error {
 
 - [docs/modules.md](docs/modules.md) — как написать модуль, жизненный цикл, конфиг, сборка.
 - [docs/bus.md](docs/bus.md) — шина событий: транзакции, sync/async-обработчики, перехват, стримы.
+- [docs/tui.md](docs/tui.md) — терминальный UI: элементы, z-порядок, ввод, inline и alt screen.
 
 Публичный API — `pkg/` (`module`, `bus`, `tx`, `event`, `config`); `internal/` модули не импортируют.
+Общие контракты событий между модулями — `pkg/contracts/` (`llm`: системный промпт, сообщение пользователя, ответ;
+`tui`: экран и элементы, `tui/renderer`: рендереры контента).
+
+## Модули
+
+- [modules/anthropic](modules/anthropic) — провайдер Claude: собирает контекст сессии и отвечает на `user.message`.
+- [modules/context/system_prompt](modules/context/system_prompt) — системный промпт: из конфига (`text`), из файла (`file`) или встроенный по умолчанию.
+- [modules/frontend/tui/core](modules/frontend/tui/core) — компоновщик терминала: раскладывает элементы других модулей по z, сам ничего не рисует.
+- [modules/frontend/tui/fullscreen](modules/frontend/tui/fullscreen) — разговор на весь экран со скроллом.
+- [modules/frontend/tui/inputline](modules/frontend/tui/inputline) — строка ввода сообщений.
+- [modules/frontend/tui/renderer/plaintext](modules/frontend/tui/renderer/plaintext) — рендерер простого текста, fallback для остальных kind.

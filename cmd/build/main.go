@@ -25,7 +25,7 @@ var mainSrc string
 
 var mainTmpl = template.Must(template.New("main.go").Parse(mainSrc))
 
-// dep is one -with value: path[@version] or path=local/dir.
+// dep is one -with value: path[@version] or path=local/dir; a path without a domain is under modules/ of aish-core.
 type dep struct{ path, version, replace string }
 
 func parseDep(s string) (dep, error) {
@@ -38,6 +38,10 @@ func parseDep(s string) (dep, error) {
 		return d, fmt.Errorf("-with %q: empty module path", s)
 	case d.version != "" && d.replace != "":
 		return d, fmt.Errorf("-with %q: use either @version or =local/dir", s)
+	}
+	// Module paths start with a domain; without a dot it's a module of this repo: anthropic, frontend/tui/core.
+	if first, _, _ := strings.Cut(d.path, "/"); !strings.Contains(first, ".") {
+		d.path = corePath + "/modules/" + d.path
 	}
 	return d, nil
 }

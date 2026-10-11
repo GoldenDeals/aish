@@ -108,7 +108,7 @@ history:
 go run ./cmd/build \
 	-with github.com/you/llm@v1.2.0 \
 	-with github.com/you/ui=../ui \
-	-with github.com/GoldenDeals/aish-core/modules/history \
+	-with history \
 	-o aish \
 	-- -trimpath -ldflags="-s -w"
 ./aish
@@ -119,11 +119,13 @@ go run ./cmd/build \
 | `-with path` | модуль последней версии |
 | `-with path@version` | модуль конкретной версии (`go get path@version`) |
 | `-with path=local/dir` | модуль из локальной директории (replace) |
+| `-with frontend/tui/core` | модуль этого репозитория: путь без домена (без точки в первом элементе) — это `.../aish-core/modules/<путь>` |
 | `-o file` | куда положить бинарник, по умолчанию `aish` |
 | `-core dir` | локальная копия aish-core; по умолчанию — репозиторий, из которого запущен сборщик |
 | `-- флаги` | всё после `--` уходит в `go build` как есть: `-ldflags`, `-gcflags`, `-tags`, `-trimpath`, `-race`… |
 
 - Модули внутри этого репозитория (`.../aish-core/modules/...`) передаются без версии — они берутся из `-core`.
+  Их можно писать коротко: `-with anthropic`, `-with frontend/tui/core`.
 - Нужен хотя бы один `-with`.
 - Сборка идёт во временной директории; при ошибке она остаётся, путь печатается — там сгенерированные
   `main.go` и `go.mod`.
