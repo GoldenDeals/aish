@@ -83,6 +83,9 @@ func setup(t *testing.T, replies ...reply) (b bus.Bus, reqs <-chan string, answe
 		if body.Model != "test-model" || body.MaxTokens != 100 || !body.Stream || body.CacheControl != nil {
 			t.Errorf("request params: %+v", body)
 		}
+		if k := r.Header.Get("X-Api-Key"); k != "test" {
+			t.Errorf("key %q, want the one from the config", k)
+		}
 		var sys, msgs []string
 		for _, s := range body.System {
 			if s.CacheControl != nil && s.CacheControl.TTL == "1h" { // a 5m breakpoint loses its * and fails the test
@@ -113,12 +116,12 @@ func setup(t *testing.T, replies ...reply) (b bus.Bus, reqs <-chan string, answe
 		}
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("ANTHROPIC_BASE_URL", srv.URL)
-	t.Setenv("ANTHROPIC_API_KEY", "test")
+	t.Setenv("ANTHROPIC_BASE_URL", "http://env.invalid") // the config wins over the env
+	t.Setenv("ANTHROPIC_API_KEY", "env")
 
 	b = corebus.New()
 	m := &mod{}
-	if err := m.Init(b, cfg{"model": "test-model", "max_tokens": 100}); err != nil {
+	if err := m.Init(b, cfg{"model": "test-model", "max_tokens": 100, "token": "test", "base_url": srv.URL}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { m.Stop(context.Background()) })

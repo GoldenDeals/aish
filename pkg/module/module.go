@@ -18,8 +18,14 @@ type Module interface {
 	Stop(ctx context.Context) error
 }
 
+// Option changes how a registered module is run.
+type Option = impl.Option
+
 // Register adds m under a unique name, which is also its config section key. Call it from init().
-func Register(name string, m Module) { impl.Register(name, m) }
+func Register(name string, m Module, opts ...Option) { impl.Register(name, m, opts...) }
+
+// OptIn runs the module only when the config has its section; `name: {}` is enough.
+func OptIn() Option { return impl.OptIn() }
 
 // Main runs the registered modules until SIGINT or SIGTERM; the generated main.go calls it.
 func Main() { impl.Main() }

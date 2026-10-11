@@ -177,12 +177,13 @@ type Block interface {
 
 ```sh
 go run ./cmd/build \
-	-with anthropic \
+	-with llm/anthropic \
 	-with frontend/tui/core \
 	-with frontend/tui/fullscreen \
 	-with frontend/tui/inputline \
 	-with frontend/tui/renderer/plaintext \
 	-o aish
+./aish -config docs/examples/config.yaml # провайдер работает, только если у него есть блок в конфиге
 ```
 
 ## Три сценария

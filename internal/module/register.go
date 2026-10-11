@@ -15,10 +15,23 @@ type Module interface {
 	Stop(ctx context.Context) error
 }
 
-// registry is filled from init() functions only, so it needs no lock.
-var registry = map[string]Module{}
+// Option changes how Run treats a registered module.
+type Option func(*options)
 
-func Register(name string, m Module) {
+type options struct {
+	optIn bool // run only when the config has the module's section
+}
+
+// OptIn runs the module only when the config has its section; `name: {}` is enough.
+func OptIn() Option { return func(o *options) { o.optIn = true } }
+
+// registry and opts are filled from init() functions only, so they need no lock.
+var (
+	registry = map[string]Module{}
+	opts     = map[string]options{}
+)
+
+func Register(name string, m Module, o ...Option) {
 	switch {
 	case name == "":
 		panic("module: Register with an empty name")
@@ -29,4 +42,9 @@ func Register(name string, m Module) {
 		panic(fmt.Sprintf("module: Register called twice for %q", name))
 	}
 	registry[name] = m
+	var r options
+	for _, f := range o {
+		f(&r)
+	}
+	opts[name] = r
 }

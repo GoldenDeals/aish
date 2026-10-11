@@ -1,0 +1,23 @@
+# ./aish -config docs/examples/config.yaml
+#
+# A top-level block per module, keyed by its name in module.Register. A block for a module that is not
+# built into the binary is an error, so uncomment only what you built with -with.
+#
+# LLM providers are opt-in: one runs only when its block is here, `anthropic: {}` is enough.
+# Build both and keep one block, or both answer every message.
+
+#anthropic:
+  #model: claude-opus-5-5
+  #max_tokens: 64000
+  # token: sk-ant-...                    # else ANTHROPIC_API_KEY or the `ant auth login` profile
+  # base_url: https://api.anthropic.com  # else ANTHROPIC_BASE_URL; without /v1, unlike openai
+
+openai:
+   model: gpt-5.5
+   token: 2dca1b809e56e4e642d09aebc22af6ffc96d073b073f69fbb62e0d4168502c47
+   base_url: http://127.0.0.1:8317/v1
+
+# context.system_prompt:                 # without a block: the built-in prompt
+#   text: |
+#     You are ...
+#   # file: prompts/aish.md              # or this, relative to the working directory; not both

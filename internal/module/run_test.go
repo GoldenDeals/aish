@@ -116,9 +116,27 @@ func TestRunEmpty(t *testing.T) {
 	}
 }
 
+func TestEnabled(t *testing.T) {
+	Register("test.on", &fake{})
+	Register("test.optin", &fake{}, OptIn())
+	t.Cleanup(func() {
+		for _, n := range []string{"test.on", "test.optin"} {
+			delete(registry, n)
+			delete(opts, n)
+		}
+	})
+
+	if mods := enabled(nil); mods["test.on"] == nil || mods["test.optin"] != nil {
+		t.Errorf("no config: got %v", mods)
+	}
+	if mods := enabled(map[string]map[string]any{"test.optin": nil}); mods["test.on"] == nil || mods["test.optin"] == nil {
+		t.Errorf("with an empty section: got %v", mods)
+	}
+}
+
 func TestRegister(t *testing.T) {
 	Register("test.ok", &fake{})
-	t.Cleanup(func() { delete(registry, "test.ok") })
+	t.Cleanup(func() { delete(registry, "test.ok"); delete(opts, "test.ok") })
 	for name, f := range map[string]func(){
 		"duplicate": func() { Register("test.ok", &fake{}) },
 		"empty":     func() { Register("", &fake{}) },

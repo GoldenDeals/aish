@@ -15,7 +15,7 @@ type Module interface {
 	Stop(ctx context.Context) error          // освободить ресурсы
 }
 
-module.Register(name string, m Module) // из init(); name — уникальный, он же ключ секции конфига
+module.Register(name string, m Module, opts ...module.Option) // из init(); name — уникальный, он же ключ секции конфига
 ```
 
 `config.Config` (`pkg/config`) — секция конфига модуля: `Map() map[string]any`.
@@ -85,7 +85,8 @@ func (h *hello) Stop(context.Context) error {
 ## Конфиг
 
 Конфиг — один YAML-файл, путь передаётся флагом: `./aish -config aish.yaml`. Без флага конфига нет.
-Каждый модуль — свой верхнеуровневый блок с ключом, равным имени модуля из `module.Register`:
+Каждый модуль — свой верхнеуровневый блок с ключом, равным имени модуля из `module.Register`
+(полный пример — [examples/config.yaml](examples/config.yaml)):
 
 ```yaml
 hello:
@@ -99,6 +100,7 @@ history:
 - `cfg.Map()` — содержимое блока модуля: `map[string]any`, вложенные блоки — тоже `map[string]any`,
   списки — `[]any`, числа — `int` / `float64`.
 - Нет блока (или он пустой, `hello:`) — пустая секция, не nil. Читай значения с умолчанием, как в примере.
+- Модуль, зарегистрированный с `module.OptIn()`, без блока не инициируется вовсе — включи его хотя бы `hello: {}`.
 - Блок, имя которого не совпадает ни с одним модулем, — ошибка при запуске: так ловятся опечатки.
 - Блок — не словарь (`hello: hi`), повтор ключа, битый YAML — ошибка при запуске.
 
@@ -125,7 +127,7 @@ go run ./cmd/build \
 | `-- флаги` | всё после `--` уходит в `go build` как есть: `-ldflags`, `-gcflags`, `-tags`, `-trimpath`, `-race`… |
 
 - Модули внутри этого репозитория (`.../aish-core/modules/...`) передаются без версии — они берутся из `-core`.
-  Их можно писать коротко: `-with anthropic`, `-with frontend/tui/core`.
+  Их можно писать коротко: `-with llm/anthropic`, `-with frontend/tui/core`.
 - Нужен хотя бы один `-with`.
 - Сборка идёт во временной директории; при ошибке она остаётся, путь печатается — там сгенерированные
   `main.go` и `go.mod`.

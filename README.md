@@ -43,6 +43,7 @@ func (h *hello) Init(b bus.Bus, cfg config.Config) error {
 
 - [docs/modules.md](docs/modules.md) — как написать модуль, жизненный цикл, конфиг, сборка.
 - [docs/bus.md](docs/bus.md) — шина событий: транзакции, sync/async-обработчики, перехват, стримы.
+- [docs/examples/config.yaml](docs/examples/config.yaml) — пример конфига: провайдеры, токены, системный промпт.
 - [docs/tui.md](docs/tui.md) — терминальный UI: элементы, z-порядок, ввод, inline и alt screen.
 
 Публичный API — `pkg/` (`module`, `bus`, `tx`, `event`, `config`); `internal/` модули не импортируют.
@@ -51,7 +52,8 @@ func (h *hello) Init(b bus.Bus, cfg config.Config) error {
 
 ## Модули
 
-- [modules/anthropic](modules/anthropic) — провайдер Claude: собирает контекст сессии и отвечает на `user.message`.
+- [modules/llm/anthropic](modules/llm/anthropic) — провайдер Claude: собирает контекст сессии и отвечает на `user.message`.
+- [modules/llm/openai](modules/llm/openai) — провайдер OpenAI (Responses API): отвечает на `user.message`.
 - [modules/context/system_prompt](modules/context/system_prompt) — системный промпт: из конфига (`text`), из файла (`file`) или встроенный по умолчанию.
 - [modules/frontend/tui/core](modules/frontend/tui/core) — компоновщик терминала: раскладывает элементы других модулей по z, сам ничего не рисует.
 - [modules/frontend/tui/fullscreen](modules/frontend/tui/fullscreen) — разговор на весь экран со скроллом.

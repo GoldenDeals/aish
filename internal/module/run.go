@@ -26,7 +26,7 @@ func Main() {
 	cfg, err := config.Load(*path)
 	if err == nil {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		err = Run(ctx, corebus.New(), registry, cfg)
+		err = Run(ctx, corebus.New(), enabled(cfg), cfg)
 		stop()
 	}
 	if err != nil {
@@ -35,11 +35,22 @@ func Main() {
 	}
 }
 
+// enabled is the registry without the opt-in modules that have no config section.
+func enabled(cfg map[string]map[string]any) map[string]Module {
+	mods := maps.Clone(registry)
+	for n, o := range opts {
+		if _, ok := cfg[n]; o.optIn && !ok {
+			delete(mods, n)
+		}
+	}
+	return mods
+}
+
 // Run inits mods in name order with their cfg sections, starts them, waits for ctx to end
 // and stops the started ones in reverse.
 func Run(ctx context.Context, b bus.Bus, mods map[string]Module, cfg map[string]map[string]any) error {
 	if len(mods) == 0 {
-		return errors.New("module: no modules registered")
+		return errors.New("module: no modules to run")
 	}
 	for _, n := range slices.Sorted(maps.Keys(cfg)) {
 		if _, ok := mods[n]; !ok {

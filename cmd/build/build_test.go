@@ -101,7 +101,7 @@ func TestParseDep(t *testing.T) {
 		"example.com/a@v1.2.0": {path: "example.com/a", version: "v1.2.0"},
 		"example.com/a=../a":   {path: "example.com/a", replace: "../a"},
 		"example.com/a=/x@y/a": {path: "example.com/a", replace: "/x@y/a"},
-		"anthropic":            {path: corePath + "/modules/anthropic"},
+		"llm/anthropic":        {path: corePath + "/modules/llm/anthropic"},
 		"frontend/tui/core":    {path: corePath + "/modules/frontend/tui/core"},
 	} {
 		if got, err := parseDep(in); err != nil || got != want {

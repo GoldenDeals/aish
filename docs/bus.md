@@ -270,7 +270,7 @@ bus.Sync(b, PrioHistory, event.ByName("llm.answer"), func(ctx context.Context, t
   Поэтому живой показ должен иметь priority выше, чем такие обработчики.
 - Async-подписчики получают стрим уже финализированным: `Data()` возвращает всё.
 
-## Пример целиком: `modules/anthropic`
+## Пример целиком: `modules/llm/anthropic`
 
 Один ответ модели — цепочка из нескольких tx. Контекст сессии (`m.system`, `m.dialog`) меняют только
 sync-обработчики с priority `math.MinInt` — после всех остальных; запрос к API идёт в async, вне tx.

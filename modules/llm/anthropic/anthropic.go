@@ -2,11 +2,13 @@
 // the system prompt, user messages and answers make the dialog. Each user.message is answered with
 // an llm.answer stream, then llm.error if something failed.
 //
+// It runs only when the config has its section, so it builds together with other providers.
+//
 //	anthropic:
 //	  model: claude-opus-5-5
 //	  max_tokens: 64000
-//
-// The API key comes from ANTHROPIC_API_KEY or the `ant auth login` profile.
+//	  token: sk-ant-...                   # else ANTHROPIC_API_KEY or the `ant auth login` profile
+//	  base_url: https://api.anthropic.com # else ANTHROPIC_BASE_URL; a proxy, for one
 package anthropic
 
 import (
@@ -19,6 +21,7 @@ import (
 	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/config"
@@ -53,11 +56,18 @@ type mod struct {
 	dialog []sdk.MessageParam
 }
 
-func init() { module.Register("anthropic", &mod{}) }
+func init() { module.Register("anthropic", &mod{}, module.OptIn()) }
 
 func (m *mod) Init(b bus.Bus, cfg config.Config) error {
 	c := cfg.Map()
-	m.b, m.client = b, sdk.NewClient()
+	var opts []option.RequestOption // after the env defaults, so they win
+	if v, _ := c["token"].(string); v != "" {
+		opts = append(opts, option.WithAPIKey(v))
+	}
+	if v, _ := c["base_url"].(string); v != "" {
+		opts = append(opts, option.WithBaseURL(v))
+	}
+	m.b, m.client = b, sdk.NewClient(opts...)
 	m.model, m.maxTokens = "claude-opus-5-5", 64000
 	if v, ok := c["model"].(string); ok {
 		m.model = v

@@ -39,7 +39,7 @@ func parseDep(s string) (dep, error) {
 	case d.version != "" && d.replace != "":
 		return d, fmt.Errorf("-with %q: use either @version or =local/dir", s)
 	}
-	// Module paths start with a domain; without a dot it's a module of this repo: anthropic, frontend/tui/core.
+	// Module paths start with a domain; without a dot it's a module of this repo: llm/anthropic, frontend/tui/core.
 	if first, _, _ := strings.Cut(d.path, "/"); !strings.Contains(first, ".") {
 		d.path = corePath + "/modules/" + d.path
 	}
