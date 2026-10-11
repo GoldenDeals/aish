@@ -1,8 +1,9 @@
 // Package fullscreen shows the conversation on the whole screen, above the panes: user messages and errors
-// as text, answers as markdown, each drawn by the renderer of its kind (pkg/contracts/tui/renderer).
+// as text, answers as markdown, each drawn by the renderer of its kind (contracts/tui/renderer).
 // It follows the end while new content comes; PgUp and PgDn scroll it by a page, Up and Down by a row,
 // the mouse wheel by three. A drag with the left button selects; the release copies and drops the selection.
 // A double click copies the word under it, a triple click the row.
+// It tells where its text ends as a caret.Source, for a module that marks where the model writes.
 // Build it with tui.renderer.plaintext: content of a kind without a renderer falls back to it,
 // and without it such content isn't shown.
 package fullscreen
@@ -18,11 +19,12 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 
+	"github.com/GoldenDeals/aish-core/contracts/llm"
+	"github.com/GoldenDeals/aish-core/contracts/tui"
+	"github.com/GoldenDeals/aish-core/contracts/tui/caret"
+	"github.com/GoldenDeals/aish-core/contracts/tui/renderer"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/config"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/llm"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui/renderer"
 	"github.com/GoldenDeals/aish-core/pkg/event"
 	"github.com/GoldenDeals/aish-core/pkg/module"
 	"github.com/GoldenDeals/aish-core/pkg/tx"
@@ -40,6 +42,7 @@ const (
 )
 
 type mod struct {
+	b         bus.Bus
 	rmu       sync.Mutex // pick runs in blocks' Write too, under mu
 	renderers map[string]renderer.Renderer
 
@@ -53,6 +56,8 @@ type mod struct {
 	sel     selection
 	last    click
 	held    bool // the left button went down in the view and is still down
+	end     uv.Position
+	endOK   bool // end is the last character's cell at the last frame, for Last
 }
 
 // click is where and when the left button last clicked without a drag, and the how-manieth click in a row.
@@ -96,7 +101,7 @@ func (s selection) has(p point) bool {
 func init() { module.Register("tui.fullscreen", &mod{}) }
 
 func (m *mod) Init(b bus.Bus, _ config.Config) error {
-	m.renderers, m.follow = map[string]renderer.Renderer{}, true
+	m.b, m.renderers, m.follow = b, map[string]renderer.Renderer{}, true
 	bus.Async(b, event.ByName(tui.Ready), func(_ context.Context, ev event.Event[tui.Screen]) {
 		m.edit(func() { m.scr, m.handle = ev.Data(), ev.Data().Open(tui.Fullscreen, z, m) })
 	})
@@ -113,8 +118,17 @@ func (m *mod) Init(b bus.Bus, _ config.Config) error {
 	return nil
 }
 
-func (m *mod) Start(context.Context) error { return nil }
-func (m *mod) Stop(context.Context) error  { return nil }
+func (m *mod) Start(ctx context.Context) error {
+	return m.b.Dispatch(ctx, event.New(caret.Announce, caret.Source(m)))
+}
+
+func (m *mod) Stop(context.Context) error { return nil }
+
+func (m *mod) Last() (uv.Position, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.end, m.endOK
+}
 
 func (m *mod) announce(_ context.Context, t tx.Tx, ev event.Event[renderer.Renderer]) error {
 	r := ev.Data()
@@ -200,6 +214,7 @@ func (m *mod) Draw(scr uv.Screen, area uv.Rectangle) {
 	}
 	m.move(hs, pos)
 	m.paint(scr, area, hs, m.top)
+	m.findEnd(scr, area, hs)
 	if !m.sel.on {
 		return
 	}
@@ -213,6 +228,29 @@ func (m *mod) Draw(scr uv.Screen, area uv.Rectangle) {
 			}
 		}
 	}
+}
+
+// findEnd finds the last character on scr, drawn from hs: the rightmost set cell of the last row that has one.
+// An empty last block, an answer before its first chunk, ends before its first row instead.
+func (m *mod) findEnd(scr uv.Screen, area uv.Rectangle, hs []int) {
+	m.endOK = m.follow && len(hs) > 0
+	if !m.endOK {
+		return
+	}
+	y := offset(hs, anchor{block: len(hs)}) - offset(hs, m.top) - gap // the row after the last block's text
+	if hs[len(hs)-1] == gap {
+		m.end = uv.Pos(-1, y)
+		return
+	}
+	for y--; y >= 0; y-- {
+		for x := m.w - 1; x >= 0; x-- {
+			if c := scr.CellAt(area.Min.X+x, area.Min.Y+y); c != nil && !c.IsZero() && c.Content != " " {
+				m.end = uv.Pos(x+c.Width-1, y)
+				return
+			}
+		}
+	}
+	m.endOK = false
 }
 
 // paint draws the blocks into area from a on.

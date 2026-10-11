@@ -1,5 +1,5 @@
 // Package tui is the terminal compositor. It owns the terminal and dispatches tui.Ready with a Screen
-// that other modules open elements on (pkg/contracts/tui). On every change it lays the elements out, composes
+// that other modules open elements on (contracts/tui). On every change it lays the elements out, composes
 // them by z and routes input down the z order; it draws nothing of its own. It registers as "tui" and has no config.
 package tui
 
@@ -18,9 +18,9 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GoldenDeals/aish-core/contracts/tui"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/config"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui"
 	"github.com/GoldenDeals/aish-core/pkg/event"
 	"github.com/GoldenDeals/aish-core/pkg/module"
 )

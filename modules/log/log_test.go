@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GoldenDeals/aish-core/contracts/session"
 	corebus "github.com/GoldenDeals/aish-core/internal/core/bus"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/session"
 )
 
 type cfg map[string]any

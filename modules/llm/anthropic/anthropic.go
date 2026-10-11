@@ -24,9 +24,9 @@ import (
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
 
+	"github.com/GoldenDeals/aish-core/contracts/llm"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/config"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/llm"
 	"github.com/GoldenDeals/aish-core/pkg/event"
 	"github.com/GoldenDeals/aish-core/pkg/module"
 	"github.com/GoldenDeals/aish-core/pkg/tx"

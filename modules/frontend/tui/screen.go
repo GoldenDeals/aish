@@ -6,7 +6,7 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui"
+	"github.com/GoldenDeals/aish-core/contracts/tui"
 )
 
 // item is an open element; rect is its place in the frame, set by layout.

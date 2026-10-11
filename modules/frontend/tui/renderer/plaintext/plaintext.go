@@ -10,9 +10,9 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GoldenDeals/aish-core/contracts/tui/renderer"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/config"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui/renderer"
 	"github.com/GoldenDeals/aish-core/pkg/event"
 	"github.com/GoldenDeals/aish-core/pkg/module"
 )

@@ -10,11 +10,12 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 
+	"github.com/GoldenDeals/aish-core/contracts/llm"
+	"github.com/GoldenDeals/aish-core/contracts/tui"
+	"github.com/GoldenDeals/aish-core/contracts/tui/caret"
+	"github.com/GoldenDeals/aish-core/contracts/tui/renderer"
 	corebus "github.com/GoldenDeals/aish-core/internal/core/bus"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/llm"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui/renderer"
 	"github.com/GoldenDeals/aish-core/pkg/event"
 	"github.com/GoldenDeals/aish-core/pkg/tx"
 )
@@ -253,5 +254,62 @@ func TestSelect(t *testing.T) {
 	}
 	if m.Input(uv.MouseClickEvent{X: 0, Y: 0, Button: uv.MouseMiddle}) {
 		t.Error("took the middle button, the compositor's paste")
+	}
+}
+
+func TestLast(t *testing.T) {
+	m, b := setup(t)
+	ctx := context.Background()
+	var src caret.Source
+	bus.Sync(b, 0, event.ByName(caret.Announce), func(_ context.Context, _ tx.Tx, ev event.Event[caret.Source]) error {
+		src = ev.Data()
+		return nil
+	})
+	if err := m.Start(ctx); err != nil || src != caret.Source(m) {
+		t.Fatalf("start: %v, announced %v", err, src)
+	}
+	if err := b.Dispatch(ctx, event.New(renderer.Announce, fake(renderer.Text))); err != nil {
+		t.Fatal(err)
+	}
+	last := func(h int) (uv.Position, bool) {
+		screen(m, 20, h)
+		return m.Last()
+	}
+	if _, ok := last(6); ok {
+		t.Error("an empty conversation has a last character")
+	}
+	if err := b.Dispatch(ctx, event.New(llm.UserMessage, "hi 你")); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := last(6); !ok || p != uv.Pos(11, 0) { // "text:> hi 你": the wide one's right half
+		t.Errorf("after the message: %v %v", p, ok)
+	}
+
+	ch := make(chan string)
+	go func() { _ = b.Dispatch(ctx, event.NewStream(llm.Answer, (<-chan string)(ch))) }()
+	for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) {
+		if p, ok := last(6); ok && p == uv.Pos(-1, 2) { // the empty answer: its text starts there
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no empty answer at row 2")
+		}
+	}
+	ch <- "answer"
+	close(ch)
+	for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) {
+		if p, ok := last(6); ok && p == uv.Pos(10, 2) {
+			break
+		}
+		if time.Now().After(deadline) {
+			p, ok := last(6)
+			t.Fatalf("after the answer: %v %v", p, ok)
+		}
+	}
+
+	last(2) // the view: "text:answer" and the gap
+	m.Input(uv.KeyPressEvent{Code: uv.KeyPgUp})
+	if _, ok := last(2); ok {
+		t.Error("the last character is out of view")
 	}
 }

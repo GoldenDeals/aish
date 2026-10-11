@@ -8,7 +8,7 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui"
+	"github.com/GoldenDeals/aish-core/contracts/tui"
 )
 
 // fake asks for w×h, paints its area with fill and then cells (positions may lie outside),

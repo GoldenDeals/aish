@@ -5,7 +5,7 @@
 и какого он будет размера. Внутри своего прямоугольника элемент рисует что хочет, а ячейки, которые он не задал,
 прозрачны. Ввод идёт по z сверху вниз, пока его кто-нибудь не поглотит.
 
-Контракт — `pkg/contracts/tui`. Ячейки, события и курсор берутся из
+Контракт — `contracts/tui`. Ячейки, события и курсор берутся из
 [ultraviolet](https://github.com/charmbracelet/ultraviolet) как есть. Поэтому элементом может быть любой
 `uv.Drawable`: свой тип, виджет lipgloss/bubbles v2 или эмулятор терминала `x/vt`.
 
@@ -20,7 +20,7 @@
 import (
 	uv "github.com/charmbracelet/ultraviolet"
 
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui"
+	"github.com/GoldenDeals/aish-core/contracts/tui"
 )
 
 const zStatus = 100
@@ -149,7 +149,7 @@ type Cursorer interface { Cursor() *uv.Cursor }                // где пок�
 ## Рендереры
 
 Содержимое (сообщения, ответы, вывод тулов) рисуют рендереры — модули под `modules/frontend/tui/renderer/`.
-Контракт — `pkg/contracts/tui/renderer`:
+Контракт — `contracts/tui/renderer`:
 
 ```go
 type Renderer struct {
@@ -176,13 +176,23 @@ type Block interface {
   в стиль, а APC/DCS пропускает в терминал. Поэтому рендерер чистит текст до того, как отдать его туда.
   Plaintext выбрасывает управляющие символы, и `\x1b[31m` виден как `[31m`.
 
+## Курсор модели
+
+Контракт — `contracts/tui/caret`. Разговор (`tui.fullscreen`) объявляет из `Start` событием `tui.caret.announce`
+`caret.Source`: `Last()` — ячейка последнего символа на последнем кадре (у широкого — правая половина); `X == -1`,
+если последний блок ещё пуст: его текст начнётся со строки `Y`; `false`, если вид не на конце.
+Модуль-маркер (`tui.thinking`) открывает свой `Fullscreen` с z выше разговора: все Fullscreen получают одну область,
+незаданные ячейки прозрачны, а нижний z рисуется раньше, поэтому `Last()` из его `Draw` — уже этого кадра.
+Без Source маркер ничего не открывает: один его Fullscreen увёл бы терминал в alt screen.
+
 ## Модули
 
 | Модуль (ключ конфига) | Путь | Что делает |
 |---|---|---|
 | `tui` | `frontend/tui` | компоновщик |
-| `tui.fullscreen` | `frontend/tui/fullscreen` | разговор на весь экран: держит конец, пока идёт новое; PgUp/PgDn листают по странице, ↑/↓ — по строке, колесо — по три; drag выделяет и копирует, двойной клик — слово, тройной — строку |
+| `tui.fullscreen` | `frontend/tui/fullscreen` | разговор на весь экран: держит конец, пока идёт новое; PgUp/PgDn листают по странице, ↑/↓ — по строке, колесо — по три; drag выделяет и копирует, двойной клик — слово, тройной — строку; отдаёт `caret.Source` |
 | `tui.inputline` | `frontend/tui/inputline` | поле ввода, растёт с текстом; Enter — `user.message`, Shift+Enter или `\`+Enter — новая строка, курсор ходит и правит как в bash (←/→, Ctrl+A/E/B/F, Alt+B/F, Ctrl+←/→, Home/End; Backspace/Delete, Ctrl+W/U/K, Alt+D), откаченное сообщение возвращается в поле, Ctrl+C останавливает ответ |
+| `tui.thinking` | `frontend/tui/thinking` | курсор модели `█` после последнего символа разговора от `user.message` до конца хода (`llm.WithTurn`), идёт за текстом ответа; модель молчит 1 с — на его месте `⠋ thinking…`, спиннер тикает только тогда; нужен `tui.fullscreen` |
 | `tui.renderer.plaintext` | `frontend/tui/renderer/plaintext` | kind `text` и fallback для остальных |
 
 ```sh
@@ -191,6 +201,7 @@ go run ./cmd/build \
 	-with frontend/tui \
 	-with frontend/tui/fullscreen \
 	-with frontend/tui/inputline \
+	-with frontend/tui/thinking \
 	-with frontend/tui/renderer/plaintext \
 	-o aish
 mkdir -p .agents && cp docs/examples/config.yaml .agents/aish.yaml

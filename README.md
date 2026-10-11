@@ -47,8 +47,8 @@ func (h *hello) Init(b bus.Bus, cfg config.Config) error {
 - [docs/tui.md](docs/tui.md) — терминальный UI: элементы, z-порядок, ввод, inline и alt screen.
 
 Публичный API — `pkg/` (`module`, `bus`, `tx`, `event`, `config`); `internal/` модули не импортируют.
-Общие контракты событий между модулями — `pkg/contracts/` (`llm`: системный промпт, сообщение пользователя, ответ;
-`tui`: экран и элементы, `tui/renderer`: рендереры контента, `session`: ID сессии).
+Общие контракты событий между модулями — `contracts/` (`llm`: системный промпт, сообщение пользователя, ответ;
+`tui`: экран и элементы, `tui/renderer`: рендереры контента, `tui/caret`: где кончается текст разговора, `session`: ID сессии).
 
 ## Модули
 
@@ -59,4 +59,5 @@ func (h *hello) Init(b bus.Bus, cfg config.Config) error {
 - [modules/frontend/tui](modules/frontend/tui) — компоновщик терминала: раскладывает элементы других модулей по z, сам ничего не рисует.
 - [modules/frontend/tui/fullscreen](modules/frontend/tui/fullscreen) — разговор на весь экран со скроллом.
 - [modules/frontend/tui/inputline](modules/frontend/tui/inputline) — строка ввода сообщений.
+- [modules/frontend/tui/thinking](modules/frontend/tui/thinking) — курсор модели: идёт за текстом ответа, после 1 с тишины — `⠋ thinking…`.
 - [modules/frontend/tui/renderer/plaintext](modules/frontend/tui/renderer/plaintext) — рендерер простого текста, fallback для остальных kind.

@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GoldenDeals/aish-core/contracts/session"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/config"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/session"
 	"github.com/GoldenDeals/aish-core/pkg/module"
 )
 

@@ -11,7 +11,7 @@ package renderer
 import (
 	uv "github.com/charmbracelet/ultraviolet"
 
-	"github.com/GoldenDeals/aish-core/pkg/contracts/tui"
+	"github.com/GoldenDeals/aish-core/contracts/tui"
 )
 
 // Announce is event.Event[Renderer]. Two renderers of one kind are an error.

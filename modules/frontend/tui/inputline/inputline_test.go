@@ -8,9 +8,9 @@ import (
 
 	uv "github.com/charmbracelet/ultraviolet"
 
+	"github.com/GoldenDeals/aish-core/contracts/llm"
 	corebus "github.com/GoldenDeals/aish-core/internal/core/bus"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
-	"github.com/GoldenDeals/aish-core/pkg/contracts/llm"
 	"github.com/GoldenDeals/aish-core/pkg/event"
 	"github.com/GoldenDeals/aish-core/pkg/tx"
 )
