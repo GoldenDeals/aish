@@ -1,4 +1,4 @@
-package core
+package tui
 
 import (
 	"math"
@@ -82,6 +82,8 @@ func compose(scr uv.Screen, items []*item) (cur *uv.Cursor) {
 }
 
 // input offers ev to receivers from the top down and reports whether one consumed it.
+// shortcut: a mouse event goes the same way, in terminal coordinates; route it to the element under the pointer,
+// in the element's coordinates, once two elements take the mouse.
 func input(items []*item, ev uv.Event) bool {
 	for _, it := range slices.Backward(items) {
 		if r, ok := it.el.(tui.Receiver); ok && r.Input(ev) {

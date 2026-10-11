@@ -34,6 +34,10 @@ const (
 type Screen interface {
 	// Open adds el. It doesn't block and is safe from any goroutine, Draw and Input included.
 	Open(k Kind, z int, el uv.Drawable) Handle
+	// Copy puts text on the system clipboard. A middle click or ctrl+v no element consumes pastes
+	// the last copy as a uv.PasteEvent, as terminals paste their selection; under tmux that's tmux's
+	// buffer, which Copy fills too. Like Open, it doesn't block.
+	Copy(text string)
 }
 
 type Handle interface {
@@ -48,7 +52,8 @@ type Sizer interface {
 }
 
 // Receiver gets key, paste and other terminal events; true consumes ev. Input alone draws no frame:
-// call Redraw if it changed the element.
+// call Redraw if it changed the element. In the alt screen the mouse is on, drags included: mouse events
+// go down the z order like keys, in terminal coordinates.
 type Receiver interface {
 	Input(ev uv.Event) bool
 }

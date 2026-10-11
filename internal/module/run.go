@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"os/signal"
@@ -21,7 +22,8 @@ import (
 const stopTimeout = 10 * time.Second
 
 func Main() {
-	path := flag.String("config", "", "YAML config file, a top-level block per module name")
+	slog.SetDefault(slog.New(slog.DiscardHandler)) // off until the log module sets it up: stderr would break the TUI
+	path := flag.String("config", "", "YAML config file, a top-level block per module name (default "+config.Default+" if it exists)")
 	flag.Parse()
 	cfg, err := config.Load(*path)
 	if err == nil {

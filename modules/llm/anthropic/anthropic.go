@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"slices"
 	"strings"
@@ -127,6 +128,8 @@ func (m *mod) addAnswer(ctx context.Context, t tx.Tx, ev event.Event[[]string]) 
 		}
 	}
 	text := strings.Join(ev.Data(), "")
+	slog.Info("llm answer", "module", "anthropic", "len", len(text))
+	slog.Debug("llm answer", "module", "anthropic", "text", text)
 	if text == "" {
 		return nil // the API rejects empty assistant turns
 	}
@@ -139,10 +142,13 @@ func (m *mod) addAnswer(ctx context.Context, t tx.Tx, ev event.Event[[]string]) 
 // in any order, interleaved in the dialog. Queue requests once a UI can send ahead.
 func (m *mod) ask(actx context.Context, ev event.Event[sdk.MessageNewParams]) {
 	defer llm.End(actx) // last: after the Error
+	p := ev.Data()
+	slog.Info("llm request", "module", "anthropic", "model", p.Model, "messages", len(p.Messages))
+	slog.Debug("llm request", "module", "anthropic", "params", p)
 	ctx, cancel := context.WithCancel(m.ctx)
 	defer cancel()
 	defer context.AfterFunc(llm.Turn(actx), cancel)() // the user stopped the turn
-	s := m.client.Messages.NewStreaming(ctx, ev.Data())
+	s := m.client.Messages.NewStreaming(ctx, p)
 	defer s.Close()
 	// API errors (key, model, rate limit after the SDK's retries) come before the first event: no empty answer for them.
 	if !s.Next() {
@@ -190,5 +196,6 @@ func (m *mod) fail(actx context.Context, err error) {
 	if llm.Turn(actx).Err() != nil {
 		err = errors.New("interrupted")
 	}
+	slog.Warn("llm error", "module", "anthropic", "err", err)
 	_ = m.b.Dispatch(m.ctx, event.New(llm.Error, err.Error())) // a failed error report has nowhere to go
 }

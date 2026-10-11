@@ -1,15 +1,22 @@
-// Package core is the terminal compositor. It owns the terminal and dispatches tui.Ready with a Screen
+// Package tui is the terminal compositor. It owns the terminal and dispatches tui.Ready with a Screen
 // that other modules open elements on (pkg/contracts/tui). On every change it lays the elements out, composes
 // them by z and routes input down the z order; it draws nothing of its own. It registers as "tui" and has no config.
-package core
+package tui
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"log/slog"
 	"os"
+	"os/exec"
 	"slices"
+	"strings"
 	"sync"
 
+	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/config"
@@ -27,6 +34,7 @@ var interrupt = func() {
 type mod struct {
 	b    bus.Bus
 	term *uv.Terminal
+	out  *out          // the screen's output, held while a frame renders
 	wake chan struct{} // holds one pending frame: wakes during a render coalesce into it
 	stop context.CancelFunc
 	done chan struct{}
@@ -35,6 +43,8 @@ type mod struct {
 	mu    sync.Mutex
 	items []*item // bottom to top; copy-on-write, so the loop reads a snapshot without the lock
 	texts []*item // Text elements opened since the last frame
+	clip  string  // the last Copy, for paste
+	osc52 *string // a Copy for render to send the terminal
 
 	// Only the loop touches these.
 	w, h, frameH int
@@ -52,12 +62,21 @@ func (m *mod) Init(b bus.Bus, _ config.Config) error {
 }
 
 func (m *mod) Start(ctx context.Context) error {
-	m.term = uv.DefaultTerminal()
+	con := uv.DefaultConsole()
+	m.out = &out{w: con.Writer()}
+	m.term = uv.NewTerminal(console{con, m.out}, nil)
+	m.term.Screen().SetColorProfile(colorprofile.Detect(con.Writer(), con.Environ())) // out isn't a tty: uv would drop all styles
 	if err := m.term.Start(); err != nil {
 		return err
 	}
 	m.term.Screen().HideCursor() // until an element places it
 	m.term.Screen().EnableBracketedPaste()
+	// Terminals with the kitty keyboard protocol then tell shift+enter, ctrl+i and others from enter, tab, …
+	// tmux ignores that protocol and passes such keys only to who asks with modifyOtherKeys; uv resets
+	// the one but not the other, see leave and Stop.
+	m.term.Screen().SetKeyboardEnhancements(&uv.KeyboardEnhancements{DisambiguateEscapeCodes: true})
+	_, _ = m.term.Screen().WriteString(ansi.SetModifyOtherKeys1) // goes out with the first frame
+	m.term.Screen().SetMouseEncoding(uv.MouseEncodingSGR)        // for the mouse in the alt screen, see render
 	lctx, stop := context.WithCancel(ctx)
 	m.stop, m.done = stop, make(chan struct{})
 	go m.loop(lctx)
@@ -77,6 +96,7 @@ func (m *mod) Stop(ctx context.Context) error {
 	case <-m.done:
 		return m.err
 	case <-ctx.Done(): // an element blocks the loop: give the terminal back without it
+		_, _ = m.term.Write([]byte(ansi.ResetModifyOtherKeys)) // Stop's own writes would fail as well
 		return m.term.Stop()
 	}
 }
@@ -96,6 +116,29 @@ func (m *mod) Open(k tui.Kind, z int, el uv.Drawable) tui.Handle {
 	m.mu.Unlock()
 	m.redraw()
 	return &handle{m, it}
+}
+
+func (m *mod) Copy(text string) {
+	m.mu.Lock()
+	m.clip = text
+	m.mu.Unlock()
+	go func() {
+		// tmux drops a pane's OSC 52 unless set-clipboard is on; it sends its own for load-buffer -w,
+		// and keeps the text in its buffer too.
+		if os.Getenv("TMUX") != "" {
+			cmd := exec.Command("tmux", "load-buffer", "-w", "-")
+			cmd.Stdin = strings.NewReader(text)
+			err := cmd.Run()
+			if err == nil {
+				return
+			}
+			slog.Warn("copy", "module", "tui", "err", err)
+		}
+		m.mu.Lock()
+		m.osc52 = &text
+		m.mu.Unlock()
+		m.redraw()
+	}()
 }
 
 func (m *mod) redraw() {
@@ -149,8 +192,43 @@ func (m *mod) event(ev uv.Event) {
 	if ws, ok := ev.(uv.WindowSizeEvent); ok {
 		m.w, m.h, m.frameH = ws.Width, ws.Height, -1
 		m.redraw()
-	} else if k, ok := ev.(uv.KeyPressEvent); !input(m.elements(), ev) && ok && k.MatchString("ctrl+c") {
-		interrupt()
+		return
+	}
+	slog.Debug("input", "module", "tui", "event", fmt.Sprintf("%T %v", ev, ev)) // what the terminal sent, for keys that don't work
+	if input(m.elements(), ev) {
+		return
+	}
+	switch ev := ev.(type) {
+	case uv.KeyPressEvent:
+		switch {
+		case ev.MatchString("ctrl+c"):
+			interrupt()
+		case ev.MatchString("ctrl+v"):
+			m.paste()
+		}
+	case uv.MouseClickEvent:
+		if ev.Button == uv.MouseMiddle {
+			m.paste()
+		}
+	}
+}
+
+// paste pastes what was copied last, as terminals paste their selection: under tmux its buffer, which
+// Copy fills too and tmux sends back as a bracketed paste, else the last Copy.
+func (m *mod) paste() {
+	if pane := os.Getenv("TMUX_PANE"); os.Getenv("TMUX") != "" && pane != "" {
+		go func() {
+			if out, err := exec.Command("tmux", "paste-buffer", "-p", "-t", pane).CombinedOutput(); err != nil {
+				slog.Warn("tmux paste-buffer", "module", "tui", "err", err, "out", string(out))
+			}
+		}()
+		return
+	}
+	m.mu.Lock()
+	clip := m.clip
+	m.mu.Unlock()
+	if clip != "" {
+		input(m.elements(), uv.PasteEvent{Content: clip})
 	}
 }
 
@@ -160,9 +238,12 @@ func (m *mod) render() {
 	}
 	scr := m.term.Screen()
 	m.mu.Lock()
-	items := m.items
-	m.queued, m.texts = append(m.queued, m.texts...), nil
+	items, osc52 := m.items, m.osc52
+	m.queued, m.texts, m.osc52 = append(m.queued, m.texts...), nil, nil
 	m.mu.Unlock()
+	if osc52 != nil {
+		_, _ = scr.WriteString(ansi.SetSystemClipboard(*osc52)) // goes out with the frame's Flush
+	}
 
 	if !m.alt { // print against the frame on screen, before it changes
 		for _, t := range m.queued {
@@ -173,10 +254,14 @@ func (m *mod) render() {
 	frameH, alt := layout(items, m.w, m.h)
 	if alt != m.alt {
 		m.alt, m.frameH = alt, -1
+		// The mouse is on in the alt screen only, for the wheel: tmux with mouse on keeps it from a pane
+		// that doesn't track the mouse. Inline, the wheel stays with the terminal's scrollback.
 		if alt {
 			scr.EnterAltScreen()
+			scr.SetMouseMode(uv.MouseModeDrag) // drags too: elements select
 		} else {
 			scr.ExitAltScreen()
+			scr.SetMouseMode(uv.MouseModeNone)
 			if len(m.queued) > 0 {
 				m.redraw() // print them once the main screen is back
 			}
@@ -188,11 +273,15 @@ func (m *mod) render() {
 	}
 	_ = scr.Display(uv.DrawableFunc(func(s uv.Screen, _ uv.Rectangle) {
 		setCursor(scr, compose(s, items))
+		m.out.hold() // no element is called from here on: a Stop that doesn't wait for the loop finds nothing held
 	}))
 	// shortcut: uv's Flush leaves its cursor move in the renderer until the next Render, and InsertAbove
 	// then starts from the wrong row; render again to send it, drop once uv flushes it itself.
 	scr.Render()
 	_ = scr.Flush()
+	// One write for the frame and the cursor move: between two, the terminal and tmux show the cursor
+	// on the frame's last cell, and it jumps on every frame.
+	_ = m.out.send()
 }
 
 // leave gives the terminal back with the last inline frame kept and the shell prompt on a new line below it.
@@ -205,6 +294,7 @@ func (m *mod) leave() error {
 	}
 	scr.SetCursorPosition(0, max(m.frameH-1, 0))
 	scr.ShowCursor() // uv's Reset leaves a hidden cursor hidden
+	_, _ = scr.WriteString(ansi.ResetModifyOtherKeys)
 	// The second pass sends the cursor move, see render.
 	for range 2 {
 		scr.Render()
@@ -234,4 +324,40 @@ func setCursor(scr *uv.TerminalScreen, c *uv.Cursor) {
 	if !scr.CursorVisible() {
 		scr.ShowCursor()
 	}
+}
+
+// console is the terminal's console with the screen's output going through out.
+type console struct {
+	uv.Console
+	out *out
+}
+
+func (c console) Writer() io.Writer { return c.out }
+
+// out passes writes through, or holds them from hold until send. Only the loop holds it.
+type out struct {
+	w       io.Writer
+	held    []byte
+	holding bool
+}
+
+func (o *out) Write(p []byte) (int, error) {
+	if o.holding {
+		o.held = append(o.held, p...)
+		return len(p), nil
+	}
+	return o.w.Write(p)
+}
+
+func (o *out) hold() { o.holding = true }
+
+// send writes what was held at once and stops holding.
+func (o *out) send() error {
+	o.holding = false
+	if len(o.held) == 0 {
+		return nil
+	}
+	_, err := o.w.Write(o.held)
+	o.held = o.held[:0]
+	return err
 }

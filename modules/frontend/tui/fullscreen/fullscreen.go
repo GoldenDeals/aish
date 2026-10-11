@@ -1,7 +1,10 @@
 // Package fullscreen shows the conversation on the whole screen, above the panes: user messages and errors
 // as text, answers as markdown, each drawn by the renderer of its kind (pkg/contracts/tui/renderer).
-// It follows the end while new content comes; PgUp and PgDn scroll it. Build it with tui.renderer.plaintext:
-// content of a kind without a renderer falls back to it, and without it such content isn't shown.
+// It follows the end while new content comes; PgUp and PgDn scroll it by a page, Up and Down by a row,
+// the mouse wheel by three. A drag with the left button selects; the release copies and drops the selection.
+// A double click copies the word under it, a triple click the row.
+// Build it with tui.renderer.plaintext: content of a kind without a renderer falls back to it,
+// and without it such content isn't shown.
 package fullscreen
 
 import (
@@ -11,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 
@@ -25,9 +29,14 @@ import (
 )
 
 const (
-	z    = 0 // under every pane and overlay
-	prio = 0 // above the provider, which waits for the answer's end before it records it
-	gap  = 1 // blank rows after each block
+	z     = 0 // under every pane and overlay
+	prio  = 0 // above the provider, which waits for the answer's end before it records it
+	gap   = 1 // blank rows after each block
+	wheel = 3 // rows a wheel step scrolls, as terminals scroll their scrollback
+
+	doubleClick = 400 * time.Millisecond // a click on the cell this soon after the last one counts with it
+	flash       = 300 * time.Millisecond // how long what a double or triple click grabs stays highlighted, as in tmux
+	separators  = ",│`|:\"' ()[]{}<>\t"  // what ends a double-clicked word: Alacritty's default
 )
 
 type mod struct {
@@ -35,23 +44,61 @@ type mod struct {
 	renderers map[string]renderer.Renderer
 
 	mu      sync.Mutex // the compositor draws while bus handlers and stream readers add
+	scr     tui.Screen
 	handle  tui.Handle
 	blocks  []renderer.Block
 	follow  bool   // keep the end in view
 	top     anchor // the first row in view
 	w, rows int    // the view at the last frame, for scrolling
+	sel     selection
+	last    click
+	held    bool // the left button went down in the view and is still down
+}
+
+// click is where and when the left button last clicked without a drag, and the how-manieth click in a row.
+type click struct {
+	at point
+	t  time.Time
+	n  int
 }
 
 // anchor is the row-th row of the block-th block. Kept by block, the view stays on its content
 // when a resize changes the blocks' heights.
 type anchor struct{ block, row int }
 
+// point is a cell of the transcript, its row counted from the transcript's start: a selection stays
+// on its content while the view scrolls.
+type point struct{ row, col int }
+
+func (p point) before(q point) bool { return p.row < q.row || p.row == q.row && p.col < q.col }
+
+// selection is the cells between from and to in reading order, both included. It's on, and highlighted,
+// once a drag leaves the cell it started on, or while a double or triple click shows what it grabbed:
+// a click alone highlights nothing.
+type selection struct {
+	from, to point
+	on       bool
+}
+
+// ordered is the selection's first and last cell.
+func (s selection) ordered() (point, point) {
+	if s.to.before(s.from) {
+		return s.to, s.from
+	}
+	return s.from, s.to
+}
+
+func (s selection) has(p point) bool {
+	a, b := s.ordered()
+	return s.on && !p.before(a) && !b.before(p)
+}
+
 func init() { module.Register("tui.fullscreen", &mod{}) }
 
 func (m *mod) Init(b bus.Bus, _ config.Config) error {
 	m.renderers, m.follow = map[string]renderer.Renderer{}, true
 	bus.Async(b, event.ByName(tui.Ready), func(_ context.Context, ev event.Event[tui.Screen]) {
-		m.edit(func() { m.handle = ev.Data().Open(tui.Fullscreen, z, m) })
+		m.edit(func() { m.scr, m.handle = ev.Data(), ev.Data().Open(tui.Fullscreen, z, m) })
 	})
 	bus.Sync(b, prio, event.ByName(renderer.Announce), m.announce)
 	bus.Sync(b, prio, event.ByName(llm.UserMessage), func(_ context.Context, t tx.Tx, ev event.Event[string]) error {
@@ -152,32 +199,177 @@ func (m *mod) Draw(scr uv.Screen, area uv.Rectangle) {
 		pos = math.MaxInt
 	}
 	m.move(hs, pos)
-	y := area.Min.Y - m.top.row
-	for i := m.top.block; i < len(m.blocks) && y < area.Max.Y; i++ {
-		m.blocks[i].Draw(scr, uv.Rect(area.Min.X, y, m.w, hs[i]-gap))
+	m.paint(scr, area, hs, m.top)
+	if !m.sel.on {
+		return
+	}
+	first := offset(hs, m.top)
+	for y := range m.rows {
+		for x := range m.w {
+			if c := scr.CellAt(area.Min.X+x, area.Min.Y+y); c != nil && !c.IsZero() && m.sel.has(point{first + y, x}) {
+				hl := *c
+				hl.Style.Attrs |= uv.AttrReverse
+				scr.SetCell(area.Min.X+x, area.Min.Y+y, &hl)
+			}
+		}
+	}
+}
+
+// paint draws the blocks into area from a on.
+func (m *mod) paint(scr uv.Screen, area uv.Rectangle, hs []int, a anchor) {
+	y := area.Min.Y - a.row
+	for i := a.block; i < len(m.blocks) && y < area.Max.Y; i++ {
+		m.blocks[i].Draw(scr, uv.Rect(area.Min.X, y, area.Dx(), hs[i]-gap))
 		y += hs[i]
 	}
 }
 
 func (m *mod) Input(ev uv.Event) bool {
-	k, ok := ev.(uv.KeyPressEvent)
-	if !ok {
-		return false
+	switch ev := ev.(type) {
+	case uv.MouseClickEvent, uv.MouseMotionEvent, uv.MouseReleaseEvent:
+		return m.selectBy(ev.(uv.MouseEvent))
 	}
+	page := max(m.rows-1, 1) // only Draw sets rows, on this goroutine
 	var n int
-	switch {
-	case k.MatchString("pgup"):
-		n = -1
-	case k.MatchString("pgdown"):
-		n = 1
+	switch k := ev.(type) {
+	case uv.MouseWheelEvent:
+		switch k.Button {
+		case uv.MouseWheelUp:
+			n = -wheel
+		case uv.MouseWheelDown:
+			n = wheel
+		default:
+			return false
+		}
+	case uv.KeyPressEvent:
+		switch {
+		case k.MatchString("up"):
+			n = -1
+		case k.MatchString("down"):
+			n = 1
+		case k.MatchString("pgup"):
+			n = -page
+		case k.MatchString("pgdown"):
+			n = page
+		default:
+			return false
+		}
 	default:
 		return false
 	}
 	m.edit(func() {
 		hs := m.heights()
-		m.move(hs, offset(hs, m.top)+n*max(m.rows-1, 1))
+		m.move(hs, offset(hs, m.top)+n)
 	})
 	return true
+}
+
+// selectBy selects with the left button: a press in the view starts a selection, a drag moves its end,
+// and the release copies it to the clipboard and drops it, as tmux does.
+func (m *mod) selectBy(ev uv.MouseEvent) bool {
+	mo := ev.Mouse()
+	if mo.Button != uv.MouseLeft {
+		return false // the middle button pastes: the compositor's
+	}
+	_, press := ev.(uv.MouseClickEvent)
+	taken := false
+	m.edit(func() {
+		if press && (mo.X >= m.w || mo.Y >= m.rows) || !press && !m.held {
+			return // a press on a pane below, or the drag from there
+		}
+		taken = true
+		hs := m.heights()
+		p := point{offset(hs, m.top) + min(max(mo.Y, 0), m.rows-1), min(max(mo.X, 0), m.w-1)}
+		switch ev.(type) {
+		case uv.MouseClickEvent:
+			m.sel, m.held = selection{from: p, to: p}, true
+		case uv.MouseMotionEvent:
+			m.sel.to = p
+			m.sel.on = m.sel.on || p != m.sel.from
+		case uv.MouseReleaseEvent:
+			drag := m.sel.on || p != m.sel.from
+			m.sel.to, m.sel.on, m.held = p, false, false
+			if m.scr == nil {
+				return
+			}
+			if drag {
+				if text := m.selected(hs); text != "" {
+					m.scr.Copy(text)
+				}
+				return
+			}
+			now := time.Now()
+			if p != m.last.at || now.Sub(m.last.t) > doubleClick {
+				m.last.n = 0
+			}
+			m.last = click{p, now, m.last.n%3 + 1}
+			switch m.last.n {
+			case 2:
+				m.word(hs, p)
+			case 3: // shortcut: the row, not the whole line a block wrapped; ask blocks for lines if that matters
+				m.grab(hs, point{p.row, 0}, point{p.row, m.w - 1})
+			}
+		}
+	})
+	return taken
+}
+
+// word grabs the word at p.
+func (m *mod) word(hs []int, p point) {
+	scr := uv.NewWindow(m.w, 1, nil)
+	m.paint(scr, scr.Bounds(), hs, at(hs, p.row))
+	l := scr.Line(0)
+	in := func(x int) bool { return l[x].IsZero() || !strings.ContainsAny(l[x].Content, separators) } // zero: a wide cell's tail
+	if !in(p.col) {
+		return
+	}
+	from, to := p.col, p.col
+	for from > 0 && in(from-1) {
+		from--
+	}
+	for to+1 < len(l) && in(to+1) {
+		to++
+	}
+	m.grab(hs, point{p.row, from}, point{p.row, to})
+}
+
+// grab selects from..to and copies it, as terminals do on a double or triple click; the highlight goes after flash.
+func (m *mod) grab(hs []int, from, to point) {
+	m.sel = selection{from, to, true}
+	text := m.selected(hs)
+	if text == "" {
+		m.sel.on = false
+		return
+	}
+	m.scr.Copy(text)
+	sel := m.sel
+	time.AfterFunc(flash, func() {
+		m.edit(func() {
+			if m.sel == sel { // not a new one since
+				m.sel.on = false
+			}
+		})
+	})
+}
+
+// selected is the selection's text: its rows drawn again off screen, trailing blanks trimmed.
+func (m *mod) selected(hs []int) string {
+	a, b := m.sel.ordered()
+	scr := uv.NewWindow(m.w, b.row-a.row+1, nil)
+	m.paint(scr, scr.Bounds(), hs, at(hs, a.row))
+	lines := make([]string, scr.Height())
+	for y := range lines {
+		l := scr.Line(y)
+		if y == len(lines)-1 {
+			l = l[:b.col+1]
+		}
+		if y == 0 {
+			l = l[a.col:]
+		}
+		lines[y] = l.String()
+	}
+	// shortcut: a row a block wrapped gets a newline too; ask blocks for their text if that matters for copying.
+	return strings.Join(lines, "\n")
 }
 
 // heights are the blocks' rows at the last width, gaps included.
@@ -199,12 +391,18 @@ func (m *mod) move(hs []int, pos int) {
 	end := max(total-m.rows, 0)
 	pos = min(max(pos, 0), end)
 	m.follow = pos == end
-	m.top = anchor{}
-	for m.top.block < len(hs) && pos >= hs[m.top.block] {
-		pos -= hs[m.top.block]
-		m.top.block++
+	m.top = at(hs, pos)
+}
+
+// at is the anchor of the transcript's row pos.
+func at(hs []int, pos int) anchor {
+	var a anchor
+	for a.block < len(hs) && pos >= hs[a.block] {
+		pos -= hs[a.block]
+		a.block++
 	}
-	m.top.row = pos
+	a.row = pos
+	return a
 }
 
 // offset is a's row counted from the transcript's start.

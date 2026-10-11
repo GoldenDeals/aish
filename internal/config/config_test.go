@@ -42,7 +42,20 @@ func TestLoadErrors(t *testing.T) {
 			t.Errorf("%s: no error", name)
 		}
 	}
+}
+
+func TestLoadDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
 	if secs, err := Load(""); secs != nil || err != nil {
-		t.Errorf("Load(\"\") = %v, %v", secs, err)
+		t.Errorf("no %s: %v, %v", Default, secs, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(Default), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(Default, []byte("hello: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if secs, err := Load(""); err != nil || secs["hello"] == nil {
+		t.Errorf("with %s: %v, %v", Default, secs, err)
 	}
 }

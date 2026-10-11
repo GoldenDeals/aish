@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"runtime/debug"
 	"slices"
@@ -64,10 +65,13 @@ func (t *Tx) Run(ev event.Any) error {
 		}
 	}
 	if err := context.Cause(t.ctx); err != nil {
-		return t.rollback(err)
+		err = t.rollback(err)
+		slog.Warn("tx rolled back", "tx", t.id, "event", ev.Name(), "err", err)
+		return err
 	}
 
 	t.cancel(tx.ErrClosed)
+	slog.Debug("tx committed", "tx", t.id, "events", len(t.events))
 	for _, r := range t.events {
 		if r.stopped {
 			continue
@@ -106,6 +110,7 @@ func (t *Tx) emit(ctx context.Context, ev event.Any, lo, hi int) error {
 	if err := t.closed(); err != nil {
 		return err
 	}
+	slog.Debug("emit", "tx", t.id, "event", ev.Name())
 	syncs, asyncs := t.subs()
 	r := &rec{ev: ev, asyncs: asyncs}
 	t.events = append(t.events, r)

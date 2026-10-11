@@ -1,9 +1,10 @@
-package core
+package tui
 
 import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	uv "github.com/charmbracelet/ultraviolet"
 
@@ -225,6 +226,39 @@ func TestCtrlC(t *testing.T) {
 	m.event(key('a', 0))
 	if n != 1 {
 		t.Errorf("interrupted %d times, want 1", n)
+	}
+}
+
+// recv is an element that only takes input.
+type recv func(uv.Event) bool
+
+func (recv) Draw(uv.Screen, uv.Rectangle) {}
+func (r recv) Input(ev uv.Event) bool     { return r(ev) }
+
+func TestCopyPaste(t *testing.T) {
+	t.Setenv("TMUX", "") // the OSC 52 way, pasting the last Copy
+	m := &mod{wake: make(chan struct{}, 1)}
+	var got []uv.Event
+	m.Open(tui.Pane, 0, recv(func(ev uv.Event) bool { got = append(got, ev); return false }))
+	middle := uv.MouseClickEvent{Button: uv.MouseMiddle}
+	m.event(middle) // nothing copied yet
+	m.Copy("hi")
+	m.event(middle)
+	ctrlV := key('v', uv.ModCtrl)
+	m.event(ctrlV)
+	if want := []uv.Event{middle, middle, uv.PasteEvent{Content: "hi"}, ctrlV, uv.PasteEvent{Content: "hi"}}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) {
+		m.mu.Lock()
+		osc52 := m.osc52
+		m.mu.Unlock()
+		if osc52 != nil && *osc52 == "hi" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no OSC 52 due")
+		}
 	}
 }
 

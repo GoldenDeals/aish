@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -141,6 +142,8 @@ func (m *mod) addAnswer(ctx context.Context, t tx.Tx, ev event.Event[[]string]) 
 		}
 	}
 	text := strings.Join(ev.Data(), "")
+	slog.Info("llm answer", "module", "openai", "len", len(text))
+	slog.Debug("llm answer", "module", "openai", "text", text)
 	if text == "" {
 		return nil // nothing for the model to read back
 	}
@@ -153,11 +156,14 @@ func (m *mod) addAnswer(ctx context.Context, t tx.Tx, ev event.Event[[]string]) 
 // in any order, interleaved in the dialog. Queue requests once a UI can send ahead.
 func (m *mod) ask(actx context.Context, ev event.Event[params]) {
 	defer llm.End(actx) // last: after the Error
+	p := ev.Data()
+	slog.Info("llm request", "module", "openai", "model", p.Model, "messages", len(p.Input))
+	slog.Debug("llm request", "module", "openai", "params", p)
 	ctx, cancel := context.WithCancel(m.ctx)
 	defer cancel()
 	defer context.AfterFunc(llm.Turn(actx), cancel)() // the user stopped the turn
 	// Token, model and limit errors come before the answer: no empty answer for them.
-	r, err := m.send(ctx, ev.Data())
+	r, err := m.send(ctx, p)
 	if err != nil {
 		m.fail(actx, err)
 		return
@@ -184,6 +190,7 @@ func (m *mod) fail(actx context.Context, err error) {
 	if llm.Turn(actx).Err() != nil {
 		err = errors.New("interrupted")
 	}
+	slog.Warn("llm error", "module", "openai", "err", err)
 	_ = m.b.Dispatch(m.ctx, event.New(llm.Error, err.Error())) // a failed error report has nowhere to go
 }
 

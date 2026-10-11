@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"go.yaml.in/yaml/v3"
@@ -12,7 +14,10 @@ type Section map[string]any
 
 func (s Section) Map() map[string]any { return s }
 
-// Load reads a YAML file whose top-level keys are module names; an empty path means no file.
+// Default is read when no path is given, relative to the working directory; unlike a given path it may be missing.
+const Default = ".agents/aish.yaml"
+
+// Load reads a YAML file whose top-level keys are module names; an empty path means Default.
 //
 //	hello:
 //	  greeting: hi
@@ -20,7 +25,10 @@ func (s Section) Map() map[string]any { return s }
 // Sections are plain maps: yaml.v3 decodes nested blocks into the named map type it is given.
 func Load(path string) (map[string]map[string]any, error) {
 	if path == "" {
-		return nil, nil
+		if _, err := os.Stat(Default); errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		path = Default
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

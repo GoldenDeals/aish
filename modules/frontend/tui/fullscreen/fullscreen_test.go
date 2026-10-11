@@ -3,6 +3,7 @@ package fullscreen
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	corebus "github.com/GoldenDeals/aish-core/internal/core/bus"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/contracts/llm"
+	"github.com/GoldenDeals/aish-core/pkg/contracts/tui"
 	"github.com/GoldenDeals/aish-core/pkg/contracts/tui/renderer"
 	"github.com/GoldenDeals/aish-core/pkg/event"
 	"github.com/GoldenDeals/aish-core/pkg/tx"
@@ -149,6 +151,23 @@ func TestScroll(t *testing.T) {
 	if got, want := screen(m, 5, 6), "4:a\nb\nc\n\n5:a\n"; got != want || !m.follow {
 		t.Errorf("back at the end: %q follow %v, want %q", got, m.follow, want)
 	}
+	m.Input(uv.KeyPressEvent{Code: uv.KeyUp})
+	m.Input(uv.KeyPressEvent{Code: uv.KeyUp})
+	m.Input(uv.KeyPressEvent{Code: uv.KeyDown})
+	if got, want := screen(m, 5, 6), "\n4:a\nb\nc\n\n5:a"; got != want || m.follow {
+		t.Errorf("a row up: %q follow %v, want %q", got, m.follow, want)
+	}
+	if !m.Input(uv.MouseWheelEvent{Button: uv.MouseWheelUp}) {
+		t.Fatal("wheel not taken")
+	}
+	if got, want := screen(m, 5, 6), "3:a\nb\nc\n\n4:a\nb"; got != want {
+		t.Errorf("a wheel step up: %q, want %q", got, want)
+	}
+	m.Input(uv.MouseWheelEvent{Button: uv.MouseWheelDown})
+	m.Input(uv.MouseWheelEvent{Button: uv.MouseWheelDown})
+	if !m.follow {
+		t.Error("wheel down didn't get back to the end")
+	}
 	if m.Input(uv.KeyPressEvent{Code: 'a', Text: "a"}) {
 		t.Error("took a key it doesn't scroll by")
 	}
@@ -157,5 +176,82 @@ func TestScroll(t *testing.T) {
 	m.move([]int{2, 6, 2}, offset([]int{2, 6, 2}, m.top)) // heights after a resize
 	if m.top != (anchor{1, 1}) {
 		t.Errorf("a resize moved the view to %v", m.top)
+	}
+}
+
+// clipboard is a Screen that records what's copied.
+type clipboard []string
+
+func (c *clipboard) Open(tui.Kind, int, uv.Drawable) tui.Handle { return nil }
+func (c *clipboard) Copy(text string)                           { *c = append(*c, text) }
+
+func TestSelect(t *testing.T) {
+	var clip clipboard
+	m := &mod{follow: true, scr: &clip}
+	m.blocks = []renderer.Block{&lines{kind: "0", text: "hello\nworld"}, &lines{kind: "1", text: "next"}}
+	screen(m, 10, 6) // rows "0:hello", "world", "", "1:next", ""
+	left := uv.MouseLeft
+
+	if !m.Input(uv.MouseClickEvent{X: 1, Y: 3, Button: left}) {
+		t.Fatal("press not taken")
+	}
+	scr := uv.NewWindow(10, 6, nil)
+	rev := func(x, y int) bool { return scr.CellAt(x, y).Style.Attrs&uv.AttrReverse != 0 }
+	m.Draw(scr, scr.Bounds())
+	if rev(1, 3) {
+		t.Error("a press alone highlights")
+	}
+	m.Input(uv.MouseMotionEvent{X: 2, Y: 0, Button: left}) // upwards: the selection runs from here to the press
+	scr = uv.NewWindow(10, 6, nil)
+	m.Draw(scr, scr.Bounds())
+	if rev(1, 0) || !rev(2, 0) || !rev(1, 3) || rev(2, 3) {
+		t.Error("highlight off the selection")
+	}
+	m.Input(uv.MouseReleaseEvent{X: 2, Y: 0, Button: left})
+	if want := []string{"hello\nworld\n\n1:"}; !slices.Equal(clip, want) {
+		t.Errorf("copied %q, want %q", clip, want)
+	}
+	scr = uv.NewWindow(10, 6, nil)
+	m.Draw(scr, scr.Bounds())
+	if rev(2, 0) {
+		t.Error("the selection stays after the release")
+	}
+
+	m.Input(uv.MouseClickEvent{X: 0, Y: 0, Button: left})
+	m.Input(uv.MouseReleaseEvent{X: 0, Y: 0, Button: left})
+	if len(clip) != 1 {
+		t.Errorf("a click copied: %q", clip)
+	}
+
+	for range 2 { // on "0:hello": the colon ends the word
+		m.Input(uv.MouseClickEvent{X: 4, Y: 0, Button: left})
+		m.Input(uv.MouseReleaseEvent{X: 4, Y: 0, Button: left})
+	}
+	if len(clip) != 2 || clip[1] != "hello" {
+		t.Errorf("a double click copied %q, want hello", clip[1:])
+	}
+	for range 3 { // on "1:next", elsewhere: counts from one again
+		m.Input(uv.MouseClickEvent{X: 3, Y: 3, Button: left})
+		m.Input(uv.MouseReleaseEvent{X: 3, Y: 3, Button: left})
+	}
+	if want := []string{"next", "1:next"}; !slices.Equal(clip[2:], want) {
+		t.Errorf("a triple click copied %q, want %q", clip[2:], want)
+	}
+	for deadline := time.Now().Add(time.Second); ; time.Sleep(10 * time.Millisecond) {
+		m.mu.Lock()
+		on := m.sel.on
+		m.mu.Unlock()
+		if !on {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the double-clicked word stays highlighted")
+		}
+	}
+	if m.Input(uv.MouseClickEvent{X: 0, Y: 6, Button: left}) || m.Input(uv.MouseMotionEvent{X: 0, Y: 0, Button: left}) {
+		t.Error("took a press on a pane below, or the drag from it")
+	}
+	if m.Input(uv.MouseClickEvent{X: 0, Y: 0, Button: uv.MouseMiddle}) {
+		t.Error("took the middle button, the compositor's paste")
 	}
 }

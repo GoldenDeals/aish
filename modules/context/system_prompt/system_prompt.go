@@ -14,6 +14,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -58,6 +59,7 @@ func (m *mod) Init(b bus.Bus, cfg config.Config) error {
 }
 
 func (m *mod) Start(ctx context.Context) error {
+	slog.Info("system prompt", "module", "context.system_prompt", "len", len(m.text))
 	return m.b.Dispatch(ctx, event.New(llm.System, m.text))
 }
 

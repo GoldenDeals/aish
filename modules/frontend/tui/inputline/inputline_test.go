@@ -21,11 +21,17 @@ func typed(m *mod, s string) {
 	}
 }
 
-func line(m *mod, w int) (string, int) {
-	scr := uv.NewWindow(w, 1, nil)
+// view draws m on a pane w wide and h high, as many rows as it asks for if h is 0.
+func view(m *mod, w, h int) (string, uv.Position) {
+	if h == 0 {
+		_, h = m.Size(w, 100)
+	}
+	scr := uv.NewWindow(w, h, nil)
 	m.Draw(scr, scr.Bounds())
-	return scr.String(), m.Cursor().X
+	return scr.String(), m.Cursor().Position
 }
+
+func key(code rune, mod uv.KeyMod) uv.KeyPressEvent { return uv.KeyPressEvent{Code: code, Mod: mod} }
 
 func setup(t *testing.T) (*mod, bus.Bus) {
 	m, b := &mod{}, corebus.New()
@@ -39,16 +45,85 @@ func setup(t *testing.T) (*mod, bus.Bus) {
 func TestEdit(t *testing.T) {
 	m, _ := setup(t)
 	typed(m, "при")
-	m.Input(uv.KeyPressEvent{Code: uv.KeyBackspace}) // a whole two-byte rune
-	m.Input(uv.PasteEvent{Content: "x\ny\x1b[2Jz"})  // one line, no escape sequences
-	if got, x := line(m, 20); got != "> прx y[2Jz" || x != 11 {
-		t.Errorf("got %q cursor %d", got, x)
+	m.Input(uv.KeyPressEvent{Code: uv.KeyBackspace})      // a whole two-byte rune
+	m.Input(uv.PasteEvent{Content: "x\ry\r\n\x1b[2Jz\t"}) // newlines as terminals paste them, no escape sequences
+	if m.text != "прx\ny\n[2Jz\t" {
+		t.Errorf("text %q", m.text)
 	}
-	if got, x := line(m, 8); got != "> y[2Jz" || x != 7 { // a long line shows its end, the cursor fits
-		t.Errorf("narrow: %q cursor %d", got, x)
+	if got, c := view(m, 20, 0); got != "> прx\n  y\n  [2Jz" || c != uv.Pos(7, 2) { // String trims the tab's space
+		t.Errorf("got %q cursor %v", got, c)
+	}
+	if got, c := view(m, 6, 0); got != "> прx\n  y\n  [2J\n  z" || c != uv.Pos(4, 3) { // wrapped, a column left for the cursor
+		t.Errorf("narrow: %q cursor %v", got, c)
+	}
+	if got, c := view(m, 6, 2); got != "  [2J\n  z" || c != uv.Pos(4, 1) { // a lower pane keeps the cursor's row
+		t.Errorf("low: %q cursor %v", got, c)
 	}
 	if m.Input(uv.KeyPressEvent{Code: 'c', Mod: uv.ModCtrl}) {
 		t.Error("took ctrl+c")
+	}
+}
+
+func TestMove(t *testing.T) {
+	m, _ := setup(t)
+	m.Input(uv.PasteEvent{Content: "one two\nthree"})
+	for _, step := range []struct {
+		k   uv.KeyPressEvent
+		pos int
+	}{
+		{key('a', uv.ModCtrl), 8}, // the line's start
+		{key(uv.KeyLeft, 0), 7},
+		{key('b', uv.ModCtrl), 6},
+		{key('b', uv.ModAlt), 4}, // the word's start
+		{key(uv.KeyLeft, uv.ModCtrl), 0},
+		{key('f', uv.ModAlt), 3}, // the word's end
+		{key(uv.KeyRight, uv.ModCtrl), 7},
+		{key(uv.KeyRight, 0), 8},
+		{key('f', uv.ModCtrl), 9},
+		{key(uv.KeyEnd, 0), 13},
+		{key(uv.KeyHome, 0), 8},
+		{key('e', uv.ModCtrl), 13},
+	} {
+		if !m.Input(step.k) || m.pos != step.pos {
+			t.Fatalf("%v: at %d, want %d", step.k, m.pos, step.pos)
+		}
+	}
+	m.Input(key(uv.KeyHome, 0))
+	typed(m, "e\u0301") // an accent the terminal sends apart
+	m.Input(key(uv.KeyLeft, 0))
+	if m.pos != 8 {
+		t.Errorf("stopped inside a grapheme: %d", m.pos)
+	}
+	m.Input(key(uv.KeyRight, 0))
+	m.Input(key(uv.KeyBackspace, 0))
+	if got, c := view(m, 20, 0); got != "> one two\n  three" || c != uv.Pos(2, 1) {
+		t.Errorf("backspace: %q cursor %v", got, c)
+	}
+}
+
+func TestKill(t *testing.T) {
+	m, _ := setup(t)
+	m.Input(uv.PasteEvent{Content: "one two-three\nfour five"})
+	for _, step := range []struct {
+		k    uv.KeyPressEvent
+		text string
+		pos  int
+	}{
+		{key('w', uv.ModCtrl), "one two-three\nfour ", 19},
+		{key('a', uv.ModCtrl), "one two-three\nfour ", 14},
+		{key(uv.KeyLeft, 0), "one two-three\nfour ", 13},
+		{key('w', uv.ModCtrl), "one \nfour ", 4}, // to the space: two-three is one word to ctrl+w
+		{key('a', uv.ModCtrl), "one \nfour ", 0},
+		{key('d', uv.ModAlt), " \nfour ", 0},
+		{key(uv.KeyDelete, 0), "\nfour ", 0},
+		{key(uv.KeyDelete, 0), "four ", 0},
+		{key(uv.KeyRight, 0), "four ", 1},
+		{key('k', uv.ModCtrl), "f", 1},
+		{key('u', uv.ModCtrl), "", 0},
+	} {
+		if !m.Input(step.k) || m.text != step.text || m.pos != step.pos {
+			t.Fatalf("%v: %q at %d, want %q at %d", step.k, m.text, m.pos, step.text, step.pos)
+		}
 	}
 }
 
@@ -72,15 +147,25 @@ func TestSend(t *testing.T) {
 	if msg := <-got; msg != "hi" {
 		t.Errorf("sent %q", msg)
 	}
-	if s, _ := line(m, 20); s != ">" {
+	if s, _ := view(m, 20, 0); s != ">" {
 		t.Errorf("not cleared: %q", s)
+	}
+
+	typed(m, `a\`)
+	m.Input(enter) // continues the line, as in bash
+	typed(m, "b")
+	m.Input(key(uv.KeyEnter, uv.ModShift))
+	typed(m, "c")
+	m.Input(enter)
+	if msg := <-got; msg != "a\nb\nc" {
+		t.Errorf("sent %q", msg)
 	}
 
 	typed(m, "roll back")
 	m.Input(enter)
 	<-got
 	for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) {
-		if s, _ := line(m, 20); s == "> roll back" {
+		if s, _ := view(m, 20, 0); s == "> roll back" {
 			break
 		}
 		if time.Now().After(deadline) {
