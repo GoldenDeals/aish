@@ -1,11 +1,7 @@
-// Package renderer is the bus contract between the modules that show content and the renderers that draw it.
+// Package renderer is the contract between the modules that show content and the renderer core
+// (modules/frontend/tui/renderer), which draws it by the rules of the renderers built in.
 //
-// A renderer announces itself once, from Start, with an Announce event. A module that shows content collects
-// the renderers (subscribe in Init) and asks for a Block of the content's kind; when no renderer has that kind,
-// it falls back to Text. The source of the content decides its kind: an llm.answer is Markdown, a tool says what
-// its output is. A renderer of a kind that holds others, like a markdown fenced block, gets Blocks for them from pick.
-//
-// Renderers draw untrusted text: they must not let it reach the terminal as escape sequences.
+// The source of the content decides its kind: an llm.answer is Markdown, a user message is Text, a tool call is Tool.
 package renderer
 
 import (
@@ -14,22 +10,14 @@ import (
 	"github.com/GoldenDeals/aish-core/contracts/tui"
 )
 
-// Announce is event.Event[Renderer]. Two renderers of one kind are an error.
-const Announce = "tui.renderer.announce"
-
 // Kinds of content.
 const (
-	Text     = "text"     // plain text, the fallback for every other kind
-	Markdown = "markdown" // an llm.answer
+	Text     = "text"     // shown as is
+	Markdown = "markdown" // parsed by the renderers' rules: an llm.answer
+	// Tool is a tool call: a line with the tool's name, a space and its input as JSON on one line;
+	// once the call is done, a line "ok" or "error" and the output.
+	Tool = "tool"
 )
-
-type Renderer struct {
-	Kind string
-	New  func(pick Pick) Block // an empty Block
-}
-
-// Pick returns a Block of kind, falling back to Text; nil when there is no Text renderer either.
-type Pick func(kind string) Block
 
 // Block shows one piece of content. It is a tui element as is: opened as tui.Text, it prints into the scrollback.
 // Its owner calls its methods one at a time.
@@ -40,4 +28,17 @@ type Block interface {
 	tui.Sizer
 	// Write appends content as it streams.
 	Write(chunk string)
+}
+
+var core func(kind string) Block
+
+// Provide installs the renderer core; it calls it from init.
+func Provide(f func(kind string) Block) { core = f }
+
+// New returns an empty Block for content of kind; nil when the renderer core isn't built.
+func New(kind string) Block {
+	if core == nil {
+		return nil
+	}
+	return core(kind)
 }

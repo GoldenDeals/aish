@@ -1,16 +1,15 @@
 // Package fullscreen shows the conversation on the whole screen, above the panes: user messages and errors
-// as text, answers as markdown, each drawn by the renderer of its kind (contracts/tui/renderer).
+// as text, answers as markdown, tool calls with their results as tools, as the renderer core draws content
+// of that kind (contracts/tui/renderer).
 // It follows the end while new content comes; PgUp and PgDn scroll it by a page, Up and Down by a row,
 // the mouse wheel by three. A drag with the left button selects; the release copies and drops the selection.
 // A double click copies the word under it, a triple click the row.
 // It tells where its text ends as a caret.Source, for a module that marks where the model writes.
-// Build it with tui.renderer.plaintext: content of a kind without a renderer falls back to it,
-// and without it such content isn't shown.
+// Build it with the renderer core (frontend/tui/renderer): without it, nothing is shown.
 package fullscreen
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/GoldenDeals/aish-core/contracts/llm"
+	"github.com/GoldenDeals/aish-core/contracts/tool"
 	"github.com/GoldenDeals/aish-core/contracts/tui"
 	"github.com/GoldenDeals/aish-core/contracts/tui/caret"
 	"github.com/GoldenDeals/aish-core/contracts/tui/renderer"
@@ -42,14 +42,13 @@ const (
 )
 
 type mod struct {
-	b         bus.Bus
-	rmu       sync.Mutex // pick runs in blocks' Write too, under mu
-	renderers map[string]renderer.Renderer
+	b bus.Bus
 
 	mu      sync.Mutex // the compositor draws while bus handlers and stream readers add
 	scr     tui.Screen
 	handle  tui.Handle
 	blocks  []renderer.Block
+	calls   map[string]renderer.Block // tool calls waiting for their results; only bus handlers touch it
 	follow  bool   // keep the end in view
 	top     anchor // the first row in view
 	w, rows int    // the view at the last frame, for scrolling
@@ -101,11 +100,10 @@ func (s selection) has(p point) bool {
 func init() { module.Register("tui.fullscreen", &mod{}) }
 
 func (m *mod) Init(b bus.Bus, _ config.Config) error {
-	m.b, m.renderers, m.follow = b, map[string]renderer.Renderer{}, true
+	m.b, m.follow, m.calls = b, true, map[string]renderer.Block{}
 	bus.Async(b, event.ByName(tui.Ready), func(_ context.Context, ev event.Event[tui.Screen]) {
 		m.edit(func() { m.scr, m.handle = ev.Data(), ev.Data().Open(tui.Fullscreen, z, m) })
 	})
-	bus.Sync(b, prio, event.ByName(renderer.Announce), m.announce)
 	bus.Sync(b, prio, event.ByName(llm.UserMessage), func(_ context.Context, t tx.Tx, ev event.Event[string]) error {
 		m.add(t, renderer.Text, "> "+ev.Data())
 		return nil
@@ -115,6 +113,31 @@ func (m *mod) Init(b bus.Bus, _ config.Config) error {
 		return nil
 	})
 	bus.Sync(b, prio, event.ByName(llm.Answer), m.answer)
+	bus.Sync(b, prio, event.ByName(tool.Call), func(_ context.Context, t tx.Tx, ev event.Event[tool.Use]) error {
+		u := ev.Data()
+		// Line breaks in JSON are only between tokens: the input stays the same on one line.
+		if blk := m.add(t, renderer.Tool, u.Name+" "+strings.ReplaceAll(string(u.Input), "\n", " ")+"\n"); blk != nil {
+			m.calls[u.ID] = blk
+			t.OnAbort(func() { delete(m.calls, u.ID) })
+		}
+		return nil
+	})
+	bus.Sync(b, prio, event.ByName(tool.Result), func(_ context.Context, t tx.Tx, ev event.Event[tool.Output]) error {
+		o := ev.Data()
+		blk, ok := m.calls[o.ID]
+		if !ok {
+			return nil // a call not shown, one the provider answered itself
+		}
+		delete(m.calls, o.ID)
+		t.OnAbort(func() { m.calls[o.ID] = blk })
+		status := "ok\n"
+		if o.Error {
+			status = "error\n"
+		}
+		// shortcut: a rolled back result stays on screen, a Block can't unwrite; give it a reset if that happens
+		m.edit(func() { blk.Write(status + o.Text) })
+		return nil
+	})
 	return nil
 }
 
@@ -130,38 +153,9 @@ func (m *mod) Last() (uv.Position, bool) {
 	return m.end, m.endOK
 }
 
-func (m *mod) announce(_ context.Context, t tx.Tx, ev event.Event[renderer.Renderer]) error {
-	r := ev.Data()
-	m.rmu.Lock()
-	defer m.rmu.Unlock()
-	if _, ok := m.renderers[r.Kind]; ok {
-		return fmt.Errorf("render: a second renderer of %q", r.Kind)
-	}
-	m.renderers[r.Kind] = r
-	t.OnAbort(func() {
-		m.rmu.Lock()
-		delete(m.renderers, r.Kind)
-		m.rmu.Unlock()
-	})
-	return nil
-}
-
-func (m *mod) pick(kind string) renderer.Block {
-	m.rmu.Lock()
-	r, ok := m.renderers[kind]
-	if !ok {
-		r, ok = m.renderers[renderer.Text]
-	}
-	m.rmu.Unlock()
-	if !ok {
-		return nil
-	}
-	return r.New(m.pick)
-}
-
 // add appends a Block of kind with text, for as long as t isn't rolled back; nil if nothing renders it.
 func (m *mod) add(t tx.Tx, kind, text string) renderer.Block {
-	b := m.pick(kind)
+	b := renderer.New(kind)
 	if b == nil {
 		return nil
 	}

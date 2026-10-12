@@ -11,16 +11,42 @@ anthropic:
   max_tokens: 64000
   # token: sk-ant-...                    # else ANTHROPIC_API_KEY or the `ant auth login` profile
   # base_url: https://api.anthropic.com  # else ANTHROPIC_BASE_URL; without /v1, unlike openai
+  # proxy: socks5://127.0.0.1:1080       # http, https, socks5 or socks5h; else HTTPS_PROXY
 
 # openai:
 #   model: gpt-5.5
 #   token: sk-...                        # else OPENAI_API_KEY
 #   base_url: https://api.openai.com/v1  # else OPENAI_BASE_URL; with /v1, unlike anthropic
+#   proxy: socks5://127.0.0.1:1080       # http, https, socks5 or socks5h; else HTTPS_PROXY
 
 # context.system_prompt:                 # without a block: the built-in prompt
 #   text: |
 #     You are ...
 #   # file: prompts/aish.md              # or this, relative to the working directory; not both
+
+# context.append:                        # without a block: off; one more fragment next to the system prompt
+#   text: |
+#     Answer in Russian.
+#   # file: prompts/extra.md              # or this, relative to the working directory; not both
+
+# context.agents.md:                     # globs relative to the working directory, ~/ is home; these are the defaults
+#   patterns: [~/.agents/AGENTS.md, ~/.claude/CLAUDE.md, AGENTS.md, CLAUDE.md, .agents/AGENTS.md, .claude/CLAUDE.md]
+
+# context.skills:                        # an index of name, description and path; the first of two equal names wins
+#   patterns: [.agents/skills/*/SKILL.md, .claude/skills/*/SKILL.md, ~/.agents/skills/*/SKILL.md, ~/.claude/skills/*/SKILL.md]
+
+# context.skills.tool:                  # the skill tool: a SKILL.md by name; finds skills as context.skills does
+#   patterns: [.agents/skills/*/SKILL.md, .claude/skills/*/SKILL.md, ~/.agents/skills/*/SKILL.md, ~/.claude/skills/*/SKILL.md]
+
+# tools.mcp:                             # tools of MCP servers, as mcp__<server>__<tool>
+#   servers:
+#     fs:                                # local: a command that speaks MCP on stdin and stdout
+#       command: npx
+#       args: [-y, "@modelcontextprotocol/server-filesystem", "."]
+#       env: {LOG_LEVEL: error}          # added to aish's environment
+#     exa:                               # remote, over streamable HTTP; HTTPS_PROXY applies
+#       url: https://mcp.exa.ai/mcp
+#       headers: {x-api-key: {command: pass show exa/mcp/token}} # a value from a command: its first line, run by sh
 
 # log:                                   # without a block: info, jsonl, $XDG_STATE_HOME/.aish/logs/%D_%T_%S.log
 #   level: debug                         # warn | info | debug; debug holds the prompts

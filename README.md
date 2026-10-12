@@ -48,16 +48,31 @@ func (h *hello) Init(b bus.Bus, cfg config.Config) error {
 
 Публичный API — `pkg/` (`module`, `bus`, `tx`, `event`, `config`); `internal/` модули не импортируют.
 Общие контракты событий между модулями — `contracts/` (`llm`: системный промпт, сообщение пользователя, ответ;
-`tui`: экран и элементы, `tui/renderer`: рендереры контента, `tui/caret`: где кончается текст разговора, `session`: ID сессии).
+`tool`: объявление тула, вызов и результат;
+`tui`: экран и элементы, `tui/renderer`: блоки контента от ядра рендереров, `tui/caret`: где кончается текст разговора, `session`: ID сессии).
 
 ## Модули
 
-- [modules/llm/anthropic](modules/llm/anthropic) — провайдер Claude: собирает контекст сессии и отвечает на `user.message`.
-- [modules/llm/openai](modules/llm/openai) — провайдер OpenAI (Responses API): отвечает на `user.message`.
+- [modules/llm/anthropic](modules/llm/anthropic) — провайдер Claude: собирает контекст сессии и отвечает на `user.message`, вызывая тулы.
+- [modules/llm/openai](modules/llm/openai) — провайдер OpenAI (Responses API): отвечает на `user.message`, вызывая тулы.
+- [modules/tools/bash](modules/tools/bash) — тул `bash`: команда в рабочей директории, stdout и stderr вместе. Без подтверждения.
+- [modules/tools/read](modules/tools/read) — тул `read`: строки файла с номерами, по 2000 за раз.
+- [modules/tools/write](modules/tools/write) — тул `write`: создать файл (с директориями) или заменить его целиком.
+- [modules/tools/edit](modules/tools/edit) — тул `edit`: заменить точный фрагмент файла, один или все.
+- [modules/tools/mcp](modules/tools/mcp) — тулы MCP-серверов (stdio и streamable HTTP) как `mcp__<сервер>__<тул>`; секреты для `env` и `headers` — из команды, например `pass`.
 - [modules/context/system_prompt](modules/context/system_prompt) — системный промпт: из конфига (`text`), из файла (`file`) или встроенный по умолчанию.
+- [modules/context/append](modules/context/append) — дополнение к системному промпту: из конфига (`text`) или из файла (`file`).
+- [modules/context/agents.md](modules/context/agents.md) — AGENTS.md и CLAUDE.md в системный промпт; где искать — glob'ы `patterns`, по умолчанию корень, `.agents`, `.claude` и они же в `~`.
+- [modules/context/skills](modules/context/skills) — список скиллов (имя, описание, путь к SKILL.md) в системный промпт; где искать — glob'ы `patterns`.
+- [modules/context/skills/tool](modules/context/skills/tool) — тул `skill`: по имени скилла отдаёт его SKILL.md и директорию; скиллы ищет так же, как context.skills.
 - [modules/log](modules/log) — логи: включает slog и пишет его в файл; модули логируют сами.
 - [modules/frontend/tui](modules/frontend/tui) — компоновщик терминала: раскладывает элементы других модулей по z, сам ничего не рисует.
 - [modules/frontend/tui/fullscreen](modules/frontend/tui/fullscreen) — разговор на весь экран со скроллом.
 - [modules/frontend/tui/inputline](modules/frontend/tui/inputline) — строка ввода сообщений.
 - [modules/frontend/tui/thinking](modules/frontend/tui/thinking) — курсор модели: идёт за текстом ответа, после 1 с тишины — `⠋ thinking…`.
-- [modules/frontend/tui/renderer/plaintext](modules/frontend/tui/renderer/plaintext) — рендерер простого текста, fallback для остальных kind.
+- [modules/frontend/tui/renderer](modules/frontend/tui/renderer) — ядро рендереров: разбирает контент по правилам, которые регистрируют рендереры, побеждает самое специфичное.
+- [modules/frontend/tui/renderer/markdown](modules/frontend/tui/renderer/markdown) — правила markdown для ответов модели.
+- [modules/frontend/tui/renderer/codeblock](modules/frontend/tui/renderer/codeblock) — ```` ```lang ```` с подсветкой chroma.
+- [modules/frontend/tui/renderer/mermaid](modules/frontend/tui/renderer/mermaid) — диаграммы mermaid рамками в терминале.
+- [modules/frontend/tui/renderer/math](modules/frontend/tui/renderer/math) — формулы LaTeX в Unicode.
+- [modules/frontend/tui/renderer/toolcall](modules/frontend/tui/renderer/toolcall) — вызовы тулов: `● имя(аргумент)` и начало вывода.

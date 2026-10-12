@@ -11,6 +11,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"github.com/GoldenDeals/aish-core/contracts/llm"
+	"github.com/GoldenDeals/aish-core/contracts/tool"
 	"github.com/GoldenDeals/aish-core/contracts/tui"
 	"github.com/GoldenDeals/aish-core/contracts/tui/caret"
 	"github.com/GoldenDeals/aish-core/contracts/tui/renderer"
@@ -40,9 +41,8 @@ func (l *lines) Draw(scr uv.Screen, area uv.Rectangle) {
 	}
 }
 
-func fake(kind string) renderer.Renderer {
-	return renderer.Renderer{Kind: kind, New: func(renderer.Pick) renderer.Block { return &lines{kind: kind} }}
-}
+// fake is a renderer core of lines Blocks.
+func fake(kind string) renderer.Block { return &lines{kind: kind} }
 
 func screen(m *mod, w, h int) string {
 	scr := uv.NewWindow(w, h, nil)
@@ -61,18 +61,14 @@ func setup(t *testing.T) (*mod, bus.Bus) {
 func TestConversation(t *testing.T) {
 	m, b := setup(t)
 	ctx := context.Background()
+	renderer.Provide(nil)
 	if err := b.Dispatch(ctx, event.New(llm.UserMessage, "lost")); err != nil {
 		t.Fatal(err)
 	}
 	if got := screen(m, 20, 4); got != "\n\n\n" {
-		t.Errorf("without renderers: %q", got)
+		t.Errorf("without the renderer core: %q", got)
 	}
-	if err := b.Dispatch(ctx, event.New(renderer.Announce, fake(renderer.Text))); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.Dispatch(ctx, event.New(renderer.Announce, fake(renderer.Text))); err == nil {
-		t.Error("a second text renderer was taken")
-	}
+	renderer.Provide(fake)
 
 	ch := make(chan string)
 	go func() {
@@ -82,14 +78,14 @@ func TestConversation(t *testing.T) {
 	}()
 	for _, ev := range []event.Any{
 		event.New(llm.UserMessage, "hi"),
-		event.NewStream(llm.Answer, (<-chan string)(ch)), // no markdown renderer: falls back to text
+		event.NewStream(llm.Answer, (<-chan string)(ch)),
 		event.New(llm.Error, "boom"),
 	} {
 		if err := b.Dispatch(ctx, ev); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want := "text:> hi\n\ntext:answer\n\ntext:error: boom\n"
+	want := "text:> hi\n\nmarkdown:answer\n\ntext:error: boom\n"
 	for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) { // the stream is shown by its own goroutine
 		got := screen(m, 20, 6)
 		if got == want {
@@ -100,9 +96,6 @@ func TestConversation(t *testing.T) {
 		}
 	}
 
-	if err := b.Dispatch(ctx, event.New(renderer.Announce, fake(renderer.Markdown))); err != nil {
-		t.Fatal(err)
-	}
 	if err := b.Dispatch(ctx, event.New(llm.Answer, []string{"md"})); err != nil { // not a stream: shown whole
 		t.Fatal(err)
 	}
@@ -111,12 +104,30 @@ func TestConversation(t *testing.T) {
 	}
 }
 
+func TestTools(t *testing.T) {
+	m, b := setup(t)
+	renderer.Provide(fake)
+	for _, ev := range []event.Any{
+		event.New(tool.Call, tool.Use{ID: "1", Name: "bash", Input: []byte("{\n  \"command\": \"ls\"\n}")}),
+		event.New(tool.Call, tool.Use{ID: "2", Name: "read", Input: []byte(`{"path":"a"}`)}),
+		event.New(tool.Result, tool.Output{ID: "2", Text: "a1"}), // parallel calls finish in any order
+		event.New(tool.Result, tool.Output{ID: "1", Text: "boom", Error: true}),
+		event.New(tool.Result, tool.Output{ID: "3", Text: "a call not shown"}),
+	} {
+		if err := b.Dispatch(context.Background(), ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "tool:bash {   \"command\": \"ls\" }\nerror\nboom\n\ntool:read {\"path\":\"a\"}\nok\na1\n"
+	if got := screen(m, 40, 8); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestRolledBack(t *testing.T) {
 	m, b := setup(t)
 	ctx := context.Background()
-	if err := b.Dispatch(ctx, event.New(renderer.Announce, fake(renderer.Text))); err != nil {
-		t.Fatal(err)
-	}
+	renderer.Provide(fake)
 	fail := errors.New("fail")
 	bus.Sync(b, prio-1, event.ByName(llm.UserMessage), func(context.Context, tx.Tx, event.Event[string]) error { return fail })
 	if err := b.Dispatch(ctx, event.New(llm.UserMessage, "hi")); !errors.Is(err, fail) {
@@ -268,9 +279,7 @@ func TestLast(t *testing.T) {
 	if err := m.Start(ctx); err != nil || src != caret.Source(m) {
 		t.Fatalf("start: %v, announced %v", err, src)
 	}
-	if err := b.Dispatch(ctx, event.New(renderer.Announce, fake(renderer.Text))); err != nil {
-		t.Fatal(err)
-	}
+	renderer.Provide(fake)
 	last := func(h int) (uv.Position, bool) {
 		screen(m, 20, h)
 		return m.Last()
@@ -298,7 +307,7 @@ func TestLast(t *testing.T) {
 	ch <- "answer"
 	close(ch)
 	for deadline := time.Now().Add(time.Second); ; time.Sleep(time.Millisecond) {
-		if p, ok := last(6); ok && p == uv.Pos(10, 2) {
+		if p, ok := last(6); ok && p == uv.Pos(14, 2) { // "markdown:answer"
 			break
 		}
 		if time.Now().After(deadline) {
@@ -307,7 +316,7 @@ func TestLast(t *testing.T) {
 		}
 	}
 
-	last(2) // the view: "text:answer" and the gap
+	last(2) // the view: "markdown:answer" and the gap
 	m.Input(uv.KeyPressEvent{Code: uv.KeyPgUp})
 	if _, ok := last(2); ok {
 		t.Error("the last character is out of view")

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GoldenDeals/aish-core/contracts/llm"
+	"github.com/GoldenDeals/aish-core/contracts/tool"
 	corebus "github.com/GoldenDeals/aish-core/internal/core/bus"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/event"
@@ -43,6 +44,24 @@ func sse(stop string, deltas ...string) string {
 	return b.String()
 }
 
+// sseCall is a stream of text, then a call of name whose input comes in the given parts, ending with tool_use.
+func sseCall(text, id, name string, input ...string) string {
+	s := sse("tool_use", text)
+	s = s[:strings.Index(s, "event: message_delta")]
+	ev := func(data string) {
+		s += "event: " + data[9:strings.Index(data[9:], `"`)+9] + "\ndata: " + data + "\n\n"
+	}
+	ev(`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"` + id + `","name":"` + name + `","input":{}}}`)
+	for _, part := range input {
+		j, _ := json.Marshal(part)
+		ev(`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":` + string(j) + `}}`)
+	}
+	ev(`{"type":"content_block_stop","index":1}`)
+	ev(`{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":1}}`)
+	ev(`{"type":"message_stop"}`)
+	return s
+}
+
 // unfinished is a stream of the given deltas that is still going.
 func unfinished(deltas ...string) string {
 	s := sse("end_turn", deltas...)
@@ -55,7 +74,8 @@ type reply struct {
 }
 
 // setup runs the module against a fake API serving replies in order. Each request is reported as
-// "system | dialog", a * marking a cache breakpoint; answers and errors are reported as they are dispatched.
+// "system | dialog", after "tools | " if it has any, a * marking a cache breakpoint; answers and errors
+// are reported as they are dispatched.
 func setup(t *testing.T, replies ...reply) (b bus.Bus, reqs <-chan string, answers <-chan []string, errs <-chan string) {
 	rq := make(chan string, len(replies))
 	var n atomic.Int32
@@ -69,11 +89,18 @@ func setup(t *testing.T, replies ...reply) (b bus.Bus, reqs <-chan string, answe
 				Text         string
 				CacheControl *struct{ TTL string } `json:"cache_control"`
 			}
+			Tools []struct {
+				Name        string
+				InputSchema json.RawMessage `json:"input_schema"`
+			}
 			Messages []struct {
 				Role    string
 				Content []struct {
-					Text         string
-					CacheControl *struct{ TTL string } `json:"cache_control"`
+					Type, Text, Name string
+					Input            json.RawMessage
+					Content          []struct{ Text string }
+					IsError          bool                  `json:"is_error"`
+					CacheControl     *struct{ TTL string } `json:"cache_control"`
 				}
 			}
 		}
@@ -83,10 +110,16 @@ func setup(t *testing.T, replies ...reply) (b bus.Bus, reqs <-chan string, answe
 		if body.Model != "test-model" || body.MaxTokens != 100 || !body.Stream || body.CacheControl != nil {
 			t.Errorf("request params: %+v", body)
 		}
+		if r.Host != "api.invalid" {
+			t.Errorf("request to %s, want it through the proxy to the base_url", r.Host)
+		}
 		if k := r.Header.Get("X-Api-Key"); k != "test" {
 			t.Errorf("key %q, want the one from the config", k)
 		}
-		var sys, msgs []string
+		var tools, sys, msgs []string
+		for _, t := range body.Tools {
+			tools = append(tools, t.Name+string(t.InputSchema))
+		}
 		for _, s := range body.System {
 			if s.CacheControl != nil && s.CacheControl.TTL == "1h" { // a 5m breakpoint loses its * and fails the test
 				s.Text += "*"
@@ -94,13 +127,33 @@ func setup(t *testing.T, replies ...reply) (b bus.Bus, reqs <-chan string, answe
 			sys = append(sys, s.Text)
 		}
 		for _, m := range body.Messages {
-			c := m.Content[0]
-			if c.CacheControl != nil && c.CacheControl.TTL == "1h" {
-				c.Text += "*"
+			var blocks []string
+			for _, c := range m.Content {
+				text := c.Text
+				switch c.Type {
+				case "tool_use":
+					text = "use:" + c.Name + string(c.Input)
+				case "tool_result":
+					text = "result:"
+					if c.IsError {
+						text = "error:"
+					}
+					for _, r := range c.Content {
+						text += r.Text
+					}
+				}
+				if c.CacheControl != nil && c.CacheControl.TTL == "1h" {
+					text += "*"
+				}
+				blocks = append(blocks, text)
 			}
-			msgs = append(msgs, m.Role+":"+c.Text)
+			msgs = append(msgs, m.Role+":"+strings.Join(blocks, "+"))
 		}
-		rq <- strings.Join(sys, ",") + " | " + strings.Join(msgs, " ")
+		report := strings.Join(sys, ",") + " | " + strings.Join(msgs, " ")
+		if len(tools) > 0 {
+			report = strings.Join(tools, ",") + " | " + report
+		}
+		rq <- report
 
 		rp := replies[n.Add(1)-1]
 		if rp.status == http.StatusOK {
@@ -121,7 +174,7 @@ func setup(t *testing.T, replies ...reply) (b bus.Bus, reqs <-chan string, answe
 
 	b = corebus.New()
 	m := &mod{}
-	if err := m.Init(b, cfg{"model": "test-model", "max_tokens": 100, "token": "test", "base_url": srv.URL}); err != nil {
+	if err := m.Init(b, cfg{"model": "test-model", "max_tokens": 100, "token": "test", "base_url": "http://api.invalid", "proxy": srv.URL}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { m.Stop(context.Background()) })
@@ -157,6 +210,12 @@ func dispatch(t *testing.T, b bus.Bus, name, text string) {
 	t.Helper()
 	if err := b.Dispatch(context.Background(), event.New(name, text)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBadProxy(t *testing.T) {
+	if err := (&mod{}).Init(corebus.New(), cfg{"proxy": "localhost:8080"}); err == nil {
+		t.Error("a proxy without a scheme is taken")
 	}
 }
 
@@ -267,4 +326,68 @@ func TestCancel(t *testing.T) {
 		t.Errorf("request 2 = %q, want %q", got, want)
 	}
 	recv(t, answers)
+}
+
+func TestTools(t *testing.T) {
+	b, reqs, answers, errs := setup(t,
+		reply{200, sseCall("Looking.", "toolu_1", "bash", `{"command":`, `"ls"}`)},
+		reply{200, sseCall("", "toolu_2", "nope")},
+		reply{200, sse("end_turn", "Done")})
+	calls := make(chan tool.Use, 10)
+	bus.Sync(b, 0, event.ByName(tool.Call), func(_ context.Context, _ tx.Tx, ev event.Event[tool.Use]) error {
+		calls <- ev.Data()
+		return nil
+	})
+	spec := tool.Spec{Name: "bash", Description: "run", Schema: []byte(`{"type":"object","properties":{"command":{"type":"string"}}}`)}
+	if err := b.Dispatch(context.Background(), event.New(tool.Declare, spec)); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Dispatch(context.Background(), event.New(tool.Declare, spec)); err == nil {
+		t.Error("a tool is declared twice")
+	}
+
+	ctx, stop := llm.WithTurn(context.Background())
+	defer stop()
+	if err := b.Dispatch(ctx, event.New(llm.UserMessage, "list")); err != nil {
+		t.Fatal(err)
+	}
+	tools := `bash{"type":"object","properties":{"command":{"type":"string"}}} | `
+	if got, want := recv(t, reqs), tools+" | user:list*"; got != want {
+		t.Errorf("request 1 = %q, want %q", got, want)
+	}
+	if got, want := recv(t, calls), (tool.Use{ID: "toolu_1", Name: "bash", Input: []byte(`{"command":"ls"}`)}); got.ID != want.ID || got.Name != want.Name || string(got.Input) != string(want.Input) {
+		t.Errorf("call = %+v, want %+v", got, want)
+	}
+	if got := recv(t, answers); !slices.Equal(got, []string{"Looking."}) {
+		t.Errorf("answer 1 = %q", got)
+	}
+	if err := b.Dispatch(context.Background(), event.New(llm.UserMessage, "hey")); err == nil {
+		t.Error("a user message got between a call and its result")
+	}
+	if llm.Turn(ctx).Err() != nil {
+		t.Fatal("the turn ended before the answer to the tool result")
+	}
+
+	if err := b.Dispatch(context.Background(), event.New(tool.Result, tool.Output{ID: "toolu_1", Text: "a.txt"})); err != nil {
+		t.Fatal(err)
+	}
+	// The model calls a tool nobody declared: the provider answers it itself.
+	if got, want := recv(t, reqs), tools+` | user:list assistant:Looking.+use:bash{"command":"ls"} user:result:a.txt*`; got != want {
+		t.Errorf("request 2 = %q, want %q", got, want)
+	}
+	if got, want := recv(t, reqs), tools+` | user:list assistant:Looking.+use:bash{"command":"ls"} user:result:a.txt assistant:use:nope{} user:error:no such tool: nope*`; got != want {
+		t.Errorf("request 3 = %q, want %q", got, want)
+	}
+	recv(t, llm.Turn(ctx).Done())
+	recv(t, answers) // empty, before the call of nope
+	if got := recv(t, answers); !slices.Equal(got, []string{"Done"}) {
+		t.Errorf("answer 3 = %q", got)
+	}
+	select {
+	case e := <-errs:
+		t.Errorf("llm.error %q", e)
+	case c := <-calls:
+		t.Errorf("call of %s, which isn't declared", c.Name)
+	default:
+	}
 }

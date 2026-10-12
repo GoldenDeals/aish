@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GoldenDeals/aish-core/contracts/llm"
+	"github.com/GoldenDeals/aish-core/contracts/tool"
 	corebus "github.com/GoldenDeals/aish-core/internal/core/bus"
 	"github.com/GoldenDeals/aish-core/pkg/bus"
 	"github.com/GoldenDeals/aish-core/pkg/event"
@@ -49,7 +50,7 @@ type reply struct {
 
 type fake struct {
 	b       bus.Bus
-	reqs    chan string // each API request as "role:text ..."
+	reqs    chan string // each API request as "role:text ...", after "tools | " if it has any
 	answers chan []string
 	errs    chan string
 }
@@ -59,36 +60,59 @@ func setup(t *testing.T, replies ...reply) *fake {
 	f := &fake{reqs: make(chan string, 10), answers: make(chan []string, 10), errs: make(chan string, 10)}
 	var n atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body params
+		var body struct {
+			params
+			Input []struct {
+				Type, Role, Name, Arguments, Output string
+				CallID                              string `json:"call_id"`
+				Content                             []content
+			} `json:"input"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		if r.URL.Path != "/responses" || r.Header.Get("Authorization") != "Bearer test" {
-			t.Errorf("request to %s with %v", r.URL.Path, r.Header)
+		if r.Host != "api.invalid" || r.URL.Path != "/responses" || r.Header.Get("Authorization") != "Bearer test" {
+			t.Errorf("request to %s%s with %v", r.Host, r.URL.Path, r.Header) // through the proxy to the base_url
 		}
 		if body.Model != "test-model" || !body.Stream || body.Store || body.CacheKey == "" {
 			t.Errorf("request params: %+v", body)
 		}
-		var msgs []string
-		for _, m := range body.Input {
-			if m.Type != "message" || (m.Role == "assistant") != (m.Content[0].Type == "output_text") {
-				t.Errorf("message: %+v", m)
+		var tools, msgs []string
+		for _, fn := range body.Tools {
+			if fn.Type != "function" || fn.Strict {
+				t.Errorf("tool: %+v", fn)
 			}
-			msgs = append(msgs, m.Role+":"+m.Content[0].Text)
+			tools = append(tools, fn.Name+string(fn.Parameters))
 		}
-		f.reqs <- strings.Join(msgs, " ")
+		for _, m := range body.Input {
+			switch {
+			case m.Type == "function_call":
+				msgs = append(msgs, "call:"+m.CallID+":"+m.Name+m.Arguments)
+			case m.Type == "function_call_output":
+				msgs = append(msgs, "output:"+m.CallID+":"+m.Output)
+			case m.Type != "message" || (m.Role == "assistant") != (m.Content[0].Type == "output_text"):
+				t.Errorf("item: %+v", m)
+			default:
+				msgs = append(msgs, m.Role+":"+m.Content[0].Text)
+			}
+		}
+		report := strings.Join(msgs, " ")
+		if len(tools) > 0 {
+			report = strings.Join(tools, ",") + " | " + report
+		}
+		f.reqs <- report
 
 		rp := replies[n.Add(1)-1]
 		w.WriteHeader(rp.status)
 		fmt.Fprint(w, rp.body)
 	}))
 	t.Cleanup(srv.Close)
-	t.Setenv("OPENAI_BASE_URL", srv.URL) // no base_url in the config: the env is the fallback
-	t.Setenv("OPENAI_API_KEY", "env")    // the config's token wins
+	t.Setenv("OPENAI_BASE_URL", "http://api.invalid") // no base_url in the config: the env is the fallback
+	t.Setenv("OPENAI_API_KEY", "env")                 // the config's token wins
 
 	f.b = corebus.New()
 	m := &mod{}
-	if err := m.Init(f.b, cfg{"model": "test-model", "token": "test"}); err != nil {
+	if err := m.Init(f.b, cfg{"model": "test-model", "token": "test", "proxy": srv.URL}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { m.Stop(context.Background()) })
@@ -127,6 +151,12 @@ func (f *fake) turn(t *testing.T, text string) {
 		t.Fatal(err)
 	}
 	recv(t, llm.Turn(ctx).Done())
+}
+
+func TestBadProxy(t *testing.T) {
+	if err := (&mod{}).Init(corebus.New(), cfg{"token": "test", "proxy": "localhost:8080"}); err == nil {
+		t.Error("a proxy without a scheme is taken")
+	}
 }
 
 func TestDialog(t *testing.T) {
@@ -184,5 +214,66 @@ func TestFailures(t *testing.T) {
 				t.Errorf("answer = %q, want %q", got, tc.answer)
 			}
 		})
+	}
+}
+
+// called is a stream of text and a call of name with args, then completed.
+func called(text, id, name, args string) string {
+	item, _ := json.Marshal(map[string]any{"type": "response.output_item.done", "item": map[string]string{
+		"type": "function_call", "id": "fc_" + id, "call_id": id, "name": name, "arguments": args, "status": "completed"}})
+	return sse(string(item), text) + "data: " + completed + "\n\n"
+}
+
+func TestTools(t *testing.T) {
+	f := setup(t, reply{200, called("Looking.", "call_1", "bash", `{"command":"ls"}`)},
+		reply{200, called("", "call_2", "nope", "")},
+		reply{200, sse(completed, "Done")})
+	calls := make(chan tool.Use, 10)
+	bus.Sync(f.b, 0, event.ByName(tool.Call), func(_ context.Context, _ tx.Tx, ev event.Event[tool.Use]) error {
+		calls <- ev.Data()
+		return nil
+	})
+	spec := tool.Spec{Name: "bash", Description: "run", Schema: []byte(`{"type":"object"}`)}
+	if err := f.b.Dispatch(context.Background(), event.New(tool.Declare, spec)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.b.Dispatch(context.Background(), event.New(tool.Declare, spec)); err == nil {
+		t.Error("a tool is declared twice")
+	}
+
+	ctx, stop := llm.WithTurn(context.Background())
+	defer stop()
+	if err := f.b.Dispatch(ctx, event.New(llm.UserMessage, "list")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := recv(t, f.reqs), `bash{"type":"object"} | user:list`; got != want {
+		t.Errorf("request 1 = %q, want %q", got, want)
+	}
+	if got := recv(t, calls); got.ID != "call_1" || got.Name != "bash" || string(got.Input) != `{"command":"ls"}` {
+		t.Errorf("call = %+v", got)
+	}
+	if err := f.b.Dispatch(context.Background(), event.New(llm.UserMessage, "hey")); err == nil {
+		t.Error("a user message got between a call and its result")
+	}
+	if llm.Turn(ctx).Err() != nil {
+		t.Fatal("the turn ended before the answer to the tool result")
+	}
+	if err := f.b.Dispatch(context.Background(), event.New(tool.Result, tool.Output{ID: "call_1", Text: "a.txt"})); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := recv(t, f.reqs), `bash{"type":"object"} | user:list assistant:Looking. call:call_1:bash{"command":"ls"} output:call_1:a.txt`; got != want {
+		t.Errorf("request 2 = %q, want %q", got, want)
+	}
+	// The model calls a tool nobody declared: the provider answers it itself.
+	if got, want := recv(t, f.reqs), `bash{"type":"object"} | user:list assistant:Looking. call:call_1:bash{"command":"ls"} output:call_1:a.txt call:call_2:nope{} output:call_2:no such tool: nope`; got != want {
+		t.Errorf("request 3 = %q, want %q", got, want)
+	}
+	recv(t, llm.Turn(ctx).Done())
+	select {
+	case e := <-f.errs:
+		t.Errorf("llm.error %q", e)
+	case c := <-calls:
+		t.Errorf("call of %s, which isn't declared", c.Name)
+	default:
 	}
 }
